@@ -6,6 +6,8 @@
 //! and runs them. Exposing them as a library lets the integration tests drive a real server end to
 //! end through a fake Studio client.
 
+pub mod commands;
+pub mod config;
 pub mod server;
 pub mod session;
 pub mod watcher;

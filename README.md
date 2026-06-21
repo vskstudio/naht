@@ -23,8 +23,24 @@ configuration, and silent data loss on conflict.
 
 ## Status
 
-🚧 Early development. See [`docs/`](docs/) for the architecture, the staged build plan, and the
-prior-art analysis that grounds every design decision.
+🚧 Early development. The core sync engine, the localhost daemon, and the CLI are in place; the
+Studio plugin that closes the live loop lands in a later stage. See [`docs/`](docs/) for the
+architecture, the staged build plan, and the prior-art analysis that grounds every design decision.
+
+## Usage
+
+```sh
+naht init [path]            # scaffold a project (--from-rojo converts a default.project.json)
+naht serve [path]           # run the localhost sync daemon
+naht status [path]          # list paths frozen by a conflict
+naht resolve <path>         # clear a conflict once its markers are gone
+naht build [path] -o out.rbxm   # serialize the project to a Roblox model file
+naht pull [path]            # ask a running daemon to re-sync now
+```
+
+Configuration is convention-first; an optional `naht.toml` (layered over `~/.naht/config.toml`)
+carries only the exceptions — the project name, the serve port, and the place-id guard. Live
+bidirectional sync between the daemon and Studio requires the plugin (Stage 6).
 
 ## Documentation
 
