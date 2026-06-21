@@ -34,7 +34,7 @@ plan, and the prior-art analysis that grounds every design decision.
 
 ```sh
 naht init [path]            # scaffold a project (--from-rojo converts a default.project.json)
-naht serve [path]           # run the localhost sync daemon
+naht serve [path]           # run the localhost sync daemon (--port to override, -v/-vv for logs)
 naht status [path]          # list paths frozen by a conflict
 naht resolve <path>         # clear a conflict once its markers are gone (--project <dir> to scope it)
 naht build [path] -o out.rbxm   # serialize the project (.rbxm binary, or .rbxmx/.rbxlx for XML)

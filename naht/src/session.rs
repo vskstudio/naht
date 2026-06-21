@@ -127,9 +127,25 @@ impl Session {
     fn absorb(&mut self, patches: Vec<Patch>) {
         for patch in patches {
             self.mirror(&patch);
+            if patch.kind == PatchKind::Conflict {
+                tracing::warn!(target: "naht::sync", path = %patch.path, "conflict frozen");
+            }
             if patch.direction == Direction::ToStudio {
+                tracing::info!(
+                    target: "naht::sync",
+                    path = %patch.path,
+                    kind = ?patch.kind,
+                    "patch emitted"
+                );
                 self.queue.push((self.next_seq, patch));
                 self.next_seq += 1;
+            } else {
+                tracing::debug!(
+                    target: "naht::sync",
+                    path = %patch.path,
+                    kind = ?patch.kind,
+                    "patch applied to filesystem"
+                );
             }
         }
     }

@@ -8,6 +8,7 @@
 
 pub mod commands;
 pub mod config;
+pub mod logging;
 pub mod server;
 pub mod session;
 pub mod watcher;

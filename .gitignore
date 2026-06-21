@@ -2,3 +2,9 @@
 **/*.rs.bk
 .naht/
 .DS_Store
+
+# Roblox build artifacts (produced by `naht build`)
+*.rbxm
+*.rbxmx
+*.rbxl
+*.rbxlx

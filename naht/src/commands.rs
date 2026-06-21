@@ -124,8 +124,9 @@ pub async fn pull(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Run the sync daemon for the project at `root`, using `config` for the port and place guard.
-pub async fn serve(config: Config, root: &Path) -> Result<()> {
+/// Run the sync daemon for the project at `root` on `port`, using `config` for the project name and
+/// place guard.
+pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
     let root = canonical(root)?;
     // Surface anything that can't round-trip live before the session starts (architecture §9).
     if let Ok(snapshot) = mapper::snapshot_dir(&DiskVfs::new(), &root) {
@@ -143,10 +144,11 @@ pub async fn serve(config: Config, root: &Path) -> Result<()> {
     let _watcher =
         crate::watcher::spawn(&root, state.clone()).context("starting the file watcher")?;
 
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, config.port()));
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
+    tracing::info!(target: "naht::server", %addr, root = %root.display(), "naht serving");
     println!("naht serving {} on http://{addr}", root.display());
     crate::server::serve(listener, state)
         .await

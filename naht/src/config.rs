@@ -90,6 +90,16 @@ impl Config {
     pub fn port(&self) -> u16 {
         self.serve.port.unwrap_or(DEFAULT_PORT)
     }
+
+    /// Resolve the port to bind: a `--port` flag beats `naht.toml`, which beats the default. Port 0
+    /// (no fixed port) is rejected here rather than panicking at bind time.
+    pub fn resolve_port(&self, cli_port: Option<u16>) -> Result<u16> {
+        let port = cli_port.unwrap_or_else(|| self.port());
+        if port == 0 {
+            anyhow::bail!("port must be between 1 and 65535, got 0");
+        }
+        Ok(port)
+    }
 }
 
 /// Parse one config file; an absent file is an empty layer, not an error.
@@ -142,6 +152,24 @@ mod tests {
         let expected = dir.path().file_name().unwrap().to_str().unwrap();
         assert_eq!(config.project_name(dir.path()), expected);
         assert_eq!(config.port(), DEFAULT_PORT);
+    }
+
+    #[test]
+    fn resolve_port_prefers_cli_then_config_then_default() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(PROJECT_FILE), "[serve]\nport = 5000\n").unwrap();
+        let config = Config::load_from(None, dir.path()).unwrap();
+
+        assert_eq!(config.resolve_port(Some(6000)).unwrap(), 6000); // CLI wins
+        assert_eq!(config.resolve_port(None).unwrap(), 5000); // then naht.toml
+
+        let bare = Config::default();
+        assert_eq!(bare.resolve_port(None).unwrap(), DEFAULT_PORT); // then the default
+    }
+
+    #[test]
+    fn resolve_port_rejects_zero() {
+        assert!(Config::default().resolve_port(Some(0)).is_err());
     }
 
     #[test]

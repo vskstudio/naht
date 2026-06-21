@@ -24,14 +24,22 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop> {
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         // A failed batch (e.g. a transient watch error) is skipped; the next event re-syncs, and a
         // reconnect re-diff catches anything missed. We never crash the watch thread.
-        if result.is_ok() {
-            let state = state.clone();
-            runtime.spawn(async move {
-                let mut session = state.session_lock().await;
-                let _ = session.rescan();
-                drop(session);
-                state.notify_patches();
-            });
+        match result {
+            Ok(events) => {
+                tracing::debug!(target: "naht::watcher", batch = events.len(), "filesystem batch");
+                let state = state.clone();
+                runtime.spawn(async move {
+                    let mut session = state.session_lock().await;
+                    if let Err(error) = session.rescan() {
+                        tracing::warn!(target: "naht::watcher", %error, "rescan failed");
+                    }
+                    drop(session);
+                    state.notify_patches();
+                });
+            }
+            Err(errors) => {
+                tracing::warn!(target: "naht::watcher", count = errors.len(), "watch error batch");
+            }
         }
     })?;
     debouncer.watch(root, RecursiveMode::Recursive)?;

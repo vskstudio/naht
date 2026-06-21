@@ -16,6 +16,9 @@ use naht::config::Config;
 #[derive(Parser)]
 #[command(name = "naht", version, about)]
 struct Cli {
+    /// Raise the log level (repeat for more: `-v` debug, `-vv` trace). `NAHT_LOG`/`RUST_LOG` override.
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
     #[command(subcommand)]
     command: Command,
 }
@@ -36,6 +39,9 @@ enum Command {
         /// The project directory; defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Override the configured/default port.
+        #[arg(long)]
+        port: Option<u16>,
     },
     /// Ask a running daemon to re-sync now.
     Pull {
@@ -71,11 +77,13 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    naht::logging::init(cli.verbose);
     match cli.command {
         Command::Init { path, from_rojo } => commands::init(&path, from_rojo),
-        Command::Serve { path } => {
+        Command::Serve { path, port } => {
             let config = Config::load(&path)?;
-            commands::serve(config, &path).await
+            let port = config.resolve_port(port)?;
+            commands::serve(config, &path, port).await
         }
         Command::Pull { path } => {
             let config = Config::load(&path)?;
