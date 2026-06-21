@@ -153,7 +153,7 @@ lives in the final stage of [`spec.md`](spec.md).
 
 | Case | Status | Approach |
 |---|---|---|
-| **`MeshId`** | 🟡 partial | The asset-id string syncs like any property; the mesh binary is a cloud asset uploaded via Open Cloud, not a synced file. |
+| **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, a *local* mesh/image file is uploaded once via **Open Cloud**, cached by content hash, and its property rewritten to `rbxassetid://…`. Off by default. Stage 12. |
 | **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob — hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Stage 11. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |

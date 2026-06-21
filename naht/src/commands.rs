@@ -111,6 +111,7 @@ fn build_once(root: &Path, output: &Path) -> Result<()> {
     // `.naht` holds internal state, not Roblox source — keep it out of the artifact.
     snapshot.children.retain(|child| child.name != INTERNAL_DIR);
     warn_unsyncable(&snapshot);
+    resolve_assets(root, &mut snapshot)?;
 
     if let Some(parent) = output.parent() {
         if !parent.as_os_str().is_empty() {
@@ -182,6 +183,20 @@ pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
 }
 
 // --- helpers -------------------------------------------------------------------------------------
+
+/// When `[assets]` is enabled, upload local asset files referenced by properties and rewrite them to
+/// `rbxassetid://…`. Disabled by default, so the common case does no network I/O and is unchanged.
+fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
+    let config = Config::load(root)?;
+    if !config.assets.is_enabled() {
+        return Ok(());
+    }
+    let store = open_store(root)?;
+    let uploader = crate::uploader::OpenCloudUploader::from_config(&config.assets)?;
+    let vfs = RootedVfs::new(root.to_path_buf(), DiskVfs::new());
+    naht_core::assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot)
+        .context("uploading local assets")
+}
 
 /// Print, to stderr, every instance that can't round-trip live — never silently dropped.
 fn warn_unsyncable(snapshot: &Snapshot) {
