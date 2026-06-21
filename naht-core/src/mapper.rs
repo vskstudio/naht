@@ -140,7 +140,7 @@ fn is_script(class: &str) -> bool {
 }
 
 /// Classify a non-init source file by suffix, returning its class and instance name.
-fn script_class(file_name: &str) -> Option<(&'static str, String)> {
+pub(crate) fn script_class(file_name: &str) -> Option<(&'static str, String)> {
     for (suffix, class) in [
         (".server.luau", SCRIPT),
         (".client.luau", LOCAL_SCRIPT),
@@ -155,7 +155,7 @@ fn script_class(file_name: &str) -> Option<(&'static str, String)> {
     None
 }
 
-fn init_class(file_name: &str) -> Option<&'static str> {
+pub(crate) fn init_class(file_name: &str) -> Option<&'static str> {
     match file_name {
         "init.server.luau" => Some(SCRIPT),
         "init.client.luau" => Some(LOCAL_SCRIPT),

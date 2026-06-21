@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "naht"
+path = "src/lib.rs"
+
 [[bin]]
 name = "naht"
 path = "src/main.rs"
@@ -17,4 +21,9 @@ axum = "0.8.9"
 clap = "4.6.1"
 naht-core = { path = "../naht-core" }
 notify-debouncer-full = "0.7.0"
-tokio = "1.52.3"
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12.28", default-features = false }
+tempfile = "3.27.0"

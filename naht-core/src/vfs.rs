@@ -307,9 +307,105 @@ impl Vfs for DiskVfs {
     }
 }
 
+/// A [`Vfs`] adapter that presents `inner` in coordinates relative to a fixed `root`.
+///
+/// Every path is joined onto `root` before reaching `inner`, and paths returned by [`Vfs::list`] are
+/// stripped back to root-relative form. The daemon wraps a [`DiskVfs`] so the reconciler keys
+/// instances by project-relative paths (the stable wire identity) while disk I/O lands under the
+/// real project directory.
+#[derive(Debug, Clone)]
+pub struct RootedVfs<V: Vfs> {
+    root: PathBuf,
+    inner: V,
+}
+
+impl<V: Vfs> RootedVfs<V> {
+    /// Wrap `inner`, anchoring all relative paths under `root`.
+    pub fn new(root: impl Into<PathBuf>, inner: V) -> Self {
+        Self {
+            root: root.into(),
+            inner,
+        }
+    }
+
+    fn absolute(&self, path: &Path) -> PathBuf {
+        self.root.join(path)
+    }
+
+    fn relativize(&self, entry: &Path) -> PathBuf {
+        entry
+            .strip_prefix(&self.root)
+            .unwrap_or(entry)
+            .to_path_buf()
+    }
+}
+
+impl<V: Vfs> Vfs for RootedVfs<V> {
+    fn read(&self, path: &Path) -> Result<Vec<u8>, VfsError> {
+        self.inner.read(&self.absolute(path))
+    }
+
+    fn list(&self, path: &Path) -> Result<Vec<DirEntry>, VfsError> {
+        let mut entries = self.inner.list(&self.absolute(path))?;
+        for entry in &mut entries {
+            entry.path = self.relativize(&entry.path);
+        }
+        Ok(entries)
+    }
+
+    fn write(&mut self, path: &Path, contents: &[u8]) -> Result<(), VfsError> {
+        self.inner.write(&self.absolute(path), contents)
+    }
+
+    fn create_dir(&mut self, path: &Path) -> Result<(), VfsError> {
+        self.inner.create_dir(&self.absolute(path))
+    }
+
+    fn remove(&mut self, path: &Path) -> Result<(), VfsError> {
+        self.inner.remove(&self.absolute(path))
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        self.inner.exists(&self.absolute(path))
+    }
+
+    fn kind(&self, path: &Path) -> Result<EntryKind, VfsError> {
+        self.inner.kind(&self.absolute(path))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rooted_vfs_anchors_relative_paths_under_root_and_lists_relative() {
+        let backing = MemoryVfs::new().with_file("project/keep.luau", "k");
+        let mut rooted = RootedVfs::new("project", backing);
+
+        // Writes land under the root...
+        rooted.write(Path::new("sub/new.luau"), b"n").unwrap();
+        assert_eq!(rooted.read(Path::new("sub/new.luau")).unwrap(), b"n");
+        assert_eq!(
+            rooted
+                .inner
+                .read(Path::new("project/sub/new.luau"))
+                .unwrap(),
+            b"n"
+        );
+
+        // ...and listing returns paths relative to the root, not absolute.
+        let names: Vec<_> = rooted
+            .list(Path::new(""))
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(
+            names,
+            vec![PathBuf::from("keep.luau"), PathBuf::from("sub")]
+        );
+    }
 
     #[test]
     fn memory_write_then_read_round_trips() {
