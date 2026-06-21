@@ -49,14 +49,17 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Build the project into a Roblox model file.
+    /// Build the project into a Roblox model (`.rbxm`/`.rbxmx`) or place (`.rbxl`/`.rbxlx`) file.
     Build {
         /// The project directory; defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// The output model file (`.rbxm`/`.rbxmx`).
+        /// The output file; the extension picks model vs place and binary vs XML.
         #[arg(short, long)]
         output: PathBuf,
+        /// Rebuild the output on every change instead of building once.
+        #[arg(long)]
+        watch: bool,
     },
     /// Show the project's conflict state.
     Status {
@@ -89,7 +92,17 @@ async fn main() -> Result<()> {
             let config = Config::load(&path)?;
             commands::pull(&config).await
         }
-        Command::Build { path, output } => commands::build(&path, &output),
+        Command::Build {
+            path,
+            output,
+            watch,
+        } => {
+            if watch {
+                commands::build_watch(&path, &output).await
+            } else {
+                commands::build(&path, &output)
+            }
+        }
         Command::Status { path } => commands::status(&path),
         Command::Resolve { path, project } => commands::resolve(&project, &path),
     }

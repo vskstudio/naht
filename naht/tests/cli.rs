@@ -3,12 +3,22 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 use naht::commands;
 use naht::config::Config;
 use naht_core::reconciler::{self, TextInstance};
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
+
+/// Class names of the reloaded place's `DataModel` children.
+fn root_classes(dom: &rbx_dom_weak::WeakDom) -> Vec<String> {
+    dom.root()
+        .children()
+        .iter()
+        .map(|r| dom.get_by_ref(*r).unwrap().class.as_str().to_string())
+        .collect()
+}
 
 fn one(path: &str, content: &str) -> BTreeMap<String, TextInstance> {
     let mut map = BTreeMap::new();
@@ -87,6 +97,81 @@ fn build_produces_a_reloadable_model() {
     // The `src` folder is present; the internal `.naht` dir never is.
     assert!(names.contains(&"src".to_string()));
     assert!(!names.contains(&".naht".to_string()));
+}
+
+#[test]
+fn build_place_maps_top_level_dirs_to_services() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("game");
+    std::fs::create_dir_all(root.join("ServerScriptService")).unwrap();
+    std::fs::write(
+        root.join("ServerScriptService").join("Main.server.luau"),
+        "print(1)",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("ReplicatedStorage")).unwrap();
+    std::fs::write(
+        root.join("ReplicatedStorage").join("Shared.luau"),
+        "return {}",
+    )
+    .unwrap();
+    std::fs::write(root.join("Loose.luau"), "return 0").unwrap();
+
+    // A place output (.rbxl) maps top-level service directories to services.
+    let place = dir.path().join("game.rbxl");
+    commands::build(&root, &place).unwrap();
+    let place_dom = rbx_binary::from_reader(&std::fs::read(&place).unwrap()[..]).unwrap();
+    let classes = root_classes(&place_dom);
+    assert!(classes.contains(&"ServerScriptService".to_string()));
+    assert!(classes.contains(&"ReplicatedStorage".to_string()));
+    assert!(classes.contains(&"Workspace".to_string())); // the loose file lands here
+
+    // A model output (.rbxm) of the same project stays a bare instance list: the directory is a
+    // plain Folder, not a service. (Stage 5 behavior unchanged.)
+    let model = dir.path().join("game.rbxm");
+    commands::build(&root, &model).unwrap();
+    let model_dom = rbx_binary::from_reader(&std::fs::read(&model).unwrap()[..]).unwrap();
+    assert!(root_classes(&model_dom)
+        .iter()
+        .all(|class| class != "ServerScriptService"));
+}
+
+#[test]
+fn build_watch_rebuilds_the_output_on_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("proj");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src").join("A.luau"), "return 1").unwrap();
+
+    let output = dir.path().join("out.rbxm");
+    commands::build(&root, &output).unwrap();
+    let _watcher = commands::spawn_build_watcher(&root, &output).unwrap();
+
+    // Add a second source file; the watcher should rebuild the output to include it.
+    std::fs::write(root.join("src").join("B.luau"), "return 2").unwrap();
+
+    let mut rebuilt = false;
+    for _ in 0..100 {
+        if let Ok(bytes) = std::fs::read(&output) {
+            if let Ok(dom) = rbx_binary::from_reader(&bytes[..]) {
+                let src = dom
+                    .root()
+                    .children()
+                    .iter()
+                    .map(|r| dom.get_by_ref(*r).unwrap())
+                    .find(|instance| instance.name == "src");
+                if src.map(|folder| folder.children().len()) == Some(2) {
+                    rebuilt = true;
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        rebuilt,
+        "the watcher should have rebuilt the output with the new file"
+    );
 }
 
 #[test]

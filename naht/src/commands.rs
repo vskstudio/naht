@@ -3,7 +3,7 @@
 //! dispatches here; the integration tests drive these functions directly.
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -12,6 +12,8 @@ use naht_core::snapshot::Snapshot;
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
 use naht_core::{limits, mapper, reconciler};
+use notify_debouncer_full::notify::RecursiveMode;
+use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use serde::Deserialize;
 
 use crate::config::{Config, PROJECT_FILE};
@@ -20,6 +22,9 @@ use crate::session::Session;
 
 /// How long a served long-poll is held open before returning empty.
 const LONG_POLL: Duration = Duration::from_secs(25);
+
+/// How long to coalesce filesystem events before a `--watch` rebuild.
+const WATCH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// Naht's internal directory, holding the state database; never part of a build.
 const INTERNAL_DIR: &str = ".naht";
@@ -81,12 +86,28 @@ pub fn resolve(root: &Path, path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build the project at `root` into a model file at `output`, choosing the format by extension
-/// (`.rbxmx`/`.rbxlx` → XML, otherwise binary).
+/// Build the project at `root` into `output` once. The output extension picks the artifact:
+/// `.rbxl`/`.rbxlx` build a **place** (a `DataModel` with convention-mapped services), anything else
+/// a **model**; `.rbxmx`/`.rbxlx` are XML, the rest binary.
 pub fn build(root: &Path, output: &Path) -> Result<()> {
+    build_once(&canonical(root)?, output)
+}
+
+/// Build once, then rebuild on every debounced change until interrupted (Stage 9 `--watch`).
+pub async fn build_watch(root: &Path, output: &Path) -> Result<()> {
     let root = canonical(root)?;
+    build_once(&root, output)?;
+    let _watcher = spawn_build_watcher(&root, output)?;
+    tracing::info!(target: "naht::build", root = %root.display(), "watching for changes");
+    println!("watching {} — rebuilding on change", root.display());
+    std::future::pending::<()>().await;
+    Ok(())
+}
+
+/// The single build step shared by `build` and `build --watch`. `root` must already be canonical.
+fn build_once(root: &Path, output: &Path) -> Result<()> {
     let mut snapshot =
-        mapper::snapshot_dir(&DiskVfs::new(), &root).context("snapshotting the project")?;
+        mapper::snapshot_dir(&DiskVfs::new(), root).context("snapshotting the project")?;
     // `.naht` holds internal state, not Roblox source — keep it out of the artifact.
     snapshot.children.retain(|child| child.name != INTERNAL_DIR);
     warn_unsyncable(&snapshot);
@@ -99,11 +120,16 @@ pub fn build(root: &Path, output: &Path) -> Result<()> {
     }
     let file =
         std::fs::File::create(output).with_context(|| format!("creating {}", output.display()))?;
-    build::write_model(
-        std::io::BufWriter::new(file),
-        &snapshot,
-        model_format(output),
-    )?;
+    let writer = std::io::BufWriter::new(file);
+    let format = model_format(output);
+    if is_place_output(output) {
+        for warning in build::write_place(writer, &snapshot, format)? {
+            eprintln!("naht: warning: {warning}");
+        }
+    } else {
+        build::write_model(writer, &snapshot, format)?;
+    }
+    tracing::info!(target: "naht::build", output = %output.display(), "built");
     println!("built {}", output.display());
     Ok(())
 }
@@ -233,6 +259,46 @@ fn model_format(output: &Path) -> ModelFormat {
         }
         _ => ModelFormat::Binary,
     }
+}
+
+/// Whether `output` is a place file (`.rbxl`/`.rbxlx`) rather than a model.
+fn is_place_output(output: &Path) -> bool {
+    matches!(
+        output.extension().and_then(|ext| ext.to_str()),
+        Some(ext) if ext.eq_ignore_ascii_case("rbxl") || ext.eq_ignore_ascii_case("rbxlx")
+    )
+}
+
+/// Watch `root` and rebuild `output` on each debounced change. The caller holds the returned guard
+/// for as long as watching should continue. Our own output writes are ignored, so the rebuild does
+/// not trigger itself.
+pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop> {
+    let root = canonical(root)?;
+    let watch_root = root.clone();
+    let output = output.to_path_buf();
+    let output_abs = output.canonicalize().ok();
+    let mut debouncer = new_debouncer(WATCH_DEBOUNCE, None, move |result: DebounceEventResult| {
+        let Ok(events) = result else {
+            return;
+        };
+        let changed: Vec<PathBuf> = events
+            .iter()
+            .flat_map(|event| event.paths.iter().cloned())
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        if let Some(out) = output_abs.as_deref() {
+            if changed.iter().all(|path| path == out) {
+                return; // our own write — don't rebuild ourselves into a loop
+            }
+        }
+        if let Err(error) = build_once(&root, &output) {
+            tracing::warn!(target: "naht::build", %error, "rebuild failed");
+        }
+    })?;
+    debouncer.watch(&watch_root, RecursiveMode::Recursive)?;
+    Ok(debouncer)
 }
 
 fn open_store(root: &Path) -> Result<StateStore> {
