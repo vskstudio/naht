@@ -12,13 +12,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::hash::content_hash;
+use crate::mapper::{init_class, script_class};
 use crate::merge::{self, Merge};
 use crate::state::{InstanceRecord, StateError, StateStore};
-use crate::vfs::{Vfs, VfsError};
+use crate::vfs::{EntryKind, Vfs, VfsError};
 
 /// Which way a patch flows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
     /// Filesystem → Studio (carried to the plugin on its next long-poll).
     ToStudio,
@@ -27,7 +30,7 @@ pub enum Direction {
 }
 
 /// What a patch does to its target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PatchKind {
     /// The instance is new on the target side.
     Create,
@@ -40,7 +43,7 @@ pub enum PatchKind {
 }
 
 /// One reconciliation action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Patch {
     /// The instance's filesystem path (its stable key in Stage 3).
     pub path: String,
@@ -55,7 +58,7 @@ pub struct Patch {
 }
 
 /// A text instance on one side of the sync, keyed by its filesystem path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextInstance {
     /// The instance's filesystem path.
     pub path: String,
@@ -105,6 +108,47 @@ pub enum ReconcileError {
     /// `resolve` was refused because the file still has conflict markers.
     #[error("conflict markers remain at {0}")]
     MarkersRemain(String),
+}
+
+/// Walk `dir` in `vfs` and collect every source file into the flat, path-keyed text-instance map
+/// the reconciler consumes.
+///
+/// Class assignment follows the same conventions as the mapper (`*.server.luau` → `Script`,
+/// `*.client.luau` → `LocalScript`, `*.luau`/`init.luau` → `ModuleScript`); non-source files are
+/// skipped, not lost. The daemon calls this each reconcile so the filesystem side is always read
+/// fresh from disk rather than cached.
+pub fn scan_text(
+    vfs: &impl Vfs,
+    dir: &Path,
+) -> Result<BTreeMap<String, TextInstance>, ReconcileError> {
+    let mut out = BTreeMap::new();
+    scan_into(vfs, dir, &mut out)?;
+    Ok(out)
+}
+
+fn scan_into(
+    vfs: &impl Vfs,
+    dir: &Path,
+    out: &mut BTreeMap<String, TextInstance>,
+) -> Result<(), ReconcileError> {
+    for entry in vfs.list(dir)? {
+        match entry.kind {
+            EntryKind::Dir => scan_into(vfs, &entry.path, out)?,
+            EntryKind::File => {
+                let Some(name) = entry.path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                let Some(class) = init_class(name).or_else(|| script_class(name).map(|(c, _)| c))
+                else {
+                    continue; // not a Roblox source file
+                };
+                let key = entry.path.to_string_lossy().into_owned();
+                let content = decode(&key, &vfs.read(&entry.path)?)?;
+                out.insert(key.clone(), TextInstance::new(key, class, content));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reconcile the filesystem and Studio sides against the persisted base.
@@ -672,6 +716,33 @@ mod tests {
         assert_eq!(
             store.get("n").unwrap().unwrap().base_content,
             Some(b"fresh".to_vec())
+        );
+    }
+
+    #[test]
+    fn scan_collects_source_files_as_text_instances_and_skips_the_rest() {
+        let vfs = MemoryVfs::new()
+            .with_file("proj/Greeter.luau", "return 1")
+            .with_file("proj/run/main.server.luau", "print('s')")
+            .with_file("proj/run/ui.client.luau", "print('c')")
+            .with_file("proj/folder/init.luau", "return {}")
+            .with_file("proj/README.md", "not an instance");
+
+        let scanned = scan_text(&vfs, Path::new("proj")).unwrap();
+
+        let mut got: Vec<(&str, &str, &str)> = scanned
+            .values()
+            .map(|t| (t.path.as_str(), t.class.as_str(), t.content.as_str()))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ("proj/Greeter.luau", "ModuleScript", "return 1"),
+                ("proj/folder/init.luau", "ModuleScript", "return {}"),
+                ("proj/run/main.server.luau", "Script", "print('s')"),
+                ("proj/run/ui.client.luau", "LocalScript", "print('c')"),
+            ]
         );
     }
 

@@ -7,13 +7,12 @@
 //!
 //! It is intentionally testable in isolation — the reconciler runs against an in-memory VFS so its
 //! behavior can be verified without touching the disk or the network.
-//!
-//! Remaining modules (state store, reconciler, protocol) land in later stages.
 
 pub mod frontmatter;
 pub mod hash;
 pub mod mapper;
 pub mod merge;
+pub mod protocol;
 pub mod reconciler;
 pub mod snapshot;
 pub mod state;
