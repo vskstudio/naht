@@ -11,7 +11,10 @@
 //! Remaining modules (state store, reconciler, protocol) land in later stages.
 
 pub mod frontmatter;
+pub mod hash;
 pub mod mapper;
+pub mod merge;
+pub mod reconciler;
 pub mod snapshot;
 pub mod state;
 pub mod vfs;

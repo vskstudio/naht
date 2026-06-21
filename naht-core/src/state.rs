@@ -199,6 +199,17 @@ impl StateStore {
         Ok(())
     }
 
+    /// Every persisted instance base, ordered by path. Used by the reconciler to find instances
+    /// that exist in the base but no longer on a side (deletions).
+    pub fn all(&self) -> Result<Vec<InstanceRecord>, StateError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT guid, path, class, content_hash, base_content, mtime, conflicted
+             FROM instances ORDER BY path",
+        )?;
+        let rows = stmt.query_map([], row_to_record)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// Every instance currently frozen as conflicted, ordered by path.
     pub fn conflicted(&self) -> Result<Vec<InstanceRecord>, StateError> {
         let mut stmt = self.conn.prepare(
