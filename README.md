@@ -1,0 +1,38 @@
+# Naht
+
+> The seam between your filesystem and Roblox Studio — bidirectional, conflict-safe, never destructive.
+
+**Naht** (German: *seam / suture*) is a Rust filesystem-sync tool for Roblox Studio. It keeps your
+code on disk and your Studio session in lockstep **in both directions at once**, and when both sides
+change the same script it does a **real 3-way merge** instead of silently overwriting your work.
+
+It is a from-scratch alternative to [Rojo](https://github.com/rojo-rbx/rojo) and
+[Argon](https://github.com/argon-rbx/argon), built around the failure modes that make those tools
+painful: experimental/destructive two-way sync, in-memory-only state lost on restart, verbose
+configuration, and silent data loss on conflict.
+
+## Why Naht
+
+| Pain in Rojo / Argon | What Naht does |
+|---|---|
+| Two-way sync is experimental and can delete Studio edits / crash the server | Bidirectional is the core design; no `unwrap()` in the sync loop — a failed write pauses one path, never kills the session |
+| Overwrite-on-conflict, no merge | Real **3-way text merge** with a persisted base; unmergeable conflicts get git-style markers and freeze that path until resolved |
+| Reconciliation state is in memory and lost on restart | Last-sync state is **persisted to SQLite**, so restarts and reconnects re-diff safely instead of re-clobbering |
+| Verbose `default.project.json` + scattered `.meta.json` | **Convention over configuration**, layered config, inline property frontmatter; `naht init --from-rojo` to migrate |
+| Live-sync gaps fail silently | Unsyncable properties are **detected and reported**, with a place-file fallback |
+
+## Status
+
+🚧 Early development. See [`docs/`](docs/) for the architecture, the staged build plan, and the
+prior-art analysis that grounds every design decision.
+
+## Documentation
+
+- [`docs/architecture.md`](docs/architecture.md) — the system design
+- [`docs/spec.md`](docs/spec.md) — the staged implementation spec (one stage = one PR)
+- [`docs/prior-art.md`](docs/prior-art.md) — Rojo/Argon teardown and the decisions it drove
+- [`IMPLEMENTATION.md`](IMPLEMENTATION.md) — workflow for the implementing agent
+
+## License
+
+Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
