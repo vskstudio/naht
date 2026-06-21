@@ -8,6 +8,7 @@
 //! It is intentionally testable in isolation — the reconciler runs against an in-memory VFS so its
 //! behavior can be verified without touching the disk or the network.
 
+pub mod assets;
 pub mod binary;
 pub mod build;
 pub mod frontmatter;

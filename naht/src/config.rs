@@ -25,6 +25,8 @@ pub struct Config {
     pub project: ProjectConfig,
     /// `[serve]` settings.
     pub serve: ServeConfig,
+    /// `[assets]` settings.
+    pub assets: AssetsConfig,
 }
 
 /// `[project]` — identity that cannot be inferred from the directory alone.
@@ -43,6 +45,24 @@ pub struct ServeConfig {
     pub port: Option<u16>,
     /// The Studio place id the daemon will sync into; `None` leaves the handshake unguarded.
     pub place_id: Option<u64>,
+}
+
+/// `[assets]` — Open Cloud asset upload (Stage 12). Disabled by default, so the unchanged behavior is
+/// reference-only: properties keep their values and nothing is uploaded.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AssetsConfig {
+    /// Whether to upload local assets and rewrite their references. Off unless set.
+    pub enabled: Option<bool>,
+    /// The name of the environment variable holding the Open Cloud API key — never the key itself.
+    pub api_key_env: Option<String>,
+}
+
+impl AssetsConfig {
+    /// Whether asset upload is enabled (off by default).
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(false)
+    }
 }
 
 impl Config {
@@ -73,6 +93,12 @@ impl Config {
         }
         if other.serve.place_id.is_some() {
             self.serve.place_id = other.serve.place_id;
+        }
+        if other.assets.enabled.is_some() {
+            self.assets.enabled = other.assets.enabled;
+        }
+        if other.assets.api_key_env.is_some() {
+            self.assets.api_key_env = other.assets.api_key_env;
         }
     }
 
@@ -170,6 +196,25 @@ mod tests {
     #[test]
     fn resolve_port_rejects_zero() {
         assert!(Config::default().resolve_port(Some(0)).is_err());
+    }
+
+    #[test]
+    fn assets_are_disabled_by_default_and_opt_in_via_config() {
+        let bare = Config::default();
+        assert!(!bare.assets.is_enabled());
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(PROJECT_FILE),
+            "[assets]\nenabled = true\napi_key_env = \"NAHT_OPENCLOUD_KEY\"\n",
+        )
+        .unwrap();
+        let config = Config::load_from(None, dir.path()).unwrap();
+        assert!(config.assets.is_enabled());
+        assert_eq!(
+            config.assets.api_key_env.as_deref(),
+            Some("NAHT_OPENCLOUD_KEY")
+        );
     }
 
     #[test]

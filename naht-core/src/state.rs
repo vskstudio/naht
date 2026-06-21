@@ -100,6 +100,10 @@ impl StateStore {
                  base_content BLOB,
                  mtime        INTEGER NOT NULL,
                  conflicted   INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS assets (
+                 content_hash TEXT PRIMARY KEY,
+                 asset_id     TEXT NOT NULL
              );",
         )?;
 
@@ -218,6 +222,29 @@ impl StateStore {
         )?;
         let rows = stmt.query_map([], row_to_record)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Record the asset id an uploaded blob resolved to, keyed by its content hash, so an unchanged
+    /// asset is never re-uploaded.
+    pub fn cache_asset(&self, content_hash: &str, asset_id: &str) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO assets (content_hash, asset_id) VALUES (?1, ?2)
+             ON CONFLICT(content_hash) DO UPDATE SET asset_id = excluded.asset_id",
+            (content_hash, asset_id),
+        )?;
+        Ok(())
+    }
+
+    /// The cached asset id for a content hash, if the blob has been uploaded before.
+    pub fn cached_asset(&self, content_hash: &str) -> Result<Option<String>, StateError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT asset_id FROM assets WHERE content_hash = ?1",
+                [content_hash],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 }
 
