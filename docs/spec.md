@@ -114,7 +114,8 @@ and no disk dependency in tests.
 
 **Scope** (`naht`)
 - `naht init` (scaffold a project), `naht init --from-rojo` (convert `default.project.json`),
-  `naht serve`, `naht pull` (Studio → FS on demand), `naht build` (emit `rbxl`/`rbxm` via `rbx-dom`),
+  `naht serve`, `naht pull` (Studio → FS on demand), `naht build` (emit a model/place file via
+  `rbx-dom`: binary `.rbxm` by default, XML `.rbxmx`/`.rbxlx` when that extension is used),
   `naht status`, `naht resolve`.
 - Layered config loading (defaults → `~/.naht/config.toml` → project `naht.toml`).
 
@@ -166,8 +167,126 @@ and no disk dependency in tests.
 
 ---
 
-## Out of scope for v1 (explicitly deferred)
-- Live terrain voxel sync.
-- Open Cloud asset *upload* pipeline (mesh/image binaries) — only the asset-id reference is synced.
+# Post-v1 stages
+
+Stages 0–7 ship v1 (live bidirectional sync). The stages below extend it. They keep the same rules
+(TDD, no `unwrap()`/`expect()` on fallible I/O, CI green) and the same one-stage-one-PR workflow.
+Stages 8–10 are quality-of-life and hardening; Stages 11–12 lift items previously deferred from v1.
+
+---
+
+## Stage 8 — Daemon observability & CLI ergonomics
+
+**Goal:** make a running daemon legible and the CLI configurable at the command line. No behavioral
+change to the sync engine.
+
+**Scope** (`naht`)
+- `tracing` + `tracing-subscriber` wired at the binary boundary. Instrument the hot paths:
+  watcher (which file changed, debounced batch size), session (patch emitted, base advanced,
+  conflict frozen), server (handshake, place-id guard outcome, long-poll wake, `POST /changes`).
+  `naht-core` stays free of logging deps — it returns data, the binary logs it.
+- `naht serve --port <PORT>` overrides the configured/default port; `-v/--verbose` (repeatable, e.g.
+  `-vv`) raises the log level (`warn` → `info` → `debug`/`trace`). Default level is `info` to stderr.
+- Respect `RUST_LOG` / a `NAHT_LOG` env filter when present (overrides `-v`).
+
+**Acceptance / tests**
+- `serve --port` beats the `naht.toml` value, which beats the default (assert the resolved port).
+- An invalid `--port 0` is rejected with a clear error, not a panic.
+- A unit test over the log-filter resolution: `-v` count and env filter map to the expected level.
+- Smoke: a file change emits exactly one structured "patch" event at `info` (capture the subscriber).
+
+---
+
+## Stage 9 — Place-file build & watch mode
+
+**Goal:** `naht build` can emit a **place** (a `DataModel` with services), and can rebuild on change.
+
+**Scope** (`naht-core` + `naht`)
+- **Place build.** When the output extension is `.rbxl`/`.rbxlx`, build a `DataModel`-rooted tree
+  instead of a bare model. **Service mapping is convention-first (architecture §6 extension):** a
+  top-level directory whose name matches a known Roblox service (`Workspace`,
+  `ServerScriptService`, `ReplicatedStorage`, `StarterGui`, …, validated against `rbx_reflection`)
+  becomes that service; any other top-level entry is placed under `Workspace`. A top-level directory
+  that looks service-like but is unknown produces an **explicit warning**, never a silent reparent.
+  Model output (`.rbxm`/`.rbxmx`) keeps Stage 5 behavior unchanged.
+- **`naht build --watch`.** Reuse the Stage 4 watcher to re-emit the output file on each debounced
+  change; log each rebuild (Stage 8). Independent of `serve` — no daemon, no Studio.
+
+**Acceptance / tests**
+- A fixture with `ServerScriptService/` and `ReplicatedStorage/` top-level dirs builds a `.rbxlx`
+  whose root is a `DataModel` with those services populated; loose top-level files land in `Workspace`.
+- An unknown service-shaped top-level dir triggers the warning and falls back to `Workspace`.
+- `.rbxm`/`.rbxmx` output is byte-for-byte unchanged from Stage 5 for a model fixture (no regression).
+- `--watch` rebuilds the output after a file write (drive via the in-memory/temp VFS + a change event).
+
+---
+
+## Stage 10 — Resilience & edge-case hardening
+
+**Goal:** push the sync loop past the happy path — partial failures, large trees, unusual properties.
+
+**Scope** (`naht-core` + `naht`)
+- **Partial application.** A patch batch the plugin half-applies (some nodes fail) must leave the
+  base advanced only for acked nodes; the rest re-diff on the next cycle. No clobber, no double-apply.
+- **Large-tree behavior.** A reconcile over a deep/wide fixture (e.g. 5k instances) completes within a
+  documented bound and does not load the whole tree into one allocation when avoidable; add a
+  benchmark-style test guarding against accidental O(n²) reconcile.
+- **Unusual properties.** Round-trip coverage for `Attributes`, tags (`CollectionService`),
+  `Color3`/`Vector3`/enum-typed properties, and multi-line/odd-encoding source; anything not
+  round-trippable is reported via the Stage 7 detector, never dropped.
+- **Watcher edge cases.** Rapid create→rename→delete bursts, and atomic-save (write-temp-then-rename)
+  editors, resolve to the correct final state.
+
+**Acceptance / tests**
+- Half-failed batch: base advances only for acked nodes; the unacked node reappears in the next diff.
+- Reconcile of the large fixture stays under the asserted time/allocation guard.
+- Each listed property type survives FS → snapshot → FS and snapshot → place-file round-trips.
+- An atomic-save sequence yields one coalesced patch with the final content, not a delete+create flap.
+
+---
+
+## Stage 11 — Terrain voxel sync (post-v1)
+
+**Goal:** lift terrain from "deferred" (architecture §9) to an opaque, conflict-safe blob sync.
+
+**Scope** (`naht-core` + `plugin/`)
+- Plugin reads terrain via `ReadVoxels` and writes via `WriteVoxels`, shipping the region as an
+  opaque binary blob over the existing protocol (a new patch/change kind). **No diff/merge** of voxel
+  data — it is file-level, hash-compared, last-writer-with-conflict-freeze like other binary cases.
+- On disk the blob lives under a conventional path (e.g. `*.terrain` next to its place root); the
+  state store records its hash only (no `base_content`, per architecture §5 binary rule).
+- Detection from Stage 7 flips from "warn: terrain unsyncable" to "syncing terrain as opaque blob".
+
+**Acceptance / tests**
+- A terrain blob round-trips FS ↔ (fake-Studio) without byte loss.
+- A both-sides terrain change freezes the path as a binary conflict (no silent overwrite).
+- With terrain sync enabled, the Stage 7 warning for terrain no longer fires.
+
+---
+
+## Stage 12 — Open Cloud asset upload (post-v1)
+
+**Goal:** lift `MeshId`/image binaries from "reference-only" (architecture §9) to an actual upload
+path, so a local mesh/image file can become an asset id.
+
+**Scope** (`naht-core` + `naht`)
+- An **asset uploader** behind a trait (real Open Cloud impl + a fake for tests), driven by an API
+  key from config/env (never committed). A local binary referenced by a property (e.g. a mesh file)
+  is uploaded once, its returned asset id cached by content hash in the state store, and the property
+  rewritten to `rbxassetid://…`.
+- Re-upload is skipped when the content hash is unchanged (idempotent). Upload failure **pauses that
+  asset's path** with a clear error; it never blocks the rest of the sync (architecture §8).
+- `naht.toml` gains an optional `[assets]` section (enable flag, key source); disabled by default so
+  v1 behavior (reference-only) is the unchanged default.
+
+**Acceptance / tests** (fake uploader)
+- A new local mesh is uploaded once; its asset id is cached and the property rewritten.
+- An unchanged mesh on the next run is **not** re-uploaded (hash hit).
+- An upload failure pauses only that path and surfaces the error; other paths keep syncing.
+- With `[assets]` disabled, behavior is byte-identical to pre-Stage-12 (reference-only).
+
+---
+
+## Permanently out of scope
 - roblox-ts authoring of the plugin (hand-written Luau is the decision).
 - Any Neublox-specific integration — the Neublox adapter lives outside this repo.
