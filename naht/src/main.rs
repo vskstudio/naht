@@ -1,68 +1,88 @@
 //! `naht` — the CLI and localhost sync daemon.
 //!
-//! This binary owns the HTTP server the Studio plugin talks to, the file watcher, and the SQLite
-//! session state; all sync decisions are delegated to [`naht_core`]. The full CLI (clap subcommands,
-//! layered config) lands in Stage 5 — for now `naht serve [path]` runs the daemon and any other
-//! invocation prints the version.
+//! This binary parses arguments and dispatches to [`naht::commands`]; all sync decisions live in
+//! [`naht_core`] and the daemon modules. Commands: `init` (`--from-rojo` to convert a Rojo project),
+//! `serve`, `pull`, `build`, `status`, `resolve`.
 
-use std::net::{Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 
-use naht::server::{self, AppState};
-use naht::session::Session;
-use naht::watcher;
+use naht::commands;
+use naht::config::Config;
 
-/// The default localhost port the daemon listens on.
-const DEFAULT_PORT: u16 = 34872;
+/// Bidirectional, conflict-safe filesystem sync for Roblox Studio.
+#[derive(Parser)]
+#[command(name = "naht", version, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
 
-/// How long a long-poll is held open before returning empty, prompting the plugin to re-poll.
-const LONG_POLL: Duration = Duration::from_secs(25);
+#[derive(Subcommand)]
+enum Command {
+    /// Scaffold a new project (or convert a Rojo one with `--from-rojo`).
+    Init {
+        /// The project directory; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Convert an existing `default.project.json` instead of scaffolding.
+        #[arg(long)]
+        from_rojo: bool,
+    },
+    /// Run the sync daemon for a project.
+    Serve {
+        /// The project directory; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Ask a running daemon to re-sync now.
+    Pull {
+        /// The project directory; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Build the project into a Roblox model file.
+    Build {
+        /// The project directory; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// The output model file (`.rbxm`/`.rbxmx`).
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Show the project's conflict state.
+    Status {
+        /// The project directory; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Clear a resolved conflict once its markers are gone.
+    Resolve {
+        /// The conflicted path, as listed by `status`.
+        path: String,
+        /// The project directory; defaults to the current directory.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        Some("serve") => {
-            let root = args
-                .next()
-                .map_or_else(|| PathBuf::from("."), PathBuf::from);
-            serve(&root).await
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Init { path, from_rojo } => commands::init(&path, from_rojo),
+        Command::Serve { path } => {
+            let config = Config::load(&path)?;
+            commands::serve(config, &path).await
         }
-        _ => {
-            println!(
-                "naht {} (naht-core {})",
-                env!("CARGO_PKG_VERSION"),
-                naht_core::version()
-            );
-            Ok(())
+        Command::Pull { path } => {
+            let config = Config::load(&path)?;
+            commands::pull(&config).await
         }
+        Command::Build { path, output } => commands::build(&path, &output),
+        Command::Status { path } => commands::status(&path),
+        Command::Resolve { path, project } => commands::resolve(&project, &path),
     }
-}
-
-async fn serve(root: &Path) -> Result<()> {
-    let root = std::fs::canonicalize(root)
-        .with_context(|| format!("project directory not found: {}", root.display()))?;
-    let project_name = root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("naht")
-        .to_string();
-
-    let store = naht_core::state::StateStore::open(&root.join(".naht").join("state.db"))
-        .context("opening the state database")?;
-    // The serve-place guard is configured in Stage 5; unguarded for now.
-    let session = Session::new(root.clone(), store, project_name, None);
-    let state = AppState::new(session, LONG_POLL);
-
-    let _watcher = watcher::spawn(&root, state.clone()).context("starting the file watcher")?;
-
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, DEFAULT_PORT));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("binding {addr}"))?;
-    println!("naht serving {} on http://{addr}", root.display());
-    server::serve(listener, state).await.context("serving")
 }
