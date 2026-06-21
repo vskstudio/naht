@@ -36,8 +36,8 @@ plan, and the prior-art analysis that grounds every design decision.
 naht init [path]            # scaffold a project (--from-rojo converts a default.project.json)
 naht serve [path]           # run the localhost sync daemon
 naht status [path]          # list paths frozen by a conflict
-naht resolve <path>         # clear a conflict once its markers are gone
-naht build [path] -o out.rbxm   # serialize the project to a Roblox model file
+naht resolve <path>         # clear a conflict once its markers are gone (--project <dir> to scope it)
+naht build [path] -o out.rbxm   # serialize the project (.rbxm binary, or .rbxmx/.rbxlx for XML)
 naht pull [path]            # ask a running daemon to re-sync now
 ```
 
