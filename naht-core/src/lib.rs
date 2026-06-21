@@ -11,6 +11,7 @@
 pub mod build;
 pub mod frontmatter;
 pub mod hash;
+pub mod limits;
 pub mod mapper;
 pub mod merge;
 pub mod protocol;

@@ -19,13 +19,16 @@ configuration, and silent data loss on conflict.
 | Overwrite-on-conflict, no merge | Real **3-way text merge** with a persisted base; unmergeable conflicts get git-style markers and freeze that path until resolved |
 | Reconciliation state is in memory and lost on restart | Last-sync state is **persisted to SQLite**, so restarts and reconnects re-diff safely instead of re-clobbering |
 | Verbose `default.project.json` + scattered `.meta.json` | **Convention over configuration**, layered config, inline property frontmatter; `naht init --from-rojo` to migrate |
-| Live-sync gaps fail silently | Unsyncable properties are **detected and reported**, with a place-file fallback |
+| Live-sync gaps fail silently | Unsyncable properties (CSG, terrain, `MeshId`, locked props) are **detected and reported** with guidance, never dropped; place-file fallback via `naht build` |
 
 ## Status
 
-🚧 Early development. The core sync engine, the localhost daemon, and the CLI are in place; the
-Studio plugin that closes the live loop lands in a later stage. See [`docs/`](docs/) for the
-architecture, the staged build plan, and the prior-art analysis that grounds every design decision.
+All eight build stages are implemented: the sync engine (`naht-core`), the localhost daemon and
+MessagePack protocol, the CLI, the Luau Studio plugin, and the limits/hardening pass. The Rust side
+is covered by tests and the plugin's codec/apply paths run headless under
+[lune](https://github.com/lune-org/lune); the live Studio loop is validated manually (see
+[`plugin/README.md`](plugin/README.md)). See [`docs/`](docs/) for the architecture, the staged build
+plan, and the prior-art analysis that grounds every design decision.
 
 ## Usage
 

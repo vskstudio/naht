@@ -15,6 +15,7 @@ Connection.__index = Connection
 local BACKOFF_START = 1
 local BACKOFF_MAX = 15
 local PUSH_DEBOUNCE = 0.3
+local PUSH_RETRY = 2
 
 local CLASS_SUFFIX = {
 	Script = ".server.luau",
@@ -169,22 +170,35 @@ function Connection._watchStudio(self)
 	end)
 end
 
-function Connection._schedulePush(self)
+function Connection._schedulePush(self, delay: number?)
 	if self.pushScheduled then
 		return
 	end
 	self.pushScheduled = true
-	task.delay(PUSH_DEBOUNCE, function()
+	task.delay(delay or PUSH_DEBOUNCE, function()
 		self.pushScheduled = false
+		-- Snapshot and clear, so edits arriving during the request aren't lost.
+		local sent = self.pendingPush
+		self.pendingPush = {}
 		local changes = {}
-		for _, change in self.pendingPush do
+		for _, change in sent do
 			table.insert(changes, change)
 		end
-		self.pendingPush = {}
-		if #changes > 0 then
-			pcall(function()
-				self.client:postChanges(changes)
-			end)
+		if #changes == 0 then
+			return
+		end
+		local ok = pcall(function()
+			self.client:postChanges(changes)
+		end)
+		if not ok then
+			-- Never drop an edit: restore anything not superseded by a newer pending change, and
+			-- retry after a backoff so a downed daemon doesn't spin a hot loop.
+			for path, change in sent do
+				if self.pendingPush[path] == nil then
+					self.pendingPush[path] = change
+				end
+			end
+			self:_schedulePush(PUSH_RETRY)
 		end
 	end)
 end

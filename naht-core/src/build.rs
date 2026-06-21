@@ -114,4 +114,34 @@ mod tests {
         let dom = rbx_xml::from_reader_default(&bytes[..]).unwrap();
         assert_eq!(dom.root().children().len(), 2);
     }
+
+    #[test]
+    fn a_union_round_trips_through_rbxm_without_losing_its_subtree() {
+        // Naht never text-ifies binary geometry; it passes the instance through verbatim, so a
+        // Union (and anything under it) round-trips opaquely inside an rbxm.
+        let project = Snapshot::new("Folder", "proj").with_child(
+            Snapshot::new("UnionOperation", "Bridge").with_child(
+                Snapshot::new("ModuleScript", "Meta")
+                    .with_property("Source", Variant::String("return 'kept'".to_string())),
+            ),
+        );
+
+        let mut bytes = Vec::new();
+        write_model(&mut bytes, &project, ModelFormat::Binary).unwrap();
+        let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
+
+        let union_ref = dom.root().children()[0];
+        let union = dom.get_by_ref(union_ref).unwrap();
+        assert_eq!(union.class, "UnionOperation");
+        assert_eq!(union.name, "Bridge");
+
+        let meta = dom.get_by_ref(union.children()[0]).unwrap();
+        assert_eq!(meta.name, "Meta");
+        let source = meta
+            .properties
+            .iter()
+            .find(|(key, _)| key.as_str() == "Source")
+            .map(|(_, value)| value);
+        assert_eq!(source, Some(&Variant::String("return 'kept'".to_string())));
+    }
 }
