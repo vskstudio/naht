@@ -37,7 +37,7 @@ naht init [path]            # scaffold a project (--from-rojo converts a default
 naht serve [path]           # run the localhost sync daemon (--port to override, -v/-vv for logs)
 naht status [path]          # list paths frozen by a conflict
 naht resolve <path>         # clear a conflict once its markers are gone (--project <dir> to scope it)
-naht build [path] -o out.rbxm   # serialize the project (.rbxm binary, or .rbxmx/.rbxlx for XML)
+naht build [path] -o out.rbxm   # build a model (.rbxm/.rbxmx) or place (.rbxl/.rbxlx); --watch to rebuild on change
 naht pull [path]            # ask a running daemon to re-sync now
 ```
 
