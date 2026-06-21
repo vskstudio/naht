@@ -8,9 +8,10 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use naht_core::build::{self, ModelFormat};
+use naht_core::snapshot::Snapshot;
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
-use naht_core::{mapper, reconciler};
+use naht_core::{limits, mapper, reconciler};
 use serde::Deserialize;
 
 use crate::config::{Config, PROJECT_FILE};
@@ -88,6 +89,7 @@ pub fn build(root: &Path, output: &Path) -> Result<()> {
         mapper::snapshot_dir(&DiskVfs::new(), &root).context("snapshotting the project")?;
     // `.naht` holds internal state, not Roblox source — keep it out of the artifact.
     snapshot.children.retain(|child| child.name != INTERNAL_DIR);
+    warn_unsyncable(&snapshot);
 
     if let Some(parent) = output.parent() {
         if !parent.as_os_str().is_empty() {
@@ -125,6 +127,10 @@ pub async fn pull(config: &Config) -> Result<()> {
 /// Run the sync daemon for the project at `root`, using `config` for the port and place guard.
 pub async fn serve(config: Config, root: &Path) -> Result<()> {
     let root = canonical(root)?;
+    // Surface anything that can't round-trip live before the session starts (architecture §9).
+    if let Ok(snapshot) = mapper::snapshot_dir(&DiskVfs::new(), &root) {
+        warn_unsyncable(&snapshot);
+    }
     let store = open_store(&root)?;
     let session = Session::new(
         root.clone(),
@@ -148,6 +154,18 @@ pub async fn serve(config: Config, root: &Path) -> Result<()> {
 }
 
 // --- helpers -------------------------------------------------------------------------------------
+
+/// Print, to stderr, every instance that can't round-trip live — never silently dropped.
+fn warn_unsyncable(snapshot: &Snapshot) {
+    let warnings = limits::scan(snapshot);
+    if warnings.is_empty() {
+        return;
+    }
+    eprintln!("naht: {} item(s) cannot live-sync:", warnings.len());
+    for warning in &warnings {
+        eprintln!("  warning: {}", warning.message());
+    }
+}
 
 /// A minimal Rojo `default.project.json`, just the fields Naht can carry over.
 #[derive(Debug, Deserialize)]

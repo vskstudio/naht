@@ -147,6 +147,26 @@ local main = if ui ~= nil then tree.findChild(ui, "main") else nil
 check("apply strips .client.luau suffix", main ~= nil and main.Name == "main")
 check("apply maps LocalScript class", main ~= nil and main.ClassName == "LocalScript")
 
+-- === transport modules compile ===============================================================
+-- These talk to HttpService / the DataModel, so they can't run headless — but they must at least
+-- compile. Catches syntax regressions in the modules the cases above don't load.
+
+local luau = require("@lune/luau")
+local fs = require("@lune/fs")
+for _, path in
+	{
+		"plugin/src/Protocol.luau",
+		"plugin/src/Client.luau",
+		"plugin/src/Connection.luau",
+		"plugin/src/Plugin.server.luau",
+	}
+do
+	local ok = pcall(function()
+		luau.load(fs.readFile(path))
+	end)
+	check("compiles " .. path, ok)
+end
+
 -- === result ==================================================================================
 
 if failures > 0 then
