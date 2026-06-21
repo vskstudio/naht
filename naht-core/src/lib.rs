@@ -13,6 +13,7 @@
 pub mod frontmatter;
 pub mod mapper;
 pub mod snapshot;
+pub mod state;
 pub mod vfs;
 
 pub use snapshot::Snapshot;
