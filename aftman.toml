@@ -1,0 +1,4 @@
+# Toolchain for the Luau plugin harness. Run the tests with:
+#   lune run plugin/tests/run.luau
+[tools]
+lune = "lune-org/lune@0.10.4"
