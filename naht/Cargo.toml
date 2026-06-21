@@ -1,0 +1,20 @@
+[package]
+name = "naht"
+description = "The seam between your filesystem and Roblox Studio: the Naht CLI and localhost sync daemon."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "naht"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+axum = "0.8.9"
+clap = "4.6.1"
+naht-core = { path = "../naht-core" }
+notify-debouncer-full = "0.7.0"
+tokio = "1.52.3"
