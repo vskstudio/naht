@@ -8,7 +8,14 @@
 //! It is intentionally testable in isolation — the reconciler runs against an in-memory VFS so its
 //! behavior can be verified without touching the disk or the network.
 //!
-//! Stage 0 is scaffolding only: the modules below land in later stages.
+//! Remaining modules (state store, reconciler, protocol) land in later stages.
+
+pub mod frontmatter;
+pub mod mapper;
+pub mod snapshot;
+pub mod vfs;
+
+pub use snapshot::Snapshot;
 
 /// The crate version, as reported by Cargo at build time.
 ///
