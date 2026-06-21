@@ -73,6 +73,12 @@ async fn info(State(state): State<Arc<AppState>>, Query(query): Query<InfoQuery>
     let mut session = state.session.lock().await;
     if let Some(expected) = session.serve_place_id() {
         if query.place_id != Some(expected) {
+            tracing::warn!(
+                target: "naht::server",
+                expected,
+                reported = ?query.place_id,
+                "handshake rejected: place id mismatch"
+            );
             return (
                 StatusCode::FORBIDDEN,
                 format!(
@@ -88,6 +94,7 @@ async fn info(State(state): State<Arc<AppState>>, Query(query): Query<InfoQuery>
     }
     let info = session.info();
     drop(session);
+    tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
     state.patches_ready.notify_waiters();
     msgpack(&info)
 }
@@ -127,11 +134,13 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         Ok(batch) => batch,
         Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     };
+    let count = batch.changes.len();
     let mut session = state.session.lock().await;
     if let Err(error) = session.apply_changes(batch.changes) {
         return internal_error(&error);
     }
     drop(session);
+    tracing::info!(target: "naht::server", count, "changes applied from Studio");
     state.patches_ready.notify_waiters();
     StatusCode::OK.into_response()
 }
