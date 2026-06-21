@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use rbx_dom_weak::types::Variant;
+use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Variant, Vector3};
 
 /// The directive prefix that marks a frontmatter line.
 const PREFIX: &str = "--!naht";
@@ -91,11 +91,13 @@ fn parse_table(s: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError> {
     Ok(props)
 }
 
-/// Split on `delim`, but ignore delimiters inside double-quoted spans.
+/// Split on `delim`, but ignore delimiters inside double-quoted spans or nested `(...)`/`{...}`
+/// groups (so a `Color3(1, 0, 0)` or `Attributes({ A = 1 })` value survives intact).
 fn split_top_level(s: &str, delim: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
+    let mut depth = 0u32;
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
@@ -109,7 +111,15 @@ fn split_top_level(s: &str, delim: char) -> Vec<String> {
                     current.push(next);
                 }
             }
-            c if c == delim && !in_quotes => {
+            '(' | '{' if !in_quotes => {
+                depth += 1;
+                current.push(c);
+            }
+            ')' | '}' if !in_quotes => {
+                depth = depth.saturating_sub(1);
+                current.push(c);
+            }
+            c if c == delim && !in_quotes && depth == 0 => {
                 parts.push(current.clone());
                 current.clear();
             }
@@ -129,6 +139,32 @@ fn parse_value(s: &str) -> Result<Variant, FrontmatterError> {
     if let Some(text) = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         return Ok(Variant::String(unescape(text)));
     }
+    if let Some(args) = call_args(s, "Color3") {
+        let [r, g, b] = floats(s, args)?;
+        return Ok(Variant::Color3(Color3::new(r, g, b)));
+    }
+    if let Some(args) = call_args(s, "Vector3") {
+        let [x, y, z] = floats(s, args)?;
+        return Ok(Variant::Vector3(Vector3::new(x, y, z)));
+    }
+    if let Some(args) = call_args(s, "Enum") {
+        let value = args
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| FrontmatterError::BadValue(s.to_string()))?;
+        return Ok(Variant::Enum(Enum::from_u32(value)));
+    }
+    if let Some(args) = call_args(s, "Tags") {
+        return Ok(Variant::Tags(parse_tags(args)?));
+    }
+    if let Some(args) = call_args(s, "Attributes") {
+        let table = parse_table(args.trim())?;
+        let mut attributes = Attributes::new();
+        for (key, value) in table {
+            attributes.insert(key, value);
+        }
+        return Ok(Variant::Attributes(attributes));
+    }
     if let Ok(int) = s.parse::<i64>() {
         return Ok(Variant::Int64(int));
     }
@@ -138,6 +174,43 @@ fn parse_value(s: &str) -> Result<Variant, FrontmatterError> {
     Err(FrontmatterError::BadValue(s.to_string()))
 }
 
+/// The inside of a `Name(...)` call, or `None` when `s` is not that call.
+fn call_args<'a>(s: &'a str, name: &str) -> Option<&'a str> {
+    s.strip_prefix(name)?.strip_prefix('(')?.strip_suffix(')')
+}
+
+/// Parse exactly `N` comma-separated `f32`s from a constructor's arguments.
+fn floats<const N: usize>(whole: &str, args: &str) -> Result<[f32; N], FrontmatterError> {
+    let parts = split_top_level(args, ',');
+    let mut out = [0.0f32; N];
+    if parts.len() != N {
+        return Err(FrontmatterError::BadValue(whole.to_string()));
+    }
+    for (slot, part) in out.iter_mut().zip(parts) {
+        *slot = part
+            .trim()
+            .parse::<f32>()
+            .map_err(|_| FrontmatterError::BadValue(whole.to_string()))?;
+    }
+    Ok(out)
+}
+
+fn parse_tags(args: &str) -> Result<Tags, FrontmatterError> {
+    let mut tags = Vec::new();
+    for part in split_top_level(args, ',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let text = part
+            .strip_prefix('"')
+            .and_then(|p| p.strip_suffix('"'))
+            .ok_or_else(|| FrontmatterError::BadValue(part.to_string()))?;
+        tags.push(unescape(text));
+    }
+    Ok(tags.into())
+}
+
 fn render_value(value: &Variant) -> String {
     match value {
         Variant::Bool(b) => b.to_string(),
@@ -145,6 +218,20 @@ fn render_value(value: &Variant) -> String {
         // `{:?}` keeps integral floats as `1.0` so they re-parse as floats, not ints.
         Variant::Float64(f) => format!("{f:?}"),
         Variant::String(s) => format!("\"{}\"", escape(s)),
+        Variant::Color3(c) => format!("Color3({:?}, {:?}, {:?})", c.r, c.g, c.b),
+        Variant::Vector3(v) => format!("Vector3({:?}, {:?}, {:?})", v.x, v.y, v.z),
+        Variant::Enum(e) => format!("Enum({})", e.to_u32()),
+        Variant::Tags(tags) => {
+            let items: Vec<String> = tags.iter().map(|t| format!("\"{}\"", escape(t))).collect();
+            format!("Tags({})", items.join(", "))
+        }
+        Variant::Attributes(attributes) => {
+            let items: Vec<String> = attributes
+                .iter()
+                .map(|(key, value)| format!("{key} = {}", render_value(value)))
+                .collect();
+            format!("Attributes({{ {} }})", items.join(", "))
+        }
         other => format!("{other:?}"),
     }
 }
@@ -227,5 +314,53 @@ mod tests {
     #[test]
     fn empty_properties_render_to_nothing() {
         assert_eq!(render(&BTreeMap::new()), None);
+    }
+
+    #[test]
+    fn structured_property_types_round_trip() {
+        let mut props = BTreeMap::new();
+        props.insert(
+            "Color".to_string(),
+            Variant::Color3(Color3::new(1.0, 0.5, 0.0)),
+        );
+        props.insert(
+            "Position".to_string(),
+            Variant::Vector3(Vector3::new(1.0, 2.0, 3.0)),
+        );
+        props.insert("Material".to_string(), Variant::Enum(Enum::from_u32(256)));
+        props.insert(
+            "Tags".to_string(),
+            Variant::Tags(vec!["combat".to_string(), "npc".to_string()].into()),
+        );
+
+        let line = render(&props).unwrap();
+        let (parsed, body) = split(&format!("{line}body")).unwrap();
+        assert_eq!(parsed, props);
+        assert_eq!(body, "body");
+    }
+
+    #[test]
+    fn attributes_round_trip() {
+        let mut attributes = Attributes::new();
+        attributes.insert("Health".to_string(), Variant::Float64(100.0));
+        attributes.insert("Title".to_string(), Variant::String("hero".to_string()));
+        let mut props = BTreeMap::new();
+        props.insert("Attributes".to_string(), Variant::Attributes(attributes));
+
+        let line = render(&props).unwrap();
+        let (parsed, _) = split(&format!("{line}rest")).unwrap();
+        assert_eq!(parsed, props);
+    }
+
+    #[test]
+    fn multi_line_source_survives_the_split() {
+        let mut props = BTreeMap::new();
+        props.insert("Disabled".to_string(), Variant::Bool(true));
+        let line = render(&props).unwrap();
+        let source = "local x = 1\nlocal y = 2\nprint(x + y)\n";
+
+        let (parsed, body) = split(&format!("{line}{source}")).unwrap();
+        assert_eq!(parsed, props);
+        assert_eq!(body, source);
     }
 }

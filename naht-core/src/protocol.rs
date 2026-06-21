@@ -73,6 +73,14 @@ pub struct Pong {
     pub session_id: String,
 }
 
+/// Confirmation from the plugin that it applied the given paths' patches. Only acked paths advance
+/// the daemon's base; unacked ones re-diff on the next cycle, so a half-applied batch loses nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Ack {
+    /// The project-relative paths whose patches were successfully applied.
+    pub paths: Vec<String>,
+}
+
 /// Errors from encoding or decoding a protocol message.
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {

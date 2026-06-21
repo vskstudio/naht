@@ -11,7 +11,7 @@ mapping, reconciliation, and merge are all in [`naht-core`](../naht-core). This 
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec — the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/heartbeat`) |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/ack`, `/heartbeat`) |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Connection.luau` | Handshake, long-poll + apply, edit push, reconnect with backoff |
 | `src/Plugin.server.luau` | Entry: toolbar toggle and a status widget |

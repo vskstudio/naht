@@ -127,10 +127,13 @@ instances only the hash is stored (no merge base).
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
 - **Endpoints:** `GET /info` (handshake + `servePlaceId` guard), `GET /patches` (long-poll, held open
-  until a change or timeout), `POST /changes` (Studio → FS), `GET /heartbeat` (liveness ping).
+  until a change or timeout), `POST /changes` (Studio → FS), `POST /ack` (the plugin confirms which
+  patches it applied), `GET /heartbeat` (liveness ping).
 - **Resilience** is the headline feature here, because it is exactly what Rojo and Argon get wrong:
   heartbeat, automatic reconnect with backoff, an explicit connection-state indicator, and — on
-  reconnect — a **re-diff against the persisted state** rather than a blind re-push.
+  reconnect — a **re-diff against the persisted state** rather than a blind re-push. Studio-bound
+  patches are **ack-gated**: a patch's base advances only once the plugin acks it, so a half-applied
+  batch re-diffs the rest instead of treating them as synced.
 
 ## 8. Error handling
 

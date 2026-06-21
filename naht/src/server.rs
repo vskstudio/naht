@@ -14,7 +14,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use naht_core::protocol::{self, ChangeBatch, PatchBatch, Pong};
+use naht_core::protocol::{self, Ack, ChangeBatch, PatchBatch, Pong};
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
 
@@ -55,6 +55,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/info", get(info))
         .route("/patches", get(patches))
         .route("/changes", post(changes))
+        .route("/ack", post(ack))
         .route("/heartbeat", get(heartbeat))
         .with_state(state)
 }
@@ -142,6 +143,19 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     drop(session);
     tracing::info!(target: "naht::server", count, "changes applied from Studio");
     state.patches_ready.notify_waiters();
+    StatusCode::OK.into_response()
+}
+
+async fn ack(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    let ack: Ack = match protocol::from_msgpack(&body) {
+        Ok(ack) => ack,
+        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    };
+    let mut session = state.session.lock().await;
+    if let Err(error) = session.ack(&ack.paths) {
+        return internal_error(&error);
+    }
+    tracing::debug!(target: "naht::server", count = ack.paths.len(), "patches acked");
     StatusCode::OK.into_response()
 }
 

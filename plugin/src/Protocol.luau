@@ -59,6 +59,12 @@ function Protocol.delete(path: string): Change
 	return { kind = "Delete", path = path }
 end
 
+-- Encode the paths the plugin applied into a `POST /ack` body. Only acked paths advance the
+-- daemon's base, so a patch that failed to apply must be left out.
+function Protocol.encodeAck(paths: { string }): string
+	return MessagePack.encode({ paths = MessagePack.array(paths) })
+end
+
 -- Encode a batch of Studio-side changes into a `POST /changes` body.
 function Protocol.encodeChanges(changes: { Change }): string
 	local wire = {}
