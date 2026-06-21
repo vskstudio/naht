@@ -453,6 +453,20 @@ pub fn resolve(vfs: &impl Vfs, store: &StateStore, path: &str) -> Result<(), Rec
     Ok(())
 }
 
+/// Advance the persisted base for one path to `content`, clearing any conflict flag.
+///
+/// The daemon calls this when the plugin **acks** a Studio-bound patch: the base is held at the last
+/// agreed content until then, so a patch the plugin never applied keeps re-diffing instead of being
+/// silently considered synced.
+pub fn set_base(
+    store: &StateStore,
+    path: &str,
+    class: &str,
+    content: &str,
+) -> Result<(), ReconcileError> {
+    advance_base(store, path, class, content)
+}
+
 fn advance_base(
     store: &StateStore,
     path: &str,
@@ -514,6 +528,8 @@ fn decode(path: &str, bytes: &[u8]) -> Result<String, ReconcileError> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
     use crate::vfs::MemoryVfs;
 
@@ -716,6 +732,42 @@ mod tests {
         assert_eq!(
             store.get("n").unwrap().unwrap().base_content,
             Some(b"fresh".to_vec())
+        );
+    }
+
+    #[test]
+    fn reconcile_scales_to_a_large_tree_without_quadratic_blowup() {
+        // A wide tree must reconcile in roughly linear time. The bound is deliberately loose — it
+        // only catches an accidental O(n²), not a modest slowdown — and a debug build well clears it
+        // (release reconciles 5k in ~30ms).
+        const N: usize = 5_000;
+        let mut vfs = MemoryVfs::new();
+        let mut fs = BTreeMap::new();
+        for i in 0..N {
+            let path = format!("m{i}.luau");
+            let content = format!("return {i}");
+            vfs = vfs.with_file(&path, content.clone());
+            fs.insert(path.clone(), TextInstance::new(path, CLASS, content));
+        }
+        let store = StateStore::open_in_memory().unwrap();
+
+        let start = Instant::now();
+        let patches = reconcile(&mut vfs, &store, &fs, &BTreeMap::new()).unwrap();
+        let create_elapsed = start.elapsed();
+        assert_eq!(patches.len(), N);
+        assert!(
+            create_elapsed < Duration::from_secs(10),
+            "initial reconcile too slow: {create_elapsed:?}"
+        );
+
+        // Steady state — every side equals the base — must also stay linear and emit nothing.
+        let start = Instant::now();
+        let patches = reconcile(&mut vfs, &store, &fs, &fs).unwrap();
+        assert!(patches.is_empty());
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "steady-state reconcile too slow: {:?}",
+            start.elapsed()
         );
     }
 

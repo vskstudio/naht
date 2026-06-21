@@ -55,6 +55,19 @@ function Client.patches(self: Client, cursor: number): Protocol.PatchBatch
 	return Protocol.decodePatches(response.Body)
 end
 
+-- Confirm to the daemon which patch paths were applied, so their base advances.
+function Client.postAck(self: Client, paths: { string })
+	local response = request(self, {
+		Url = "/ack",
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/msgpack" },
+		Body = Protocol.encodeAck(paths),
+	})
+	if not response.Success then
+		error("naht: /ack returned " .. tostring(response.StatusCode))
+	end
+end
+
 -- Push Studio-side changes to the filesystem.
 function Client.postChanges(self: Client, changes: { Protocol.Change })
 	local response = request(self, {

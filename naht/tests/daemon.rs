@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use naht::server::AppState;
 use naht::session::Session;
-use naht_core::protocol::{self, Change, ChangeBatch, PatchBatch, Pong, ServerInfo};
+use naht_core::protocol::{self, Ack, Change, ChangeBatch, PatchBatch, Pong, ServerInfo};
 use naht_core::reconciler::{Direction, PatchKind};
 use naht_core::state::StateStore;
 
@@ -92,6 +92,22 @@ impl Harness {
             .unwrap();
         decode(resp).await
     }
+
+    async fn ack(&self, paths: Vec<String>) -> reqwest::StatusCode {
+        let body = protocol::to_msgpack(&Ack { paths }).unwrap();
+        self.client
+            .post(format!("{}/ack", self.base))
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
+    async fn ack_all(&self, batch: &PatchBatch) {
+        let paths = batch.patches.iter().map(|p| p.path.clone()).collect();
+        assert!(self.ack(paths).await.is_success());
+    }
 }
 
 async fn decode<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> T {
@@ -173,16 +189,38 @@ async fn reconnect_rediffs_without_clobbering() {
     let h = Harness::start(None).await;
     h.write("a.luau", "v1");
 
-    // Initial sync.
+    // Initial sync, acked by the (fake) plugin so the base advances.
     h.info(None).await;
     let first = h.patches(0).await;
     assert_eq!(first.patches.len(), 1);
+    h.ack_all(&first).await;
 
     // A reconnect re-diffs against the persisted base: nothing changed, so no spurious patch and the
     // file is untouched (no blind re-push).
     h.info(None).await;
     assert!(h.patches(first.cursor).await.patches.is_empty());
     assert_eq!(h.read("a.luau"), "v1");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_half_acked_batch_re_emits_only_the_unacked_path() {
+    let h = Harness::start(None).await;
+    h.write("A.luau", "return 1");
+    h.write("B.luau", "return 2");
+
+    // Re-diff surfaces both new files as patches.
+    h.info(None).await;
+    let first = h.patches(0).await;
+    assert_eq!(first.patches.len(), 2);
+
+    // The plugin applies only A and acks it; B fails (no ack).
+    assert!(h.ack(vec!["A.luau".to_string()]).await.is_success());
+
+    // The next re-diff re-emits only B — A's base advanced on its ack, B's did not.
+    h.info(None).await;
+    let again = h.patches(first.cursor).await;
+    let paths: Vec<_> = again.patches.iter().map(|p| p.path.as_str()).collect();
+    assert_eq!(paths, vec!["B.luau"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

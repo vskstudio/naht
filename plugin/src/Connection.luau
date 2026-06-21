@@ -111,17 +111,30 @@ function Connection._serve(self)
 		local batch = self.client:patches(self.cursor)
 		self.applying = true
 		local applier = Apply.create(Apply.studioTree(self.root))
+		local applied = {}
 		for _, patch in batch.patches do
 			if patch.kind ~= "Delete" then
 				self.lastApplied[patch.path] = patch.content
 			end
-			applier:apply(patch)
-			if patch.kind == "Conflict" then
-				self.onState("Conflict", patch.path)
+			-- Apply each patch independently so one failure doesn't sink the whole batch; only the
+			-- ones that land are acked, and the rest re-diff on the next cycle (no loss).
+			local ok = pcall(function()
+				applier:apply(patch)
+			end)
+			if ok then
+				table.insert(applied, patch.path)
+				if patch.kind == "Conflict" then
+					self.onState("Conflict", patch.path)
+				end
 			end
 		end
 		self.applying = false
 		self.cursor = batch.cursor
+		if #applied > 0 then
+			pcall(function()
+				self.client:postAck(applied)
+			end)
+		end
 	end
 end
 
