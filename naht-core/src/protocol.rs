@@ -8,6 +8,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::binary::{BlobInstance, BlobPatch};
 use crate::reconciler::Patch;
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
@@ -64,6 +65,23 @@ pub enum Change {
 pub struct ChangeBatch {
     /// The edits to apply, in order.
     pub changes: Vec<Change>,
+}
+
+/// The long-poll response carrying filesystem → Studio **binary** patches (e.g. terrain blobs).
+/// Separate from [`PatchBatch`] because blobs are synced opaquely (no diff/merge), as bin payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BlobPatchBatch {
+    /// The sequence number to pass as the next request's cursor.
+    pub cursor: u64,
+    /// Binary patches flowing filesystem → Studio, in order.
+    pub patches: Vec<BlobPatch>,
+}
+
+/// The body of a Studio → filesystem **binary** change push: the blobs Studio currently holds.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BlobChangeBatch {
+    /// The blob instances to apply, in order.
+    pub changes: Vec<BlobInstance>,
 }
 
 /// The liveness reply from the heartbeat endpoint.
@@ -134,6 +152,29 @@ mod tests {
         };
         let bytes = to_msgpack(&batch).unwrap();
         assert_eq!(from_msgpack::<PatchBatch>(&bytes).unwrap(), batch);
+    }
+
+    #[test]
+    fn blob_patch_batch_round_trips_raw_bytes_through_msgpack() {
+        use crate::binary::BlobPatch;
+        use crate::reconciler::{Direction, PatchKind};
+
+        // Bytes that would corrupt under any text encoding: NUL, high bytes, the full 0..256 range.
+        let blob: Vec<u8> = (0u16..600).map(|i| (i % 256) as u8).collect();
+        let batch = BlobPatchBatch {
+            cursor: 3,
+            patches: vec![BlobPatch {
+                path: "Terrain.terrain".to_string(),
+                class: "Terrain".to_string(),
+                direction: Direction::ToStudio,
+                kind: PatchKind::Update,
+                content: Some(blob.clone()),
+            }],
+        };
+        let bytes = to_msgpack(&batch).unwrap();
+        let decoded: BlobPatchBatch = from_msgpack(&bytes).unwrap();
+        assert_eq!(decoded, batch);
+        assert_eq!(decoded.patches[0].content.as_deref(), Some(blob.as_slice()));
     }
 
     #[test]

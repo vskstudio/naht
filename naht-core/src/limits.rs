@@ -67,20 +67,33 @@ impl Warning {
     }
 }
 
-/// Scan a snapshot tree for everything that can't round-trip live.
+/// What capabilities are enabled, so a now-syncable case stops being warned about.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Options {
+    /// Terrain is synced as an opaque blob (Stage 11), so it is no longer flagged unsyncable.
+    pub terrain_sync: bool,
+}
+
+/// Scan a snapshot tree for everything that can't round-trip live, with default capabilities.
 #[must_use]
 pub fn scan(root: &Snapshot) -> Vec<Warning> {
+    scan_with(root, Options::default())
+}
+
+/// Scan a snapshot tree for everything that can't round-trip live, given enabled capabilities.
+#[must_use]
+pub fn scan_with(root: &Snapshot, options: Options) -> Vec<Warning> {
     let mut warnings = Vec::new();
-    scan_into(root, root.name.clone(), &mut warnings);
+    scan_into(root, root.name.clone(), options, &mut warnings);
     warnings
 }
 
-fn scan_into(node: &Snapshot, path: String, warnings: &mut Vec<Warning>) {
+fn scan_into(node: &Snapshot, path: String, options: Options, warnings: &mut Vec<Warning>) {
     let class_reason = if BINARY_GEOMETRY_CLASSES.contains(&node.class.as_str()) {
         Some(Reason::BinaryGeometry)
     } else if node.class == "MeshPart" {
         Some(Reason::MeshBinary)
-    } else if node.class == "Terrain" {
+    } else if node.class == "Terrain" && !options.terrain_sync {
         Some(Reason::Terrain)
     } else {
         None
@@ -104,7 +117,7 @@ fn scan_into(node: &Snapshot, path: String, warnings: &mut Vec<Warning>) {
     }
 
     for child in &node.children {
-        scan_into(child, format!("{path}/{}", child.name), warnings);
+        scan_into(child, format!("{path}/{}", child.name), options, warnings);
     }
 }
 
@@ -146,6 +159,21 @@ mod tests {
             .with_child(Snapshot::new("MeshPart", "Rock"));
         let reasons: Vec<_> = scan(&tree).into_iter().map(|w| w.reason).collect();
         assert!(reasons.contains(&Reason::Terrain));
+        assert!(reasons.contains(&Reason::MeshBinary));
+    }
+
+    #[test]
+    fn terrain_is_not_flagged_when_terrain_sync_is_enabled() {
+        let tree = Snapshot::new("Folder", "proj")
+            .with_child(Snapshot::new("Terrain", "Terrain"))
+            .with_child(Snapshot::new("MeshPart", "Rock"));
+        let options = Options { terrain_sync: true };
+        let reasons: Vec<_> = scan_with(&tree, options)
+            .into_iter()
+            .map(|w| w.reason)
+            .collect();
+        // Terrain now syncs as a blob, but the mesh binary is still flagged.
+        assert!(!reasons.contains(&Reason::Terrain));
         assert!(reasons.contains(&Reason::MeshBinary));
     }
 

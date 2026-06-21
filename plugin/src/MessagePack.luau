@@ -22,6 +22,18 @@ local function isArray(value: any): boolean
 	return type(value) == "table" and (value :: any).__mpArray == true
 end
 
+export type Binary = { __mpBin: true, bytes: string }
+
+-- Wrap a byte string so the encoder emits a MessagePack *binary* payload (`bin`), not a text string.
+-- Terrain and other blobs travel this way so they survive byte-for-byte.
+function MessagePack.binary(bytes: string): Binary
+	return { __mpBin = true, bytes = bytes }
+end
+
+local function isBinary(value: any): boolean
+	return type(value) == "table" and (value :: any).__mpBin == true
+end
+
 -- === encode ===================================================================================
 
 local function pushByte(out: { string }, byte: number)
@@ -110,6 +122,24 @@ function encodeValue(out: { string }, value: any)
 		pushUint(out, value)
 	elseif kind == "string" then
 		pushString(out, value)
+	elseif isBinary(value) then
+		local bytes = (value :: Binary).bytes
+		local len = #bytes
+		if len < 0x100 then
+			pushByte(out, 0xc4) -- bin 8
+			pushByte(out, len)
+		elseif len < 0x10000 then
+			pushByte(out, 0xc5) -- bin 16
+			pushByte(out, math.floor(len / 0x100))
+			pushByte(out, len % 0x100)
+		else
+			pushByte(out, 0xc6) -- bin 32
+			pushByte(out, math.floor(len / 0x1000000) % 0x100)
+			pushByte(out, math.floor(len / 0x10000) % 0x100)
+			pushByte(out, math.floor(len / 0x100) % 0x100)
+			pushByte(out, len % 0x100)
+		end
+		table.insert(out, bytes)
 	elseif isArray(value) then
 		local items = (value :: Array).items
 		pushArrayHeader(out, #items)
@@ -182,6 +212,15 @@ function decodeValue(bytes: string, pos: number): (any, number)
 	elseif byte == 0xd2 then
 		local value, next = readBytesUint(bytes, pos, 4)
 		return (if value >= 0x80000000 then value - 0x100000000 else value), next
+	elseif byte == 0xc4 then
+		local len, next = readBytesUint(bytes, pos, 1)
+		return decodeStr(bytes, next, len) -- bin 8 — raw bytes, returned as a Luau string
+	elseif byte == 0xc5 then
+		local len, next = readBytesUint(bytes, pos, 2)
+		return decodeStr(bytes, next, len) -- bin 16
+	elseif byte == 0xc6 then
+		local len, next = readBytesUint(bytes, pos, 4)
+		return decodeStr(bytes, next, len) -- bin 32
 	elseif byte == 0xd9 then
 		local len, next = readBytesUint(bytes, pos, 1)
 		return decodeStr(bytes, next, len)

@@ -154,7 +154,7 @@ lives in the final stage of [`spec.md`](spec.md).
 | Case | Status | Approach |
 |---|---|---|
 | **`MeshId`** | 🟡 partial | The asset-id string syncs like any property; the mesh binary is a cloud asset uploaded via Open Cloud, not a synced file. |
-| **Terrain** | 🟡 possible, deferred | Readable/writable via `ReadVoxels`/`WriteVoxels`; can be synced as an opaque binary voxel blob (no diff/merge). Low priority / YAGNI for v1. |
+| **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob — hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Stage 11. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
 
