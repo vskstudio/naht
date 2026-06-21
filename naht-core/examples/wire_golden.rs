@@ -4,7 +4,10 @@
 //! plugin's `MessagePack` harness embeds them to cross-check its codec against the real format. Run
 //! with `cargo run -p naht-core --example wire_golden`.
 
-use naht_core::protocol::{self, Change, ChangeBatch, PatchBatch, ServerInfo, PROTOCOL_VERSION};
+use naht_core::binary::BlobPatch;
+use naht_core::protocol::{
+    self, BlobPatchBatch, Change, ChangeBatch, PatchBatch, ServerInfo, PROTOCOL_VERSION,
+};
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 
 fn hex(label: &str, bytes: &[u8]) {
@@ -47,4 +50,20 @@ fn main() {
         ],
     };
     hex("change_batch", &protocol::to_msgpack(&changes).unwrap());
+
+    // A binary blob patch: the content must encode as a MessagePack bin payload (NUL + high bytes).
+    let blob_batch = BlobPatchBatch {
+        cursor: 1,
+        patches: vec![BlobPatch {
+            path: "Terrain.terrain".to_string(),
+            class: "Terrain".to_string(),
+            direction: Direction::ToStudio,
+            kind: PatchKind::Update,
+            content: Some(vec![0x00, 0x01, 0xff, 0x80, 0x7f]),
+        }],
+    };
+    hex(
+        "blob_patch_batch",
+        &protocol::to_msgpack(&blob_batch).unwrap(),
+    );
 }
