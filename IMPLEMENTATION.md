@@ -9,17 +9,16 @@ questions. The design is frozen.
 
 ## Status
 
-**Stages 0–12 are merged and CI-green** — v1 (live bidirectional sync) plus the post-v1 extension
-(observability, place-file build, hardening, terrain blob engine, Open Cloud asset upload). The
-remaining work is the audit follow-up in [`docs/spec.md`](docs/spec.md): a deep audit of the Stage
-8–12 acceptance criteria found behavior that ships but is not actually exercised end to end.
+**Stages 0–15 are merged and CI-green** — v1 (live bidirectional sync), the post-v1 extension
+(observability, place-file build, hardening, terrain blob engine, Open Cloud asset upload), and the
+audit follow-up that made the post-v1 behavior actually exercised end to end:
 
-- **Stage 13** — wire terrain sync into the live daemon (the blob engine + Luau `Terrain` are
-  unit-tested in isolation but never driven by a real session).
-- **Stage 14** — isolate asset-upload failures to the failing path (`rewrite_snapshot_assets()`
-  currently `?`-aborts the whole snapshot on the first bad asset).
-- **Stage 15** — close the acceptance-coverage gaps (DataModel-root assertion, real property
-  round-trips, assets-disabled determinism).
+- **Stage 13** — wired terrain sync into the live daemon: a `[serve] terrain_sync` flag, a dedicated
+  `/blobs` transport channel, `Session`-owned blob reconcile, and the plugin's `Terrain` wiring.
+- **Stage 14** — isolated asset-upload failures to the failing path: `rewrite_snapshot_assets()` now
+  records per-path failures instead of `?`-aborting the whole snapshot on the first bad asset.
+- **Stage 15** — closed the acceptance-coverage gaps: DataModel-root assertion, real typed-property
+  round-trips (FS and place-file), and assets-disabled build determinism.
 
 ## The loop
 
@@ -67,6 +66,6 @@ with conflict-safe 3-way merge and persisted state.
 **Post-v1 (done):** Stages 8–12 merged — observability, place-file build, hardening, terrain blob
 engine, and Open Cloud asset upload.
 
-**Audit follow-up (in progress):** Stages 13–15 merged the same way — each a single PR, CI green, its
+**Audit follow-up (done):** Stages 13–15 merged the same way — each a single PR, CI green, its
 **Acceptance / tests** section satisfied — making the post-v1 behavior actually exercised end to end
 without regressing what ships.

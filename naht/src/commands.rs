@@ -186,8 +186,9 @@ pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
 // --- helpers -------------------------------------------------------------------------------------
 
 /// When `[assets]` is enabled, upload local asset files referenced by properties and rewrite them to
-/// `rbxassetid://…`. Disabled by default, so the common case does no network I/O and is unchanged.
-fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
+/// `rbxassetid://…`. Disabled by default, so the common case does no network I/O and leaves every
+/// property untouched. Public so the disabled-path no-op is testable at the snapshot level.
+pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
     let config = Config::load(root)?;
     if !config.assets.is_enabled() {
         return Ok(());
