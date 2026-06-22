@@ -39,6 +39,26 @@ export type Change = {
 	content: string?,
 }
 
+-- One opaque binary blob (terrain voxels), its `content` a raw byte string.
+export type BlobInstance = {
+	path: string,
+	class: string,
+	content: string,
+}
+
+export type BlobPatch = {
+	path: string,
+	class: string,
+	direction: string,
+	kind: string,
+	content: string?,
+}
+
+export type BlobPatchBatch = {
+	cursor: number,
+	patches: { BlobPatch },
+}
+
 -- Decode a `GET /info` body.
 function Protocol.decodeInfo(bytes: string): ServerInfo
 	return MessagePack.decode(bytes)
@@ -47,6 +67,26 @@ end
 -- Decode a `GET /patches` body.
 function Protocol.decodePatches(bytes: string): PatchBatch
 	return MessagePack.decode(bytes)
+end
+
+-- Decode a `GET /blobs` body (terrain blobs). `content` decodes as a raw byte string from MessagePack
+-- bin, so the voxel bytes survive untouched.
+function Protocol.decodeBlobs(bytes: string): BlobPatchBatch
+	return MessagePack.decode(bytes)
+end
+
+-- Encode a batch of Studio-side blobs into a `POST /blobs` body. Each `content` is a raw byte string
+-- carried as a MessagePack binary, matching the daemon's `serde_bytes` blob field.
+function Protocol.encodeBlobs(changes: { BlobInstance }): string
+	local wire = {}
+	for _, change in changes do
+		table.insert(wire, {
+			path = change.path,
+			class = change.class,
+			content = MessagePack.binary(change.content),
+		})
+	end
+	return MessagePack.encode({ changes = MessagePack.array(wire) })
 end
 
 -- A Studio-side upsert (instance created or source edited).

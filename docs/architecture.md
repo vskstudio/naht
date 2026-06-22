@@ -127,8 +127,10 @@ instances only the hash is stored (no merge base).
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
 - **Endpoints:** `GET /info` (handshake + `servePlaceId` guard), `GET /patches` (long-poll, held open
-  until a change or timeout), `POST /changes` (Studio → FS), `POST /ack` (the plugin confirms which
-  patches it applied), `GET /heartbeat` (liveness ping).
+  until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the binary
+  terrain channel — a separate long-poll/push pair, kept apart from the text patch channel because
+  blobs are synced opaquely with no diff/merge), `POST /ack` (the plugin confirms which patches it
+  applied), `GET /heartbeat` (liveness ping).
 - **Resilience** is the headline feature here, because it is exactly what Rojo and Argon get wrong:
   heartbeat, automatic reconnect with backoff, an explicit connection-state indicator, and — on
   reconnect — a **re-diff against the persisted state** rather than a blind re-push. Studio-bound
@@ -154,7 +156,7 @@ lives in the final stage of [`spec.md`](spec.md).
 | Case | Status | Approach |
 |---|---|---|
 | **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, a *local* mesh/image file is uploaded once via **Open Cloud**, cached by content hash, and its property rewritten to `rbxassetid://…`. Off by default. Stage 12. |
-| **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob — hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Stage 11. |
+| **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob — hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on. Stages 11, 13. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
 

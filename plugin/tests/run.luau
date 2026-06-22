@@ -81,6 +81,17 @@ local binRoundtrip = MessagePack.decode(MessagePack.encode({
 }))
 check("binary encode/decode round-trip", binRoundtrip.blob == "\0\255\10\127")
 
+-- The `POST /blobs` wire shape (mirroring Protocol.encodeBlobs): raw voxel bytes carried as a
+-- MessagePack bin survive a round-trip intact, including NUL and high bytes.
+local blobPush = MessagePack.decode(MessagePack.encode({
+	changes = MessagePack.array({
+		{ path = "Terrain.terrain", class = "Terrain", content = MessagePack.binary("\0\1\255\128\127") },
+	}),
+}))
+check("blob push preserves path", blobPush.changes[1].path == "Terrain.terrain")
+check("blob push preserves class", blobPush.changes[1].class == "Terrain")
+check("blob push preserves raw bytes", blobPush.changes[1].content == "\0\1\255\128\127")
+
 -- === terrain blob (de)serialization round-trip ===============================================
 
 local grid = {

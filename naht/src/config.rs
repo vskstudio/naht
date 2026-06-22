@@ -45,6 +45,10 @@ pub struct ServeConfig {
     pub port: Option<u16>,
     /// The Studio place id the daemon will sync into; `None` leaves the handshake unguarded.
     pub place_id: Option<u64>,
+    /// Whether terrain syncs live as an opaque blob (Stage 11/13). Off by default, so terrain is
+    /// flagged unsyncable until a project opts in; when on, the daemon drives the blob channel and
+    /// suppresses the terrain warning.
+    pub terrain_sync: Option<bool>,
 }
 
 /// `[assets]` — Open Cloud asset upload (Stage 12). Disabled by default, so the unchanged behavior is
@@ -94,6 +98,9 @@ impl Config {
         if other.serve.place_id.is_some() {
             self.serve.place_id = other.serve.place_id;
         }
+        if other.serve.terrain_sync.is_some() {
+            self.serve.terrain_sync = other.serve.terrain_sync;
+        }
         if other.assets.enabled.is_some() {
             self.assets.enabled = other.assets.enabled;
         }
@@ -115,6 +122,11 @@ impl Config {
     /// The resolved serve port.
     pub fn port(&self) -> u16 {
         self.serve.port.unwrap_or(DEFAULT_PORT)
+    }
+
+    /// Whether live terrain blob sync is enabled (off by default).
+    pub fn terrain_sync(&self) -> bool {
+        self.serve.terrain_sync.unwrap_or(false)
     }
 
     /// Resolve the port to bind: a `--port` flag beats `naht.toml`, which beats the default. Port 0

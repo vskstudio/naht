@@ -14,7 +14,15 @@ use serde::{Deserialize, Serialize};
 use crate::hash::content_hash;
 use crate::reconciler::{Direction, PatchKind, ReconcileError};
 use crate::state::{InstanceRecord, StateStore};
-use crate::vfs::Vfs;
+use crate::vfs::{EntryKind, Vfs};
+
+/// The filesystem extension a binary blob lives behind. A `*.terrain` file is the opaque voxel blob
+/// the daemon syncs (architecture §9); the convention mirrors the script-suffix conventions in the
+/// mapper, kept here because only the binary path consumes it.
+pub const BLOB_EXTENSION: &str = "terrain";
+
+/// The Roblox class a `*.terrain` blob maps to.
+pub const TERRAIN_CLASS: &str = "Terrain";
 
 /// One binary instance on a side of the sync, keyed by its filesystem path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +65,44 @@ pub struct BlobPatch {
     /// The blob bytes, or `None` for a delete or a conflict freeze.
     #[serde(with = "serde_bytes")]
     pub content: Option<Vec<u8>>,
+}
+
+/// Walk `dir` in `vfs` and collect every binary blob file (`*.terrain`) into the flat, path-keyed
+/// map the blob reconciler consumes — the binary counterpart of [`crate::reconciler::scan_text`].
+/// Non-blob files are skipped, not lost; the text scan picks them up instead.
+pub fn scan_blobs(
+    vfs: &impl Vfs,
+    dir: &Path,
+) -> Result<BTreeMap<String, BlobInstance>, ReconcileError> {
+    let mut out = BTreeMap::new();
+    scan_blobs_into(vfs, dir, &mut out)?;
+    Ok(out)
+}
+
+fn scan_blobs_into(
+    vfs: &impl Vfs,
+    dir: &Path,
+    out: &mut BTreeMap<String, BlobInstance>,
+) -> Result<(), ReconcileError> {
+    for entry in vfs.list(dir)? {
+        match entry.kind {
+            EntryKind::Dir => scan_blobs_into(vfs, &entry.path, out)?,
+            EntryKind::File => {
+                let is_blob = entry
+                    .path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext == BLOB_EXTENSION);
+                if !is_blob {
+                    continue;
+                }
+                let key = entry.path.to_string_lossy().into_owned();
+                let content = vfs.read(&entry.path)?;
+                out.insert(key.clone(), BlobInstance::new(key, TERRAIN_CLASS, content));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reconcile the filesystem and Studio blob sides against the persisted (hash-only) base.
@@ -342,6 +388,24 @@ mod tests {
 
     fn base_with(store: &StateStore, path: &str, content: &[u8]) {
         advance(store, path, CLASS, content).unwrap();
+    }
+
+    #[test]
+    fn scan_blobs_collects_only_terrain_files_with_exact_bytes() {
+        let blob: Vec<u8> = (0u16..300).map(|i| (i % 256) as u8).collect();
+        let vfs = MemoryVfs::new()
+            .with_file("Workspace/Terrain.terrain", blob.clone())
+            .with_file("Workspace/Main.luau", b"return 1".to_vec())
+            .with_file("README.md", b"not an instance".to_vec());
+
+        let found = scan_blobs(&vfs, Path::new("")).unwrap();
+
+        // Only the `.terrain` blob is picked up; the script and the README are left to others.
+        let keys: Vec<&String> = found.keys().collect();
+        assert_eq!(keys, vec!["Workspace/Terrain.terrain"]);
+        let instance = &found["Workspace/Terrain.terrain"];
+        assert_eq!(instance.class, TERRAIN_CLASS);
+        assert_eq!(instance.content, blob);
     }
 
     #[test]

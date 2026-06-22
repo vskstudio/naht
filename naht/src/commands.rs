@@ -155,9 +155,10 @@ pub async fn pull(config: &Config) -> Result<()> {
 /// place guard.
 pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
     let root = canonical(root)?;
-    // Surface anything that can't round-trip live before the session starts (architecture §9).
+    // Surface anything that can't round-trip live before the session starts (architecture §9). With
+    // terrain sync enabled the daemon drives the blob channel, so terrain is no longer flagged.
     if let Ok(snapshot) = mapper::snapshot_dir(&DiskVfs::new(), &root) {
-        warn_unsyncable(&snapshot);
+        report_unsyncable(&serve_warnings(&config, &snapshot));
     }
     let store = open_store(&root)?;
     let session = Session::new(
@@ -198,14 +199,32 @@ fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
         .context("uploading local assets")
 }
 
+/// The instances that can't round-trip live in a `serve` session, honoring the project's enabled
+/// capabilities — notably `[serve] terrain_sync`, which drives the daemon's blob channel and so stops
+/// terrain from being flagged. The same options the running session uses, so the warning matches what
+/// actually syncs.
+#[must_use]
+pub fn serve_warnings(config: &Config, snapshot: &Snapshot) -> Vec<limits::Warning> {
+    limits::scan_with(
+        snapshot,
+        limits::Options {
+            terrain_sync: config.terrain_sync(),
+        },
+    )
+}
+
 /// Print, to stderr, every instance that can't round-trip live — never silently dropped.
 fn warn_unsyncable(snapshot: &Snapshot) {
-    let warnings = limits::scan(snapshot);
+    report_unsyncable(&limits::scan(snapshot));
+}
+
+/// Print a set of unsyncable warnings to stderr, with a count header. Empty is silent.
+fn report_unsyncable(warnings: &[limits::Warning]) {
     if warnings.is_empty() {
         return;
     }
     eprintln!("naht: {} item(s) cannot live-sync:", warnings.len());
-    for warning in &warnings {
+    for warning in warnings {
         eprintln!("  warning: {}", warning.message());
     }
 }

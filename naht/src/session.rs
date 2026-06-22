@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use naht_core::binary::{self, BlobInstance, BlobPatch};
 use naht_core::protocol::{Change, ServerInfo, PROTOCOL_VERSION};
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::{InstanceRecord, StateStore};
@@ -42,6 +43,14 @@ pub struct Session {
     /// Studio-bound patches sent but not yet acked; their base stays at the agreed content.
     unacked: BTreeMap<String, Patch>,
     next_seq: u64,
+    /// The last-known Studio side of binary blobs (terrain), keyed by path. Blobs are last-writer-wins
+    /// (architecture §9), so — unlike the ack-gated text mirror — this advances as soon as a patch is
+    /// emitted rather than on a plugin ack.
+    studio_blobs: BTreeMap<String, BlobInstance>,
+    /// Queued filesystem → Studio blob patches, on their own sequence/cursor (a separate `/blobs`
+    /// channel), keyed by path so a re-diff replaces rather than appends.
+    blob_queue: BTreeMap<String, (u64, BlobPatch)>,
+    blob_next_seq: u64,
     project_name: String,
     session_id: String,
     serve_place_id: Option<u64>,
@@ -63,6 +72,9 @@ impl Session {
             queue: BTreeMap::new(),
             unacked: BTreeMap::new(),
             next_seq: 0,
+            studio_blobs: BTreeMap::new(),
+            blob_queue: BTreeMap::new(),
+            blob_next_seq: 0,
             project_name: project_name.into(),
             session_id: new_session_id(),
             serve_place_id,
@@ -93,6 +105,7 @@ impl Session {
         let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
         let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
         self.absorb(patches, &pre_base);
+        self.reconcile_blobs()?;
         Ok(())
     }
 
@@ -143,6 +156,94 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Apply a batch of Studio-side binary blobs (terrain) to the blob mirror, then reconcile against
+    /// the current filesystem. Blob deletions aren't modeled on the wire — terrain isn't removed in
+    /// practice — so a batch carries only the blobs Studio currently holds.
+    pub fn apply_blob_changes(&mut self, changes: Vec<BlobInstance>) -> Result<()> {
+        for change in changes {
+            self.studio_blobs.insert(change.path.clone(), change);
+        }
+        self.reconcile_blobs()
+    }
+
+    /// Re-read the filesystem's binary blobs and reconcile them against the Studio blob mirror and the
+    /// persisted (hash-only) base. Filesystem writes are applied by the reconciler; Studio-bound blob
+    /// patches are queued for the `/blobs` long-poll.
+    fn reconcile_blobs(&mut self) -> Result<()> {
+        let fs = binary::scan_blobs(&self.vfs, Path::new(PROJECT_ROOT))?;
+        let patches = binary::reconcile_blobs(&mut self.vfs, &self.store, &fs, &self.studio_blobs)?;
+        self.absorb_blobs(patches);
+        Ok(())
+    }
+
+    /// Record the result of a blob reconcile. Filesystem-bound effects were already applied to disk by
+    /// the reconciler. A Studio-bound patch is queued and the blob mirror advanced immediately
+    /// (last-writer-wins, not ack-gated). A conflict froze the path; nothing is sent.
+    fn absorb_blobs(&mut self, patches: Vec<BlobPatch>) {
+        for patch in patches {
+            if patch.kind == PatchKind::Conflict {
+                tracing::warn!(target: "naht::sync", path = %patch.path, "terrain blob conflict frozen");
+                continue;
+            }
+            match patch.direction {
+                // Already written to disk; the mirror already holds the Studio-side value that drove
+                // it, so the next reconcile sees the sides agree.
+                Direction::ToFs => {}
+                Direction::ToStudio => {
+                    match (&patch.kind, &patch.content) {
+                        (PatchKind::Delete, _) => {
+                            self.studio_blobs.remove(&patch.path);
+                        }
+                        (_, Some(content)) => {
+                            self.studio_blobs.insert(
+                                patch.path.clone(),
+                                BlobInstance::new(
+                                    patch.path.clone(),
+                                    patch.class.clone(),
+                                    content.clone(),
+                                ),
+                            );
+                        }
+                        _ => {}
+                    }
+                    self.enqueue_blob(patch);
+                }
+            }
+        }
+    }
+
+    fn enqueue_blob(&mut self, patch: BlobPatch) {
+        tracing::info!(
+            target: "naht::sync",
+            path = %patch.path,
+            kind = ?patch.kind,
+            "blob patch emitted"
+        );
+        self.blob_queue
+            .insert(patch.path.clone(), (self.blob_next_seq, patch));
+        self.blob_next_seq += 1;
+    }
+
+    /// Whether any queued blob patch has a sequence at or beyond `cursor`.
+    pub fn has_blobs_after(&self, cursor: u64) -> bool {
+        self.blob_queue.values().any(|(seq, _)| *seq >= cursor)
+    }
+
+    /// Every queued blob patch at or beyond `cursor`, in sequence order, with the cursor to send next.
+    pub fn take_blob_patches(&self, cursor: u64) -> (u64, Vec<BlobPatch>) {
+        let mut entries: Vec<&(u64, BlobPatch)> = self
+            .blob_queue
+            .values()
+            .filter(|(seq, _)| *seq >= cursor)
+            .collect();
+        entries.sort_by_key(|(seq, _)| *seq);
+        let patches = entries
+            .into_iter()
+            .map(|(_, patch)| patch.clone())
+            .collect();
+        (self.blob_next_seq, patches)
     }
 
     /// Whether any queued patch has a sequence at or beyond `cursor`.

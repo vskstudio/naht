@@ -35,6 +35,7 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop> {
                     }
                     drop(session);
                     state.notify_patches();
+                    state.notify_blobs();
                 });
             }
             Err(errors) => {

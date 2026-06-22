@@ -8,6 +8,7 @@
 
 local Apply = require(script.Parent.Apply)
 local Protocol = require(script.Parent.Protocol)
+local Terrain = require(script.Parent.Terrain)
 
 local Connection = {}
 Connection.__index = Connection
@@ -16,6 +17,12 @@ local BACKOFF_START = 1
 local BACKOFF_MAX = 15
 local PUSH_DEBOUNCE = 0.3
 local PUSH_RETRY = 2
+
+-- Terrain is synced as one opaque voxel blob over the dedicated `/blobs` channel. The whole region is
+-- read/written at the engine's 4-stud voxel resolution; there is only one Terrain per place, so its
+-- filesystem path is fixed.
+local TERRAIN_RESOLUTION = 4
+local TERRAIN_PATH = "Terrain.terrain"
 
 local CLASS_SUFFIX = {
 	Script = ".server.luau",
@@ -56,6 +63,9 @@ function Connection.new(
 		onState = onState,
 		running = false,
 		cursor = 0,
+		blobCursor = 0,
+		-- Bumped on every (re)connect so a stale blob long-poll from a prior connection stops itself.
+		epoch = 0,
 		applying = false,
 		-- The content last written by an apply, per path. A Studio change signal whose value matches
 		-- is the echo of our own apply (which may fire deferred, after `applying` clears) and is
@@ -92,6 +102,15 @@ function Connection._run(self)
 			self.onState("Connected", info.project_name)
 			backoff = BACKOFF_START
 			self.cursor = 0 -- let the daemon's re-diff drive the catch-up
+			self.blobCursor = 0
+			self.epoch += 1
+			-- Push the current terrain once on connect, then long-poll the blob channel alongside the
+			-- text patch loop. The blob loop self-stops when its epoch is superseded.
+			local epoch = self.epoch
+			self:_pushTerrain()
+			task.spawn(function()
+				self:_serveBlobs(epoch)
+			end)
 			self:_serve()
 		end)
 		if not self.running then
@@ -136,6 +155,60 @@ function Connection._serve(self)
 			end)
 		end
 	end
+end
+
+-- The blob long-poll loop: terrain patches flow filesystem → Studio here, applied via `WriteVoxels`.
+-- It runs in its own task so it doesn't block the text patch loop; it stops when its epoch is
+-- superseded by a reconnect or when a request raises (the outer `_run` then re-handshakes).
+function Connection._serveBlobs(self, epoch: number)
+	while self.running and self.epoch == epoch do
+		local ok, batch = pcall(function()
+			return self.client:blobs(self.blobCursor)
+		end)
+		if not ok then
+			return
+		end
+		for _, patch in batch.patches do
+			if patch.kind == "Conflict" then
+				self.onState("Conflict", patch.path)
+			elseif patch.direction == "ToStudio" and patch.content ~= nil then
+				-- Apply independently so one bad blob doesn't sink the loop.
+				pcall(function()
+					self:_applyBlob(patch.content)
+				end)
+			end
+		end
+		self.blobCursor = batch.cursor
+	end
+end
+
+-- The Region3 covering the whole terrain, at voxel resolution — used for both read and write so the
+-- blob round-trips against a stable region.
+function Connection._terrainRegion(self): any
+	local extents = (workspace :: any).Terrain.MaxExtents
+	return Region3.new(
+		Vector3.new(extents.Min.X, extents.Min.Y, extents.Min.Z) * TERRAIN_RESOLUTION,
+		Vector3.new(extents.Max.X, extents.Max.Y, extents.Max.Z) * TERRAIN_RESOLUTION
+	)
+end
+
+-- Write an incoming voxel blob into the live terrain.
+function Connection._applyBlob(self, blob: string)
+	Terrain.write((workspace :: any).Terrain, self:_terrainRegion(), blob)
+end
+
+-- Read the current terrain and push it to the filesystem as one blob. Best-effort: a read or post
+-- failure is left for the next connect rather than killing the session.
+function Connection._pushTerrain(self)
+	local ok, blob = pcall(function()
+		return Terrain.read((workspace :: any).Terrain, self:_terrainRegion(), TERRAIN_RESOLUTION)
+	end)
+	if not ok then
+		return
+	end
+	pcall(function()
+		self.client:postBlobs({ { path = TERRAIN_PATH, class = "Terrain", content = blob } })
+	end)
 end
 
 -- Watch the project subtree for Studio-side edits and push them, debounced. Edits the plugin itself

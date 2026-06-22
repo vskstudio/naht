@@ -7,9 +7,11 @@ use std::time::Duration;
 
 use naht::commands;
 use naht::config::Config;
+use naht_core::limits::Reason;
 use naht_core::reconciler::{self, TextInstance};
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
+use naht_core::Snapshot;
 
 /// Class names of the reloaded place's `DataModel` children.
 fn root_classes(dom: &rbx_dom_weak::WeakDom) -> Vec<String> {
@@ -214,6 +216,39 @@ fn status_and_resolve_reflect_the_conflict_state() {
 
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     assert!(reconciler::status(&store).unwrap().conflicted.is_empty());
+}
+
+#[test]
+fn serve_warning_honors_the_terrain_sync_config_flag() {
+    let tree = Snapshot::new("Folder", "game")
+        .with_child(Snapshot::new("Terrain", "Terrain"))
+        .with_child(Snapshot::new("MeshPart", "Rock"));
+
+    // Enabled via `[serve] terrain_sync`: the daemon drives the blob channel, so terrain is no longer
+    // flagged — but the mesh binary still is. This exercises the config → serve wiring, not just the
+    // `limits` unit.
+    let enabled_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        enabled_dir.path().join("naht.toml"),
+        "[serve]\nterrain_sync = true\n",
+    )
+    .unwrap();
+    let enabled = Config::load(enabled_dir.path()).unwrap();
+    let reasons: Vec<_> = commands::serve_warnings(&enabled, &tree)
+        .into_iter()
+        .map(|w| w.reason)
+        .collect();
+    assert!(!reasons.contains(&Reason::Terrain));
+    assert!(reasons.contains(&Reason::MeshBinary));
+
+    // Disabled (the default): terrain still fires the Stage 7 warning.
+    let disabled_dir = tempfile::tempdir().unwrap();
+    let disabled = Config::load(disabled_dir.path()).unwrap();
+    let reasons: Vec<_> = commands::serve_warnings(&disabled, &tree)
+        .into_iter()
+        .map(|w| w.reason)
+        .collect();
+    assert!(reasons.contains(&Reason::Terrain));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
