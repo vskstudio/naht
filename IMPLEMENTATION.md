@@ -9,19 +9,22 @@ questions. The design is frozen.
 
 ## Status
 
-**Stages 0–7 are merged — v1 (live bidirectional sync) is shipped and CI-green.** The remaining work
-is the post-v1 extension in [`docs/spec.md`](docs/spec.md):
+**Stages 0–12 are merged and CI-green** — v1 (live bidirectional sync) plus the post-v1 extension
+(observability, place-file build, hardening, terrain blob engine, Open Cloud asset upload). The
+remaining work is the audit follow-up in [`docs/spec.md`](docs/spec.md): a deep audit of the Stage
+8–12 acceptance criteria found behavior that ships but is not actually exercised end to end.
 
-- **Stage 8** — daemon observability (`tracing`) + CLI ergonomics (`serve --port`, `-v`).
-- **Stage 9** — place-file build (`.rbxl`/`.rbxlx`, convention-mapped services) + `build --watch`.
-- **Stage 10** — resilience & edge-case hardening (partial apply, large trees, unusual properties).
-- **Stage 11** — terrain voxel sync (opaque blob, post-v1).
-- **Stage 12** — Open Cloud asset upload (`MeshId`/image, post-v1).
+- **Stage 13** — wire terrain sync into the live daemon (the blob engine + Luau `Terrain` are
+  unit-tested in isolation but never driven by a real session).
+- **Stage 14** — isolate asset-upload failures to the failing path (`rewrite_snapshot_assets()`
+  currently `?`-aborts the whole snapshot on the first bad asset).
+- **Stage 15** — close the acceptance-coverage gaps (DataModel-root assertion, real property
+  round-trips, assets-disabled determinism).
 
 ## The loop
 
-Work **one stage at a time**, in order. v1 was Stage 0 → Stage 7; the post-v1 work continues
-Stage 8 → Stage 12. For each stage:
+Work **one stage at a time**, in order. v1 was Stage 0 → Stage 7; the post-v1 work was Stage 8 →
+Stage 12; the audit follow-up continues Stage 13 → Stage 15. For each stage:
 
 ### 1. Implement the stage
 - Open a branch and a PR for that stage only.
@@ -54,12 +57,16 @@ bar unless the stage says so. Distinguish a real regression from a pre-existing 
 
 ### 3. Merge and advance
 When a review pass **finds nothing real left to fix**, merge the current stage's PR and move to the
-next stage. Repeat until Stage 7 is done.
+next stage. Repeat until the last stage is done.
 
 ## Definition of done
 
 **v1 (done):** Stages 0–7 merged, CI green, the milestone (Stage 6) reached — live bidirectional sync
 with conflict-safe 3-way merge and persisted state.
 
-**Post-v1 (in progress):** Stages 8–12 merged the same way — each a single PR, CI green, its
-**Acceptance / tests** section satisfied — extending the shipped v1 without regressing it.
+**Post-v1 (done):** Stages 8–12 merged — observability, place-file build, hardening, terrain blob
+engine, and Open Cloud asset upload.
+
+**Audit follow-up (in progress):** Stages 13–15 merged the same way — each a single PR, CI green, its
+**Acceptance / tests** section satisfied — making the post-v1 behavior actually exercised end to end
+without regressing what ships.
