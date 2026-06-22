@@ -195,8 +195,19 @@ fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
     let store = open_store(root)?;
     let uploader = crate::uploader::OpenCloudUploader::from_config(&config.assets)?;
     let vfs = RootedVfs::new(root.to_path_buf(), DiskVfs::new());
-    naht_core::assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot)
-        .context("uploading local assets")
+    // A failed upload pauses only that asset's path (architecture §8); the rest still resolve, so we
+    // report each failure rather than abort the whole build on the first bad asset.
+    let failures = naht_core::assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot);
+    if !failures.is_empty() {
+        eprintln!("naht: {} asset(s) could not be uploaded:", failures.len());
+        for failure in &failures {
+            eprintln!(
+                "  warning: {} ({}) left at its original reference: {}",
+                failure.path, failure.property, failure.error
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The instances that can't round-trip live in a `serve` session, honoring the project's enabled
