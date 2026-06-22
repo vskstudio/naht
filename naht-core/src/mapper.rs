@@ -280,4 +280,36 @@ mod tests {
 
         assert_eq!(round_tripped, tree);
     }
+
+    #[test]
+    fn structured_properties_survive_fs_snapshot_fs_round_trip() {
+        use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Vector3};
+
+        // The same value set the build leg covers (Stage 10 criterion 3), here through the *file*
+        // round-trip: a script's frontmatter properties survive snapshot → files → snapshot with
+        // value identity, not just isolated frontmatter parsing.
+        let mut attributes = Attributes::new();
+        attributes.insert("Health".to_string(), Variant::Float64(100.0));
+        attributes.insert("Title".to_string(), Variant::String("hero".to_string()));
+
+        let project = Snapshot::new("Folder", "proj").with_child(
+            Snapshot::new("ModuleScript", "Config")
+                .with_property(SOURCE_PROPERTY, Variant::String("return {}".to_string()))
+                .with_property("Color", Variant::Color3(Color3::new(0.1, 0.5, 0.9)))
+                .with_property("Position", Variant::Vector3(Vector3::new(1.0, 2.0, 3.0)))
+                .with_property("Material", Variant::Enum(Enum::from_u32(256)))
+                .with_property("Attributes", Variant::Attributes(attributes))
+                .with_property(
+                    "Tags",
+                    Variant::Tags(Tags::from(vec!["combat".to_string(), "npc".to_string()])),
+                ),
+        );
+
+        let mut dest = MemoryVfs::new();
+        write_tree(&mut dest, Path::new(""), &project).unwrap();
+        let round_tripped = snapshot_dir(&dest, Path::new("proj")).unwrap();
+
+        // Whole-tree identity: every property came back with its exact typed value.
+        assert_eq!(round_tripped, project);
+    }
 }

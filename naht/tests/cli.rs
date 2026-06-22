@@ -251,6 +251,68 @@ fn serve_warning_honors_the_terrain_sync_config_flag() {
     assert!(reasons.contains(&Reason::Terrain));
 }
 
+#[test]
+fn cli_place_build_root_is_a_data_model() {
+    // Stage 9 criterion 1, through the CLI: a `.rbxl` build is a place whose root is a `DataModel`
+    // directly parenting services — not a bare model instance list.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("game");
+    std::fs::create_dir_all(root.join("ReplicatedStorage")).unwrap();
+    std::fs::write(
+        root.join("ReplicatedStorage").join("Shared.luau"),
+        "return {}",
+    )
+    .unwrap();
+    std::fs::write(root.join("Loose.luau"), "return 0").unwrap();
+
+    let place = dir.path().join("game.rbxl");
+    commands::build(&root, &place).unwrap();
+    let dom = rbx_binary::from_reader(&std::fs::read(&place).unwrap()[..]).unwrap();
+
+    // The reloaded root stands in for the DataModel, and the services are its direct children.
+    assert_eq!(dom.get_by_ref(dom.root_ref()).unwrap().class, "DataModel");
+    let classes = root_classes(&dom);
+    assert!(classes.contains(&"ReplicatedStorage".to_string()));
+    assert!(classes.contains(&"Workspace".to_string()));
+}
+
+#[test]
+fn assets_disabled_build_is_byte_identical_and_rewrites_nothing() {
+    // Stage 12 criterion 4. With `[assets]` off (the default), the build does no network I/O and
+    // rewrites no property, so it is fully deterministic.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("proj");
+    commands::init(&root, false).unwrap();
+    std::fs::write(root.join("src").join("Mod.luau"), "return 2").unwrap();
+
+    let first = dir.path().join("a.rbxm");
+    let second = dir.path().join("b.rbxm");
+    commands::build(&root, &first).unwrap();
+    commands::build(&root, &second).unwrap();
+    assert_eq!(
+        std::fs::read(&first).unwrap(),
+        std::fs::read(&second).unwrap(),
+        "two assets-disabled builds of the same project must be byte-identical"
+    );
+
+    // Snapshot-level: a property that *would* be uploaded if assets were on is left exactly as-is.
+    let mut snapshot = Snapshot::new("Folder", "proj").with_child(
+        Snapshot::new("MeshPart", "Rock").with_property(
+            "MeshId",
+            rbx_dom_weak::types::Variant::String("meshes/rock.obj".to_string()),
+        ),
+    );
+    commands::resolve_assets(&root, &mut snapshot).unwrap();
+    let rock = snapshot.children.iter().find(|c| c.name == "Rock").unwrap();
+    assert_eq!(
+        rock.properties.get("MeshId"),
+        Some(&rbx_dom_weak::types::Variant::String(
+            "meshes/rock.obj".to_string()
+        )),
+        "assets disabled must not rewrite the reference"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pull_fails_clearly_when_no_daemon_is_running() {
     let dir = tempfile::tempdir().unwrap();

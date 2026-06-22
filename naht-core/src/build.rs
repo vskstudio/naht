@@ -77,6 +77,21 @@ pub fn write_place<W: Write>(
     root: &Snapshot,
     format: ModelFormat,
 ) -> Result<Vec<String>, BuildError> {
+    let (dom, warnings) = build_place_dom(root);
+    let refs: Vec<Ref> = dom.root().children().to_vec();
+    match format {
+        ModelFormat::Binary => rbx_binary::to_writer(writer, &dom, &refs)?,
+        ModelFormat::Xml => rbx_xml::to_writer_default(writer, &dom, &refs)?,
+    }
+    Ok(warnings)
+}
+
+/// Build the place [`WeakDom`]: a `DataModel` root whose top-level directories are convention-mapped
+/// to services. Exposed alongside [`write_place`] so a caller (or a test) can inspect the built tree —
+/// notably that the root instance is a `DataModel` — without re-serializing and reloading it, which
+/// would lose the distinction (a reloaded model and a reloaded place both get a synthetic `DataModel`
+/// root). Returns the dom and the same warnings [`write_place`] surfaces.
+pub fn build_place_dom(root: &Snapshot) -> (WeakDom, Vec<String>) {
     let mut dom = WeakDom::new(InstanceBuilder::new("DataModel"));
     let data_model = dom.root_ref();
     let mut services: BTreeMap<String, Ref> = BTreeMap::new();
@@ -103,13 +118,7 @@ pub fn write_place<W: Write>(
             dom.insert(workspace, build_instance(child));
         }
     }
-
-    let refs: Vec<Ref> = dom.root().children().to_vec();
-    match format {
-        ModelFormat::Binary => rbx_binary::to_writer(writer, &dom, &refs)?,
-        ModelFormat::Xml => rbx_xml::to_writer_default(writer, &dom, &refs)?,
-    }
-    Ok(warnings)
+    (dom, warnings)
 }
 
 /// Get or create the service of `class` under the `DataModel`, deduplicated by class name.
@@ -320,5 +329,121 @@ mod tests {
         let workspace = service(&dom, "Workspace").expect("Workspace");
         let script = child_named(&dom, workspace, "Lighting").expect("Lighting script kept");
         assert_eq!(script.class, "ModuleScript");
+    }
+}
+
+#[cfg(test)]
+mod stage15 {
+    use super::*;
+    use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Variant, Vector3};
+
+    /// Find an instance by name among `instance`'s descendants' immediate children list.
+    fn prop<'a>(instance: &'a rbx_dom_weak::Instance, key: &str) -> Option<&'a Variant> {
+        instance
+            .properties
+            .iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v)
+    }
+
+    #[test]
+    fn place_root_instance_is_a_data_model() {
+        // Stage 9 criterion 1: the built place's *root instance* is a `DataModel`, with the services
+        // as its direct children — asserted on the built dom, since a reloaded model and a reloaded
+        // place both get a synthetic `DataModel` root and so can't be told apart that way.
+        let project = Snapshot::new("Folder", "proj")
+            .with_child(
+                Snapshot::new("Folder", "ReplicatedStorage")
+                    .with_child(Snapshot::new("ModuleScript", "Shared")),
+            )
+            .with_child(Snapshot::new("ModuleScript", "Loose"));
+
+        let (dom, warnings) = build_place_dom(&project);
+        assert!(warnings.is_empty());
+
+        let root = dom.get_by_ref(dom.root_ref()).unwrap();
+        assert_eq!(root.class, "DataModel");
+
+        let service_classes: Vec<&str> = root
+            .children()
+            .iter()
+            .map(|r| dom.get_by_ref(*r).unwrap().class.as_str())
+            .collect();
+        assert!(service_classes.contains(&"ReplicatedStorage"));
+        assert!(service_classes.contains(&"Workspace"));
+    }
+
+    #[test]
+    fn typed_properties_survive_snapshot_place_snapshot_with_value_identity() {
+        // Stage 10 criterion 3 (the place-file leg): real typed properties round-trip through the
+        // binary place format with their exact values — not just frontmatter string parsing.
+        let mut attributes = Attributes::new();
+        attributes.insert("Health".to_string(), Variant::Float64(100.0));
+        attributes.insert("Boss".to_string(), Variant::Bool(true));
+
+        let part = Snapshot::new("Part", "Block")
+            .with_property("Size", Variant::Vector3(Vector3::new(4.0, 1.0, 2.0)))
+            .with_property("Material", Variant::Enum(Enum::from_u32(256)))
+            .with_property("Attributes", Variant::Attributes(attributes.clone()))
+            .with_property(
+                "Tags",
+                Variant::Tags(Tags::from(vec!["combat".to_string(), "npc".to_string()])),
+            );
+        // `Color3` quantizes to `Color3uint8` on a `BasePart`, so carry it where it stays a true
+        // `Color3` (a light's `Color`) to assert exact identity.
+        let light = Snapshot::new("PointLight", "Glow")
+            .with_property("Color", Variant::Color3(Color3::new(0.1, 0.5, 0.9)));
+        let project = Snapshot::new("Folder", "proj")
+            .with_child(part)
+            .with_child(light);
+
+        let mut bytes = Vec::new();
+        write_place(&mut bytes, &project, ModelFormat::Binary).unwrap();
+        let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
+
+        let workspace = dom
+            .root()
+            .children()
+            .iter()
+            .map(|r| dom.get_by_ref(*r).unwrap())
+            .find(|i| i.class == "Workspace")
+            .expect("Workspace");
+        let by_name = |name: &str| {
+            workspace
+                .children()
+                .iter()
+                .map(|r| dom.get_by_ref(*r).unwrap())
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+        let block = by_name("Block");
+        let glow = by_name("Glow");
+
+        assert_eq!(
+            prop(block, "Size"),
+            Some(&Variant::Vector3(Vector3::new(4.0, 1.0, 2.0)))
+        );
+        assert_eq!(
+            prop(block, "Material"),
+            Some(&Variant::Enum(Enum::from_u32(256)))
+        );
+        assert_eq!(
+            prop(glow, "Color"),
+            Some(&Variant::Color3(Color3::new(0.1, 0.5, 0.9)))
+        );
+        match prop(block, "Attributes") {
+            Some(Variant::Attributes(round_tripped)) => {
+                assert_eq!(round_tripped.get("Health"), Some(&Variant::Float64(100.0)));
+                assert_eq!(round_tripped.get("Boss"), Some(&Variant::Bool(true)));
+            }
+            other => panic!("Attributes did not round-trip: {other:?}"),
+        }
+        match prop(block, "Tags") {
+            Some(Variant::Tags(tags)) => {
+                let members: Vec<&str> = tags.iter().collect();
+                assert_eq!(members, vec!["combat", "npc"]);
+            }
+            other => panic!("Tags did not round-trip: {other:?}"),
+        }
     }
 }
