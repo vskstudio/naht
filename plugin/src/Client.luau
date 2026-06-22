@@ -55,6 +55,31 @@ function Client.patches(self: Client, cursor: number): Protocol.PatchBatch
 	return Protocol.decodePatches(response.Body)
 end
 
+-- Long-poll for terrain blob patches past `cursor`, on the dedicated `/blobs` channel.
+function Client.blobs(self: Client, cursor: number): Protocol.BlobPatchBatch
+	local response = request(self, {
+		Url = "/blobs?cursor=" .. tostring(cursor),
+		Method = "GET",
+	})
+	if not response.Success then
+		error("naht: /blobs returned " .. tostring(response.StatusCode))
+	end
+	return Protocol.decodeBlobs(response.Body)
+end
+
+-- Push Studio-side terrain blobs to the filesystem.
+function Client.postBlobs(self: Client, changes: { Protocol.BlobInstance })
+	local response = request(self, {
+		Url = "/blobs",
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/msgpack" },
+		Body = Protocol.encodeBlobs(changes),
+	})
+	if not response.Success then
+		error("naht: /blobs returned " .. tostring(response.StatusCode))
+	end
+end
+
 -- Confirm to the daemon which patch paths were applied, so their base advances.
 function Client.postAck(self: Client, paths: { string })
 	local response = request(self, {

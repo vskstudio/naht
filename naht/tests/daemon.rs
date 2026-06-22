@@ -8,7 +8,10 @@ use std::time::Duration;
 
 use naht::server::AppState;
 use naht::session::Session;
-use naht_core::protocol::{self, Ack, Change, ChangeBatch, PatchBatch, Pong, ServerInfo};
+use naht_core::binary::BlobInstance;
+use naht_core::protocol::{
+    self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, ServerInfo,
+};
 use naht_core::reconciler::{Direction, PatchKind};
 use naht_core::state::StateStore;
 
@@ -51,6 +54,36 @@ impl Harness {
 
     fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.root.join(rel)).unwrap()
+    }
+
+    fn write_bytes(&self, rel: &str, content: &[u8]) {
+        std::fs::write(self.root.join(rel), content).unwrap();
+    }
+
+    fn read_bytes(&self, rel: &str) -> Vec<u8> {
+        std::fs::read(self.root.join(rel)).unwrap()
+    }
+
+    async fn blobs(&self, cursor: u64) -> BlobPatchBatch {
+        let resp = self
+            .client
+            .get(format!("{}/blobs", self.base))
+            .query(&[("cursor", cursor.to_string())])
+            .send()
+            .await
+            .unwrap();
+        decode(resp).await
+    }
+
+    async fn post_blobs(&self, changes: Vec<BlobInstance>) -> reqwest::StatusCode {
+        let body = protocol::to_msgpack(&BlobChangeBatch { changes }).unwrap();
+        self.client
+            .post(format!("{}/blobs", self.base))
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .status()
     }
 
     async fn info(&self, place_id: Option<u64>) -> reqwest::Response {
@@ -245,4 +278,65 @@ async fn heartbeat_reports_the_session_id() {
     let h = Harness::start(None).await;
     let info: ServerInfo = decode(h.info(None).await).await;
     assert_eq!(h.heartbeat().await.session_id, info.session_id);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn terrain_blob_syncs_both_ways_byte_for_byte() {
+    let h = Harness::start(None).await;
+    // Bytes that would corrupt under any text encoding: NUL, high bytes, the full 0..256 range.
+    let blob: Vec<u8> = (0u16..400).map(|i| (i % 256) as u8).collect();
+
+    // FS → Studio: a `.terrain` blob on disk surfaces on the blob channel with its exact bytes.
+    h.write_bytes("Terrain.terrain", &blob);
+    assert!(h.info(None).await.status().is_success());
+    let batch = h.blobs(0).await;
+    assert_eq!(batch.patches.len(), 1);
+    let patch = &batch.patches[0];
+    assert_eq!(patch.path, "Terrain.terrain");
+    assert_eq!(patch.class, "Terrain");
+    assert_eq!(patch.direction, Direction::ToStudio);
+    assert_eq!(patch.content.as_deref(), Some(blob.as_slice()));
+
+    // Studio → FS: a blob POST writes a new `.terrain` file byte-for-byte.
+    let other: Vec<u8> = (0u16..256).rev().map(|i| (i % 256) as u8).collect();
+    let status = h
+        .post_blobs(vec![BlobInstance::new(
+            "World.terrain",
+            "Terrain",
+            other.clone(),
+        )])
+        .await;
+    assert!(status.is_success());
+    assert_eq!(h.read_bytes("World.terrain"), other);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_both_sides_blob_change_freezes_through_the_live_daemon() {
+    let h = Harness::start(None).await;
+
+    // Establish a shared base: a blob on disk, synced to Studio, both sides now agree on "base".
+    h.write_bytes("t.terrain", b"base");
+    h.info(None).await;
+    let drained = h.blobs(0).await.cursor;
+
+    // Both sides edit before either reconcile lands: FS to "fs-edit", Studio pushes "studio-edit".
+    // The Studio push triggers the reconcile that sees both changed and freezes the path.
+    h.write_bytes("t.terrain", b"fs-edit");
+    let status = h
+        .post_blobs(vec![BlobInstance::new(
+            "t.terrain",
+            "Terrain",
+            b"studio-edit".to_vec(),
+        )])
+        .await;
+    assert!(status.is_success());
+
+    // Neither side was overwritten: the file on disk keeps the FS edit, and no blob patch flows.
+    assert_eq!(h.read_bytes("t.terrain"), b"fs-edit");
+    assert!(h.blobs(drained).await.patches.is_empty());
+
+    // The path stays frozen: a further FS edit produces no new patch until it is resolved.
+    h.write_bytes("t.terrain", b"fs-2");
+    h.info(None).await;
+    assert!(h.blobs(drained).await.patches.is_empty());
 }

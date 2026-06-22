@@ -14,17 +14,21 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use naht_core::protocol::{self, Ack, ChangeBatch, PatchBatch, Pong};
+use naht_core::protocol::{
+    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong,
+};
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
 
 use crate::session::Session;
 
-/// Shared server state: the session behind a mutex, plus a notifier that wakes parked long-polls
-/// whenever the patch queue may have grown.
+/// Shared server state: the session behind a mutex, plus notifiers that wake parked long-polls
+/// whenever a queue may have grown. Text patches and binary blobs ride separate channels, so each
+/// has its own notifier and parks independently.
 pub struct AppState {
     session: Mutex<Session>,
     patches_ready: Notify,
+    blobs_ready: Notify,
     long_poll: Duration,
 }
 
@@ -34,6 +38,7 @@ impl AppState {
         Arc::new(Self {
             session: Mutex::new(session),
             patches_ready: Notify::new(),
+            blobs_ready: Notify::new(),
             long_poll,
         })
     }
@@ -47,6 +52,11 @@ impl AppState {
     pub fn notify_patches(&self) {
         self.patches_ready.notify_waiters();
     }
+
+    /// Wake any parked blob long-polls to re-check the blob queue.
+    pub fn notify_blobs(&self) {
+        self.blobs_ready.notify_waiters();
+    }
 }
 
 /// Build the router over `state`.
@@ -55,6 +65,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/info", get(info))
         .route("/patches", get(patches))
         .route("/changes", post(changes))
+        .route("/blobs", get(blobs).post(post_blobs))
         .route("/ack", post(ack))
         .route("/heartbeat", get(heartbeat))
         .with_state(state)
@@ -97,18 +108,17 @@ async fn info(State(state): State<Arc<AppState>>, Query(query): Query<InfoQuery>
     drop(session);
     tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
     state.patches_ready.notify_waiters();
+    state.blobs_ready.notify_waiters();
     msgpack(&info)
 }
 
+/// The long-poll cursor query, shared by the `/patches` and `/blobs` channels.
 #[derive(Deserialize)]
-struct PatchesQuery {
+struct CursorQuery {
     cursor: Option<u64>,
 }
 
-async fn patches(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<PatchesQuery>,
-) -> Response {
+async fn patches(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
     let cursor = query.cursor.unwrap_or(0);
 
     // Enrol as a waiter *before* checking the queue. `enable()` registers now, so a change that
@@ -146,6 +156,42 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     StatusCode::OK.into_response()
 }
 
+async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
+    let cursor = query.cursor.unwrap_or(0);
+
+    // Same parked-waiter discipline as `/patches`: enrol before checking the queue so a blob that
+    // enqueues between the check and the await is captured, not lost.
+    let notified = state.blobs_ready.notified();
+    tokio::pin!(notified);
+    notified.as_mut().enable();
+    {
+        let session = state.session.lock().await;
+        if session.has_blobs_after(cursor) {
+            return blob_batch(&session, cursor);
+        }
+    }
+    let _ = tokio::time::timeout(state.long_poll, notified).await;
+
+    let session = state.session.lock().await;
+    blob_batch(&session, cursor)
+}
+
+async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    let batch: BlobChangeBatch = match protocol::from_msgpack(&body) {
+        Ok(batch) => batch,
+        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    };
+    let count = batch.changes.len();
+    let mut session = state.session.lock().await;
+    if let Err(error) = session.apply_blob_changes(batch.changes) {
+        return internal_error(&error);
+    }
+    drop(session);
+    tracing::info!(target: "naht::server", count, "blob changes applied from Studio");
+    state.blobs_ready.notify_waiters();
+    StatusCode::OK.into_response()
+}
+
 async fn ack(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     let ack: Ack = match protocol::from_msgpack(&body) {
         Ok(ack) => ack,
@@ -167,6 +213,11 @@ async fn heartbeat(State(state): State<Arc<AppState>>) -> Response {
 fn patch_batch(session: &Session, cursor: u64) -> Response {
     let (cursor, patches) = session.take_patches(cursor);
     msgpack(&PatchBatch { cursor, patches })
+}
+
+fn blob_batch(session: &Session, cursor: u64) -> Response {
+    let (cursor, patches) = session.take_blob_patches(cursor);
+    msgpack(&BlobPatchBatch { cursor, patches })
 }
 
 fn msgpack<T: serde::Serialize>(value: &T) -> Response {
