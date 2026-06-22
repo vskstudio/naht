@@ -78,30 +78,71 @@ pub fn resolve_asset_ref(
     Ok(Some(resolve_asset(uploader, store, name, &content)?))
 }
 
+/// One asset property that could not be resolved, so it was left at its original reference.
+///
+/// A failed upload (architecture §8) pauses **only** that property's path; the rest of the snapshot
+/// is still rewritten. The caller surfaces these — and, in a live session, pauses the named paths.
+#[derive(Debug)]
+pub struct AssetFailure {
+    /// The instance path, by name, from the scanned root (e.g. `Model/Rock`).
+    pub path: String,
+    /// The property that held the local asset reference (e.g. `MeshId`).
+    pub property: String,
+    /// Why it could not be resolved.
+    pub error: AssetError,
+}
+
 /// Walk a snapshot and rewrite every string property that references a local asset file to its
 /// uploaded asset id (uploading once, cached). Properties that are already asset ids — or aren't
 /// local files — are left untouched. The build/sync pipeline calls this when `[assets]` is enabled.
+///
+/// A single asset that fails to resolve does **not** abort the walk (architecture §8): that property
+/// is left at its original reference and recorded in the returned failures, while every other asset
+/// is still uploaded and rewritten. The returned vector is empty when everything resolved.
+#[must_use]
 pub fn rewrite_snapshot_assets(
     uploader: &dyn AssetUploader,
     store: &StateStore,
     vfs: &impl Vfs,
     snapshot: &mut Snapshot,
-) -> Result<(), AssetError> {
+) -> Vec<AssetFailure> {
+    let mut failures = Vec::new();
+    let path = snapshot.name.clone();
+    rewrite_into(uploader, store, vfs, snapshot, path, &mut failures);
+    failures
+}
+
+fn rewrite_into(
+    uploader: &dyn AssetUploader,
+    store: &StateStore,
+    vfs: &impl Vfs,
+    snapshot: &mut Snapshot,
+    path: String,
+    failures: &mut Vec<AssetFailure>,
+) {
     for (key, value) in snapshot.properties.iter_mut() {
         // A script's source is code, not an asset reference — never upload it.
         if key == SOURCE_PROPERTY {
             continue;
         }
         if let Variant::String(text) = value {
-            if let Some(asset_id) = resolve_asset_ref(uploader, store, vfs, text)? {
-                *value = Variant::String(asset_id);
+            match resolve_asset_ref(uploader, store, vfs, text) {
+                Ok(Some(asset_id)) => *value = Variant::String(asset_id),
+                Ok(None) => {}
+                // Pause only this property's path: leave the reference as-is and record the error,
+                // so the siblings below still get uploaded.
+                Err(error) => failures.push(AssetFailure {
+                    path: path.clone(),
+                    property: key.clone(),
+                    error,
+                }),
             }
         }
     }
     for child in &mut snapshot.children {
-        rewrite_snapshot_assets(uploader, store, vfs, child)?;
+        let child_path = format!("{path}/{}", child.name);
+        rewrite_into(uploader, store, vfs, child, child_path, failures);
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -109,16 +150,18 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
-    /// A fake uploader: hands out sequential ids, counts uploads per name, and can be set to fail.
+    /// A fake uploader: hands out sequential ids, counts uploads per name, and can be set to fail —
+    /// either every upload (`fail`) or only an asset with a given name (`fail_on`).
     #[derive(Default)]
     struct FakeUploader {
         uploads: RefCell<Vec<String>>,
         fail: bool,
+        fail_on: Option<String>,
     }
 
     impl AssetUploader for FakeUploader {
         fn upload(&self, name: &str, _content: &[u8]) -> Result<String, AssetError> {
-            if self.fail {
+            if self.fail || self.fail_on.as_deref() == Some(name) {
                 return Err(AssetError::Upload(format!("simulated failure for {name}")));
             }
             self.uploads.borrow_mut().push(name.to_string());
@@ -212,7 +255,8 @@ mod tests {
             .with_property("MeshId", Variant::String("assets/rock.obj".to_string()))
             .with_property("Name", Variant::String("Rock".to_string()));
 
-        rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot).unwrap();
+        let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot);
+        assert!(failures.is_empty());
 
         assert_eq!(
             snapshot.properties.get("MeshId"),
@@ -223,5 +267,58 @@ mod tests {
             snapshot.properties.get("Name"),
             Some(&Variant::String("Rock".to_string()))
         );
+    }
+
+    #[test]
+    fn a_failing_asset_is_isolated_while_its_siblings_still_upload() {
+        use crate::vfs::MemoryVfs;
+        let store = StateStore::open_in_memory().unwrap();
+        // The uploader fails only on `a.obj`; `b.obj` and `c.obj` upload fine.
+        let uploader = FakeUploader {
+            fail_on: Some("a.obj".to_string()),
+            ..Default::default()
+        };
+        let vfs = MemoryVfs::new()
+            .with_file("a.obj", "aaa")
+            .with_file("b.obj", "bbb")
+            .with_file("c.obj", "ccc");
+
+        let mesh = |name: &str, file: &str| {
+            Snapshot::new("MeshPart", name)
+                .with_property("MeshId", Variant::String(file.to_string()))
+        };
+        let mut root = Snapshot::new("Model", "Root")
+            .with_child(mesh("A", "a.obj"))
+            .with_child(mesh("B", "b.obj"))
+            .with_child(mesh("C", "c.obj"));
+
+        let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut root);
+
+        let mesh_id = |name: &str| {
+            root.children
+                .iter()
+                .find(|c| c.name == name)
+                .and_then(|c| c.properties.get("MeshId"))
+                .cloned()
+        };
+        // A keeps its original reference; B and C were rewritten to uploaded ids.
+        assert_eq!(mesh_id("A"), Some(Variant::String("a.obj".to_string())));
+        assert_eq!(
+            mesh_id("B"),
+            Some(Variant::String("rbxassetid://1".to_string()))
+        );
+        assert_eq!(
+            mesh_id("C"),
+            Some(Variant::String("rbxassetid://2".to_string()))
+        );
+
+        // The one failure is reported against A's path and property, and is an upload error.
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].path, "Root/A");
+        assert_eq!(failures[0].property, "MeshId");
+        assert!(matches!(failures[0].error, AssetError::Upload(_)));
+
+        // The failure didn't skip any sibling: exactly the two good assets uploaded.
+        assert_eq!(uploader.uploads.borrow().len(), 2);
     }
 }
