@@ -22,6 +22,40 @@ fn root_classes(dom: &rbx_dom_weak::WeakDom) -> Vec<String> {
         .collect()
 }
 
+/// A reloaded place's service instance of the given class, if present.
+fn service<'a>(dom: &'a rbx_dom_weak::WeakDom, class: &str) -> Option<&'a rbx_dom_weak::Instance> {
+    dom.root()
+        .children()
+        .iter()
+        .map(|r| dom.get_by_ref(*r).unwrap())
+        .find(|instance| instance.class == class)
+}
+
+/// A child of `instance` with the given name, if present.
+fn child<'a>(
+    dom: &'a rbx_dom_weak::WeakDom,
+    instance: &rbx_dom_weak::Instance,
+    name: &str,
+) -> Option<&'a rbx_dom_weak::Instance> {
+    instance
+        .children()
+        .iter()
+        .map(|r| dom.get_by_ref(*r).unwrap())
+        .find(|child| child.name == name)
+}
+
+/// A reloaded instance's property value by key, if present.
+fn property<'a>(
+    instance: &'a rbx_dom_weak::Instance,
+    key: &str,
+) -> Option<&'a rbx_dom_weak::types::Variant> {
+    instance
+        .properties
+        .iter()
+        .find(|(k, _)| k.as_str() == key)
+        .map(|(_, v)| v)
+}
+
 fn one(path: &str, content: &str) -> BTreeMap<String, TextInstance> {
     let mut map = BTreeMap::new();
     map.insert(
@@ -310,6 +344,141 @@ fn assets_disabled_build_is_byte_identical_and_rewrites_nothing() {
             "meshes/rock.obj".to_string()
         )),
         "assets disabled must not rewrite the reference"
+    );
+}
+
+#[test]
+fn from_rojo_migrates_the_tree_so_the_build_matches_rojo() {
+    // Stage 17 criterion 1: a Rojo `$path` that the directory convention does not already place is
+    // migrated so `naht build` produces the same instance tree Rojo would.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("game");
+    std::fs::create_dir_all(root.join("src").join("common")).unwrap();
+    std::fs::write(root.join("src").join("common").join("Mod.luau"), "return 1").unwrap();
+    std::fs::write(
+        root.join("src").join("common").join("Boot.server.luau"),
+        "print(1)",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src").join("common").join("Ui.client.luau"),
+        "print(2)",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("default.project.json"),
+        r#"{
+            "name": "Game",
+            "tree": {
+                "$className": "DataModel",
+                "ReplicatedStorage": { "Common": { "$path": "src/common" } }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    commands::init(&root, true).unwrap();
+
+    let place = dir.path().join("game.rbxl");
+    commands::build(&root, &place).unwrap();
+    let dom = rbx_binary::from_reader(&std::fs::read(&place).unwrap()[..]).unwrap();
+
+    let rs = service(&dom, "ReplicatedStorage").expect("ReplicatedStorage service");
+    let common = child(&dom, rs, "Common").expect("Common under ReplicatedStorage");
+    assert_eq!(common.class, "Folder");
+    let mut mapped: Vec<(String, String)> = common
+        .children()
+        .iter()
+        .map(|r| dom.get_by_ref(*r).unwrap())
+        .map(|i| (i.name.clone(), i.class.as_str().to_string()))
+        .collect();
+    mapped.sort();
+    assert_eq!(
+        mapped,
+        vec![
+            ("Boot".to_string(), "Script".to_string()),
+            ("Mod".to_string(), "ModuleScript".to_string()),
+            ("Ui".to_string(), "LocalScript".to_string()),
+        ]
+    );
+    // The `src` source root is grafted at its instance location, not left as a literal folder.
+    let workspace = service(&dom, "Workspace");
+    assert!(workspace.is_none_or(|ws| child(&dom, ws, "src").is_none()));
+}
+
+#[test]
+fn from_rojo_carries_classname_and_properties_with_a_round_trip() {
+    // Stage 17 criterion 2: a `$className` / `$properties` the convention cannot express is carried
+    // into the migrated project and survives the build.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("game");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("default.project.json"),
+        r#"{
+            "name": "Game",
+            "tree": {
+                "$className": "DataModel",
+                "ServerStorage": {
+                    "Settings": { "$className": "BoolValue", "$properties": { "Value": true } }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    commands::init(&root, true).unwrap();
+
+    let place = dir.path().join("game.rbxl");
+    commands::build(&root, &place).unwrap();
+    let dom = rbx_binary::from_reader(&std::fs::read(&place).unwrap()[..]).unwrap();
+
+    let storage = service(&dom, "ServerStorage").expect("ServerStorage service");
+    let settings = child(&dom, storage, "Settings").expect("Settings under ServerStorage");
+    assert_eq!(settings.class, "BoolValue");
+    assert_eq!(
+        property(settings, "Value"),
+        Some(&rbx_dom_weak::types::Variant::Bool(true))
+    );
+}
+
+#[test]
+fn from_rojo_reports_what_it_cannot_represent() {
+    // Stage 17 criterion 3: anything Naht cannot represent is reported, never dropped silently.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("game");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("default.project.json"),
+        r#"{
+            "name": "Game",
+            "tree": {
+                "$className": "DataModel",
+                "$ignoreUnknownInstances": true,
+                "Workspace": {
+                    "Block": {
+                        "$className": "Part",
+                        "$properties": { "Size": { "Type": "Vector3", "Value": [1, 2, 3] } }
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let warnings = commands::migrate_from_rojo(&root).unwrap();
+
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("Size") && w.contains("cannot be represented")),
+        "expected a warning about the unrepresentable Vector3 property, got: {warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("$ignoreUnknownInstances")),
+        "expected a warning about the unsupported directive, got: {warnings:?}"
     );
 }
 
