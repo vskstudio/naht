@@ -117,8 +117,11 @@ instances only the hash is stored (no merge base).
   directive comment (`--!naht { Disabled = true }`), instead of Rojo's separate `.meta.json` files.
 - **Build config is separate from sync mapping** — a sync-mapping change must never break a
   reproducible build.
-- **`naht init --from-rojo`** reads an existing `default.project.json` and converts it, so Rojo users
-  migrate without friction.
+- **`naht init --from-rojo`** reads an existing `default.project.json` and migrates it — the project
+  name, place id, and the **instance tree**: each Rojo `$path`/`$className`/`$properties` is
+  translated into Naht's convention layout, recording only the genuine exceptions as `[[tree]]`
+  entries in `naht.toml` (and reporting anything Naht cannot represent). Source files are left in
+  place; `naht build` assembles the instance tree from those mappings, so the build matches Rojo.
 
 ## 7. Transport & protocol
 

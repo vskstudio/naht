@@ -14,6 +14,7 @@ use naht_core::vfs::{DiskVfs, RootedVfs};
 use naht_core::{limits, mapper, reconciler};
 use notify_debouncer_full::notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
+use rbx_dom_weak::types::Variant;
 use serde::Deserialize;
 
 use crate::config::{Config, PROJECT_FILE};
@@ -44,16 +45,14 @@ pub fn init(path: &Path, from_rojo: bool) -> Result<()> {
     }
 
     if from_rojo {
-        let rojo = read_rojo_project(&root)?;
-        std::fs::write(
-            &project_file,
-            render_config(&rojo.name(&root), rojo.serve_place_id()),
-        )
-        .with_context(|| format!("writing {}", project_file.display()))?;
+        let warnings = migrate_from_rojo(&root)?;
+        for warning in &warnings {
+            eprintln!("  warning: {warning}");
+        }
         println!("Converted Rojo project into {}", project_file.display());
     } else {
         let name = dir_name(&root);
-        std::fs::write(&project_file, render_config(&name, None))
+        std::fs::write(&project_file, render_rojo_config(&name, None, &[])?)
             .with_context(|| format!("writing {}", project_file.display()))?;
         scaffold_source(&root)?;
         ensure_gitignore(&root)?;
@@ -106,10 +105,11 @@ pub async fn build_watch(root: &Path, output: &Path) -> Result<()> {
 
 /// The single build step shared by `build` and `build --watch`. `root` must already be canonical.
 fn build_once(root: &Path, output: &Path) -> Result<()> {
-    let mut snapshot =
-        mapper::snapshot_dir(&DiskVfs::new(), root).context("snapshotting the project")?;
-    // `.naht` holds internal state, not Roblox source — keep it out of the artifact.
-    snapshot.children.retain(|child| child.name != INTERNAL_DIR);
+    let config = Config::load(root)?;
+    let (mut snapshot, warnings) = assemble_project_snapshot(root, &config)?;
+    for warning in &warnings {
+        eprintln!("naht: warning: {warning}");
+    }
     warn_unsyncable(&snapshot);
     resolve_assets(root, &mut snapshot)?;
 
@@ -241,12 +241,14 @@ fn report_unsyncable(warnings: &[limits::Warning]) {
     }
 }
 
-/// A minimal Rojo `default.project.json`, just the fields Naht can carry over.
+/// A minimal Rojo `default.project.json`, just the fields Naht can carry over. The `tree` is kept as
+/// raw JSON and walked during migration, since its shape is recursive and partly free-form.
 #[derive(Debug, Deserialize)]
 struct RojoProject {
     name: Option<String>,
     #[serde(rename = "servePlaceIds")]
     serve_place_ids: Option<Vec<u64>>,
+    tree: Option<serde_json::Value>,
 }
 
 impl RojoProject {
@@ -268,12 +270,274 @@ fn read_rojo_project(path: &Path) -> Result<RojoProject> {
     serde_json::from_str(&text).with_context(|| format!("parsing {}", file.display()))
 }
 
-fn render_config(name: &str, place_id: Option<u64>) -> String {
-    let mut out = format!("[project]\nname = \"{name}\"\n");
-    if let Some(id) = place_id {
-        out.push_str(&format!("\n[serve]\nplace_id = {id}\n"));
+/// One migrated instance-tree node, ready to render into a `[[tree]]` entry.
+struct MigratedNode {
+    instance: String,
+    path: Option<String>,
+    class: Option<String>,
+    properties: std::collections::BTreeMap<String, toml::Value>,
+}
+
+/// Migrate the Rojo `default.project.json` at `root` into a `naht.toml`: the project name, the place
+/// id, and the instance tree (`$path` / `$className` / `$properties`). Returns the warnings for
+/// anything Naht cannot represent — surfaced to the user, never dropped. The user's source files are
+/// left untouched; only the `naht.toml` is written. Public so the migration is testable directly.
+pub fn migrate_from_rojo(root: &Path) -> Result<Vec<String>> {
+    let rojo = read_rojo_project(root)?;
+    let mut nodes = Vec::new();
+    let mut warnings = Vec::new();
+    if let Some(tree) = &rojo.tree {
+        collect_tree_nodes(tree, String::new(), &mut nodes, &mut warnings);
     }
-    out
+    let toml = render_rojo_config(&rojo.name(root), rojo.serve_place_id(), &nodes)?;
+    let project_file = root.join(PROJECT_FILE);
+    std::fs::write(&project_file, toml)
+        .with_context(|| format!("writing {}", project_file.display()))?;
+    Ok(warnings)
+}
+
+/// Walk a Rojo tree node, accumulating the instance path, and emit a [`MigratedNode`] for anything
+/// the convention cannot infer (a `$path`, a non-inferable `$className`, or `$properties`).
+fn collect_tree_nodes(
+    node: &serde_json::Value,
+    instance: String,
+    out: &mut Vec<MigratedNode>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(object) = node.as_object() else {
+        if !instance.is_empty() {
+            warnings.push(format!("{instance}: tree node is not an object; skipped"));
+        }
+        return;
+    };
+
+    if !instance.is_empty() {
+        let path = object
+            .get("$path")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let leaf = instance.rsplit('/').next().unwrap_or(&instance);
+        // Skip a `$className` the convention already infers: a service named after itself, or a plain
+        // directory's `Folder`. Anything else is a genuine override Naht must record.
+        let class = match object.get("$className").and_then(|v| v.as_str()) {
+            Some(class) if class == leaf || class == "Folder" => None,
+            Some(class) => Some(class.to_string()),
+            None => None,
+        };
+        let mut properties = std::collections::BTreeMap::new();
+        if let Some(props) = object.get("$properties").and_then(|v| v.as_object()) {
+            for (key, value) in props {
+                match rojo_property_to_toml(value) {
+                    Some(value) => {
+                        properties.insert(key.clone(), value);
+                    }
+                    None => warnings.push(format!(
+                        "{instance}.{key}: property type cannot be represented by Naht; skipped"
+                    )),
+                }
+            }
+        }
+        warn_unknown_directives(object, &instance, warnings);
+        if path.is_some() || class.is_some() || !properties.is_empty() {
+            out.push(MigratedNode {
+                instance: instance.clone(),
+                path,
+                class,
+                properties,
+            });
+        }
+    } else {
+        warn_unknown_directives(object, "(root)", warnings);
+    }
+
+    for (key, child) in object {
+        if key.starts_with('$') {
+            continue;
+        }
+        let child_instance = if instance.is_empty() {
+            key.clone()
+        } else {
+            format!("{instance}/{key}")
+        };
+        collect_tree_nodes(child, child_instance, out, warnings);
+    }
+}
+
+/// Warn about Rojo directives Naht does not carry, so nothing is silently dropped.
+fn warn_unknown_directives(
+    object: &serde_json::Map<String, serde_json::Value>,
+    instance: &str,
+    warnings: &mut Vec<String>,
+) {
+    for key in object.keys() {
+        if key.starts_with('$') && !matches!(key.as_str(), "$path" | "$className" | "$properties") {
+            warnings.push(format!(
+                "{instance}: Rojo directive `{key}` is not supported; ignored"
+            ));
+        }
+    }
+}
+
+/// Convert a Rojo `$properties` JSON value to a TOML primitive, or `None` for a shape Naht cannot
+/// represent (a typed `{ \"Type\", \"Value\" }` block, an array, a nested object).
+fn rojo_property_to_toml(value: &serde_json::Value) -> Option<toml::Value> {
+    match value {
+        serde_json::Value::Bool(b) => Some(toml::Value::Boolean(*b)),
+        serde_json::Value::String(s) => Some(toml::Value::String(s.clone())),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(toml::Value::Integer)
+            .or_else(|| n.as_f64().map(toml::Value::Float)),
+        _ => None,
+    }
+}
+
+/// Render a migrated project to `naht.toml` text: `[project]`, optional `[serve]`, and a `[[tree]]`
+/// array for the genuine exceptions.
+fn render_rojo_config(name: &str, place_id: Option<u64>, nodes: &[MigratedNode]) -> Result<String> {
+    let mut doc = toml::Table::new();
+
+    let mut project = toml::Table::new();
+    project.insert("name".to_string(), toml::Value::String(name.to_string()));
+    doc.insert("project".to_string(), toml::Value::Table(project));
+
+    if let Some(id) = place_id {
+        let mut serve = toml::Table::new();
+        serve.insert("place_id".to_string(), toml::Value::Integer(id as i64));
+        doc.insert("serve".to_string(), toml::Value::Table(serve));
+    }
+
+    if !nodes.is_empty() {
+        let entries = nodes
+            .iter()
+            .map(|node| {
+                let mut entry = toml::Table::new();
+                entry.insert(
+                    "instance".to_string(),
+                    toml::Value::String(node.instance.clone()),
+                );
+                if let Some(path) = &node.path {
+                    entry.insert("path".to_string(), toml::Value::String(path.clone()));
+                }
+                if let Some(class) = &node.class {
+                    entry.insert("class".to_string(), toml::Value::String(class.clone()));
+                }
+                if !node.properties.is_empty() {
+                    let props: toml::Table = node.properties.clone().into_iter().collect();
+                    entry.insert("properties".to_string(), toml::Value::Table(props));
+                }
+                toml::Value::Table(entry)
+            })
+            .collect();
+        doc.insert("tree".to_string(), toml::Value::Array(entries));
+    }
+
+    toml::to_string(&doc).context("rendering naht.toml")
+}
+
+/// Build the project's snapshot, honoring any `[[tree]]` mappings (migrated from Rojo). With no tree
+/// config this is the plain convention scan of the project directory (the common case, unchanged).
+/// A `$path`-mapped instance is grafted at its instance location from its filesystem source — which
+/// is left in place — and any source root it draws from is dropped from the convention scan so it
+/// does not also appear as a literal top-level folder. Returns warnings for unrepresentable entries.
+fn assemble_project_snapshot(root: &Path, config: &Config) -> Result<(Snapshot, Vec<String>)> {
+    let mut snapshot =
+        mapper::snapshot_dir(&DiskVfs::new(), root).context("snapshotting the project")?;
+    // `.naht` holds internal state, not Roblox source — keep it out of the artifact.
+    snapshot.children.retain(|child| child.name != INTERNAL_DIR);
+    let mut warnings = Vec::new();
+
+    if config.tree.is_empty() {
+        return Ok((snapshot, warnings));
+    }
+
+    let source_roots: std::collections::BTreeSet<&str> = config
+        .tree
+        .iter()
+        .filter_map(|node| node.path.as_deref())
+        .filter_map(|path| path.split('/').find(|segment| !segment.is_empty()))
+        .collect();
+    snapshot
+        .children
+        .retain(|child| !source_roots.contains(child.name.as_str()));
+
+    for node in &config.tree {
+        let segments: Vec<&str> = node.instance.split('/').filter(|s| !s.is_empty()).collect();
+        let Some((leaf, parents)) = segments.split_last() else {
+            warnings.push("a [[tree]] entry has an empty `instance`; skipped".to_string());
+            continue;
+        };
+
+        let mut built = match &node.path {
+            Some(path) => {
+                let mut from = mapper::snapshot_dir(&DiskVfs::new(), &root.join(path))
+                    .with_context(|| {
+                        format!("snapshotting {path} for instance {}", node.instance)
+                    })?;
+                from.name = (*leaf).to_string();
+                from
+            }
+            None => Snapshot::new(
+                node.class.clone().unwrap_or_else(|| "Folder".to_string()),
+                *leaf,
+            ),
+        };
+        if let Some(class) = &node.class {
+            built.class.clone_from(class);
+        }
+        for (key, value) in &node.properties {
+            match toml_value_to_variant(value) {
+                Some(variant) => {
+                    built.properties.insert(key.clone(), variant);
+                }
+                None => warnings.push(format!(
+                    "{}.{key}: unsupported property value; skipped",
+                    node.instance
+                )),
+            }
+        }
+        graft(&mut snapshot, parents, built);
+    }
+
+    Ok((snapshot, warnings))
+}
+
+/// Insert `leaf` into `root` at the instance path `parents`, creating intermediate `Folder`s as
+/// needed and replacing an existing instance of the same name.
+fn graft(root: &mut Snapshot, parents: &[&str], leaf: Snapshot) {
+    let mut current = root;
+    for segment in parents {
+        let index = match current.children.iter().position(|c| c.name == *segment) {
+            Some(index) => index,
+            None => {
+                current.push_child(Snapshot::new("Folder", *segment));
+                current
+                    .children
+                    .iter()
+                    .position(|c| c.name == *segment)
+                    .expect("child just inserted")
+            }
+        };
+        current = &mut current.children[index];
+    }
+    if let Some(index) = current.children.iter().position(|c| c.name == leaf.name) {
+        current.children[index] = leaf;
+        current.children.sort_by(|a, b| a.name.cmp(&b.name));
+    } else {
+        current.push_child(leaf);
+    }
+}
+
+/// Convert a `[[tree]]` property's TOML primitive to a Roblox [`Variant`], or `None` for a shape that
+/// has no primitive mapping.
+fn toml_value_to_variant(value: &toml::Value) -> Option<Variant> {
+    match value {
+        toml::Value::Boolean(b) => Some(Variant::Bool(*b)),
+        toml::Value::Integer(i) => Some(Variant::Int64(*i)),
+        toml::Value::Float(f) => Some(Variant::Float64(*f)),
+        toml::Value::String(s) => Some(Variant::String(s.clone())),
+        _ => None,
+    }
 }
 
 fn scaffold_source(path: &Path) -> Result<()> {

@@ -27,6 +27,29 @@ pub struct Config {
     pub serve: ServeConfig,
     /// `[assets]` settings.
     pub assets: AssetsConfig,
+    /// `[[tree]]` entries: instance-tree mappings that convention alone cannot express, recorded by
+    /// `init --from-rojo` when migrating a Rojo project. Empty for a convention-first project.
+    pub tree: Vec<TreeNode>,
+}
+
+/// One `[[tree]]` entry: an instance whose source path, class, or properties convention cannot infer.
+///
+/// `instance` is a slash-separated path from the place root (e.g. `ReplicatedStorage/Common`). `path`
+/// (when set) is the filesystem directory, relative to the project root, whose contents source the
+/// instance — the Rojo `$path` that Naht's directory convention does not already place. `class` and
+/// `properties` carry a Rojo `$className` / `$properties` the convention cannot express.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TreeNode {
+    /// The instance path from the place root, slash-separated.
+    pub instance: String,
+    /// The filesystem source directory (relative to the project root), if any.
+    pub path: Option<String>,
+    /// A class override, when not inferable from the convention.
+    pub class: Option<String>,
+    /// Property overrides, as TOML primitives (bool, integer, float, string).
+    #[serde(default)]
+    pub properties: std::collections::BTreeMap<String, toml::Value>,
 }
 
 /// `[project]` — identity that cannot be inferred from the directory alone.
@@ -106,6 +129,11 @@ impl Config {
         }
         if other.assets.api_key_env.is_some() {
             self.assets.api_key_env = other.assets.api_key_env;
+        }
+        // The tree is taken whole from the layer that defines one (a project's layout is not merged
+        // field-by-field with a machine layer's).
+        if !other.tree.is_empty() {
+            self.tree = other.tree;
         }
     }
 
