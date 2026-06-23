@@ -131,6 +131,10 @@ impl Session {
         let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
         let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
         self.absorb(patches, &pre_base);
+        // Settle the blob channel too, exactly as `rescan()` does: a filesystem terrain change that
+        // landed between the last rescan and this batch is otherwise not reconciled until the next
+        // rescan. Idempotent when nothing changed — no spurious patch on every text edit.
+        self.reconcile_blobs()?;
         Ok(())
     }
 

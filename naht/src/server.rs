@@ -153,6 +153,8 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     drop(session);
     tracing::info!(target: "naht::server", count, "changes applied from Studio");
     state.patches_ready.notify_waiters();
+    // A text batch now also settles the blob channel (Stage 16), so wake parked blob long-polls.
+    state.blobs_ready.notify_waiters();
     StatusCode::OK.into_response()
 }
 

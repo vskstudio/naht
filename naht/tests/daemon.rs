@@ -340,3 +340,45 @@ async fn a_both_sides_blob_change_freezes_through_the_live_daemon() {
     h.info(None).await;
     assert!(h.blobs(drained).await.patches.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_studio_text_edit_drives_the_blob_reconcile() {
+    let h = Harness::start(None).await;
+    let blob: Vec<u8> = (0u16..300).map(|i| (i % 256) as u8).collect();
+
+    // A `.terrain` change lands on disk, then a Studio *text* edit arrives via POST /changes with no
+    // intervening rescan. apply_changes must still reconcile blobs, so the terrain surfaces on the
+    // blob channel rather than waiting for the next rescan.
+    h.write_bytes("Zone.terrain", &blob);
+    let status = h
+        .post_changes(vec![Change::Upsert {
+            path: "Script.luau".to_string(),
+            class: "ModuleScript".to_string(),
+            content: "return 1".to_string(),
+        }])
+        .await;
+    assert!(status.is_success());
+
+    let batch = h.blobs(0).await;
+    assert_eq!(batch.patches.len(), 1);
+    assert_eq!(batch.patches[0].path, "Zone.terrain");
+    assert_eq!(batch.patches[0].content.as_deref(), Some(blob.as_slice()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_text_edit_with_no_blob_change_queues_no_blob_patch() {
+    let h = Harness::start(None).await;
+
+    // No terrain anywhere: a pure text edit must drive an idempotent blob reconcile — nothing queued,
+    // nothing frozen.
+    let status = h
+        .post_changes(vec![Change::Upsert {
+            path: "Only.luau".to_string(),
+            class: "ModuleScript".to_string(),
+            content: "return 1".to_string(),
+        }])
+        .await;
+    assert!(status.is_success());
+
+    assert!(h.blobs(0).await.patches.is_empty());
+}
