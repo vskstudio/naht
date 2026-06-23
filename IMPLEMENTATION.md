@@ -11,19 +11,17 @@ questions. The design is frozen.
 
 **Stages 0–15 are merged and CI-green** — v1 (live bidirectional sync), the post-v1 extension
 (observability, place-file build, hardening, terrain blob engine, Open Cloud asset upload), and the
-audit follow-up that made the post-v1 behavior actually exercised end to end:
+audit follow-up (Stages 13–15) that made the post-v1 behavior actually exercised end to end.
 
-- **Stage 13** — wired terrain sync into the live daemon: a `[serve] terrain_sync` flag, a dedicated
-  `/blobs` transport channel, `Session`-owned blob reconcile, and the plugin's `Terrain` wiring.
-- **Stage 14** — isolated asset-upload failures to the failing path: `rewrite_snapshot_assets()` now
-  records per-path failures instead of `?`-aborting the whole snapshot on the first bad asset.
-- **Stage 15** — closed the acceptance-coverage gaps: DataModel-root assertion, real typed-property
-  round-trips (FS and place-file), and assets-disabled build determinism.
+The remaining work is the follow-up in [`docs/spec.md`](docs/spec.md):
+
+- **Stage 16** — reconcile blobs on Studio text edits: `Session::apply_changes()` must call
+  `reconcile_blobs()` like `rescan()` does, closing the one asymmetry the Stage 13 audit found.
 
 ## The loop
 
 Work **one stage at a time**, in order. v1 was Stage 0 → Stage 7; the post-v1 work was Stage 8 →
-Stage 12; the audit follow-up continues Stage 13 → Stage 15. For each stage:
+Stage 12; the audit follow-up was Stage 13 → Stage 15; the next work is Stage 16. For each stage:
 
 ### 1. Implement the stage
 - Open a branch and a PR for that stage only.
@@ -69,3 +67,6 @@ engine, and Open Cloud asset upload.
 **Audit follow-up (done):** Stages 13–15 merged the same way — each a single PR, CI green, its
 **Acceptance / tests** section satisfied — making the post-v1 behavior actually exercised end to end
 without regressing what ships.
+
+**Follow-up (in progress):** Stage 16 merged the same way — one PR, CI green, its **Acceptance /
+tests** section satisfied.
