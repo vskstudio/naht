@@ -11,7 +11,7 @@ mapping, reconciliation, and merge are all in [`naht-core`](../naht-core). This 
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec — the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/ack`, `/heartbeat`) |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/blobs`, `/ack`, `/heartbeat`) |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Terrain.luau` | Read/write terrain voxels (`ReadVoxels`/`WriteVoxels`) as an opaque binary blob |
 | `src/Connection.luau` | Handshake, long-poll + apply, edit push, reconnect with backoff |
@@ -19,12 +19,14 @@ mapping, reconciliation, and merge are all in [`naht-core`](../naht-core). This 
 
 ## Install
 
-1. Build the plugin to a model file with Naht itself:
-   ```sh
-   naht build plugin/src -o naht-plugin.rbxm
-   ```
-2. In Studio, install the model as a local plugin (right-click in the Explorer, or use the Plugins
-   folder). Enable **Game Settings → Security → Allow HTTP Requests**.
+Each Naht release ships `naht-plugin.rbxmx`. From a source checkout, package it yourself:
+
+```sh
+naht package-plugin --src plugin/src --output naht-plugin.rbxmx
+```
+
+Then in Studio install it as a local plugin (right-click in the Explorer → **Insert from File…**, or
+drop it into the local Plugins folder) and enable **Game Settings → Security → Allow HTTP Requests**.
 
 ## Use
 
@@ -46,6 +48,31 @@ The MessagePack cases decode bytes captured from the **real daemon encoder**
 (`cargo run -p naht-core --example wire_golden`), so the codec is verified against the actual wire
 format rather than only against itself.
 
-The live loop (HttpService, DataModel change signals, the toolbar UI) is validated manually in
-Studio per the Stage 6 acceptance: editing a file updates Studio live and vice-versa, a conflict
-surfaces in the widget and freezes, and killing/restarting the daemon reconnects without data loss.
+## Studio validation checklist
+
+The live loop — HttpService, DataModel change signals, the toolbar UI — cannot run headless, so it is
+validated manually. Run each scenario in order against a real Studio session; each lists its expected
+observable result, so any tester (or a future automated harness) can follow it deterministically.
+
+Setup: `naht init demo`, `naht serve` in the project, install the plugin, enable HTTP requests.
+
+1. **Connect.** Click **Naht Sync**.
+   - *Expected:* the widget shows `Connecting`, then `Connected` with the project name; the project's
+     source appears under `ServerStorage/Naht`.
+2. **Disk → Studio.** Edit and save `src/Hello.luau` on disk.
+   - *Expected:* the matching `ModuleScript`'s source updates in Studio within a moment.
+3. **Studio → disk.** Edit that `ModuleScript`'s source in Studio.
+   - *Expected:* the file on disk updates to match.
+4. **Force a conflict.** Change the same script on both sides before a sync settles (e.g. stop typing
+   in neither; edit the file and the Studio instance to different content quickly).
+   - *Expected:* the file gets git-style conflict markers, the widget shows `Conflict` with the path,
+     `naht status` lists it, and neither side is overwritten. `naht resolve <path>` (after removing
+     the markers) clears it and sync resumes.
+5. **Terrain sync** (with `[serve] terrain_sync = true` in `naht.toml`). Sculpt terrain in Studio,
+   then change the synced `.terrain` blob on disk.
+   - *Expected:* terrain changes propagate each way as an opaque voxel blob; a change on both sides
+     freezes the blob path like any binary conflict (no silent overwrite).
+6. **Reconnect re-diff.** Kill `naht serve` (the widget shows `Reconnecting`), edit a file on disk
+   while it is down, then restart `naht serve`.
+   - *Expected:* the plugin reconnects with backoff and the daemon re-diffs against its persisted
+     state — the offline edit syncs, and nothing already in sync is re-clobbered.
