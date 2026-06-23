@@ -18,17 +18,21 @@ configuration, and silent data loss on conflict.
 | Two-way sync is experimental and can delete Studio edits / crash the server | Bidirectional is the core design; no `unwrap()` in the sync loop — a failed write pauses one path, never kills the session |
 | Overwrite-on-conflict, no merge | Real **3-way text merge** with a persisted base; unmergeable conflicts get git-style markers and freeze that path until resolved |
 | Reconciliation state is in memory and lost on restart | Last-sync state is **persisted to SQLite**, so restarts and reconnects re-diff safely instead of re-clobbering |
-| Verbose `default.project.json` + scattered `.meta.json` | **Convention over configuration**, layered config, inline property frontmatter; `naht init --from-rojo` to migrate |
+| Verbose `default.project.json` + scattered `.meta.json` | **Convention over configuration**, layered config, inline property frontmatter; `naht init --from-rojo` migrates an existing project — name, place id, and the instance tree |
 | Live-sync gaps fail silently | Unsyncable properties (CSG, terrain, `MeshId`, locked props) are **detected and reported** with guidance, never dropped; place-file fallback via `naht build` |
 
 ## Status
 
-All eight build stages are implemented: the sync engine (`naht-core`), the localhost daemon and
-MessagePack protocol, the CLI, the Luau Studio plugin, and the limits/hardening pass. The Rust side
-is covered by tests and the plugin's codec/apply paths run headless under
-[lune](https://github.com/lune-org/lune); the live Studio loop is validated manually (see
-[`plugin/README.md`](plugin/README.md)). See [`docs/`](docs/) for the architecture, the staged build
-plan, and the prior-art analysis that grounds every design decision.
+Naht is feature-complete through its staged build plan: the sync engine (`naht-core`), the localhost
+daemon and MessagePack protocol, the CLI, the Luau Studio plugin, the limits/hardening pass, and the
+post-v1 work — live terrain blob sync, isolated asset-upload failures, Rojo **tree** migration, and a
+tagged-release packaging pipeline. The Rust side is covered by tests and the plugin's codec/apply
+paths run headless under [lune](https://github.com/lune-org/lune); the live Studio loop is validated
+manually against the [Studio validation checklist](plugin/README.md#studio-validation-checklist).
+
+**New here?** Start with the [quickstart](docs/quickstart.md) — zero to a confirmed bidirectional
+sync. See [`docs/`](docs/) for the architecture, the staged build plan, and the prior-art analysis
+that grounds every design decision.
 
 ## Usage
 
@@ -39,6 +43,7 @@ naht status [path]          # list paths frozen by a conflict
 naht resolve <path>         # clear a conflict once its markers are gone (--project <dir> to scope it)
 naht build [path] -o out.rbxm   # build a model (.rbxm/.rbxmx) or place (.rbxl/.rbxlx); --watch to rebuild on change
 naht pull [path]            # ask a running daemon to re-sync now
+naht package-plugin -o naht-plugin.rbxmx   # package the Studio plugin into an installable model
 ```
 
 Configuration is convention-first; an optional `naht.toml` (layered over `~/.naht/config.toml`)
@@ -47,6 +52,7 @@ bidirectional sync between the daemon and Studio requires the plugin (Stage 6).
 
 ## Documentation
 
+- [`docs/quickstart.md`](docs/quickstart.md) — install, init, serve, first round-trip, conflicts
 - [`docs/architecture.md`](docs/architecture.md) — the system design
 - [`docs/spec.md`](docs/spec.md) — the staged implementation spec (one stage = one PR)
 - [`docs/prior-art.md`](docs/prior-art.md) — Rojo/Argon teardown and the decisions it drove
