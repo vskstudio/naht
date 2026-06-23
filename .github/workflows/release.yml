@@ -1,0 +1,80 @@
+name: Release
+
+# Tag a version (e.g. `v0.1.0`) to cut a release: the tag's version is checked against the workspace
+# `Cargo.toml`, the `naht` CLI is built for each target, the Studio plugin is packaged as an
+# installable `.rbxmx`, and everything is attached to the GitHub Release. Reproducible from the tag
+# alone — no manual steps.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Guard: a tag whose version disagrees with the workspace version fails the whole release.
+  version-check:
+    name: version guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo run -p naht -- check-version "${GITHUB_REF_NAME}"
+
+  binaries:
+    name: build ${{ matrix.target }}
+    needs: version-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked -p naht --target ${{ matrix.target }}
+      - name: Stage artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/naht" "dist/naht-${{ matrix.target }}"
+      - name: Stage artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/naht.exe" "dist/naht-${{ matrix.target }}.exe"
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+
+  plugin:
+    name: package plugin
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Package the Studio plugin
+        run: cargo run -p naht -- package-plugin --src plugin/src --output naht-plugin.rbxmx
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: naht-plugin.rbxmx

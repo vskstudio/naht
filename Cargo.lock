@@ -919,6 +919,7 @@ dependencies = [
  "notify-debouncer-full",
  "rbx_binary",
  "rbx_dom_weak",
+ "rbx_xml",
  "reqwest",
  "serde",
  "serde_json",
