@@ -75,6 +75,20 @@ enum Command {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Package the Studio plugin into an installable `.rbxmx` (used by the release pipeline).
+    PackagePlugin {
+        /// The plugin source directory.
+        #[arg(long, default_value = "plugin/src")]
+        src: PathBuf,
+        /// The output `.rbxmx` file.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Verify a release tag matches the workspace version (used by the release pipeline).
+    CheckVersion {
+        /// The tag to check, e.g. `v0.1.0`.
+        tag: String,
+    },
 }
 
 #[tokio::main]
@@ -105,5 +119,7 @@ async fn main() -> Result<()> {
         }
         Command::Status { path } => commands::status(&path),
         Command::Resolve { path, project } => commands::resolve(&project, &path),
+        Command::PackagePlugin { src, output } => commands::package_plugin(&src, &output),
+        Command::CheckVersion { tag } => commands::check_release_version(&tag),
     }
 }

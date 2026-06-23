@@ -183,6 +183,44 @@ pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
         .context("serving")
 }
 
+/// Package the Studio plugin under `src` into a single installable `.rbxmx` model at `output`.
+///
+/// The hand-written Luau modules are assembled under one `Naht` `Folder`, so the entry `Script` and
+/// its sibling `ModuleScript`s keep the `script.Parent.X` require paths they use at runtime. The
+/// directory convention maps the files: `Plugin.server.luau` → the `Script`, the rest → `ModuleScript`.
+pub fn package_plugin(src: &Path, output: &Path) -> Result<()> {
+    let mut tree = mapper::snapshot_dir(&DiskVfs::new(), src)
+        .with_context(|| format!("reading plugin sources at {}", src.display()))?;
+    tree.name = "Naht".to_string();
+    // Wrap so the `Naht` folder is the single top-level instance: `write_model` drops the wrapper and
+    // writes its children, so without the wrapper the modules would become separate top-level roots.
+    let root = Snapshot::new("Folder", "plugin").with_child(tree);
+
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+    }
+    let file =
+        std::fs::File::create(output).with_context(|| format!("creating {}", output.display()))?;
+    build::write_model(std::io::BufWriter::new(file), &root, ModelFormat::Xml)?;
+    println!("packaged plugin into {}", output.display());
+    Ok(())
+}
+
+/// Verify a release tag (`vX.Y.Z` or `X.Y.Z`) matches the workspace crate version, so a tagged
+/// release cannot ship a binary whose version disagrees with its tag.
+pub fn check_release_version(tag: &str) -> Result<()> {
+    let want = naht_core::version();
+    let got = tag.strip_prefix('v').unwrap_or(tag);
+    if got != want {
+        bail!("release tag '{tag}' does not match workspace version '{want}'");
+    }
+    println!("release tag '{tag}' matches workspace version '{want}'");
+    Ok(())
+}
+
 // --- helpers -------------------------------------------------------------------------------------
 
 /// When `[assets]` is enabled, upload local asset files referenced by properties and rewrite them to
