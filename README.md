@@ -56,7 +56,6 @@ bidirectional sync between the daemon and Studio requires the plugin (Stage 6).
 - [`docs/architecture.md`](docs/architecture.md) — the system design
 - [`docs/spec.md`](docs/spec.md) — the staged implementation spec (one stage = one PR)
 - [`docs/prior-art.md`](docs/prior-art.md) — Rojo/Argon teardown and the decisions it drove
-- [`IMPLEMENTATION.md`](IMPLEMENTATION.md) — workflow for the implementing agent
 
 ## License
 
