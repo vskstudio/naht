@@ -2,8 +2,6 @@
   import Icon from './Icon.svelte'
   import { reveal } from './reveal.js'
   import SeamPanel from './SeamPanel.svelte'
-
-  const REPO = 'https://github.com/vskstudio/naht'
 </script>
 
 <header id="top" class="hero">
@@ -40,6 +38,7 @@
     color: var(--fs); padding: 7px 15px; border: 1px solid var(--border-strong);
     border-radius: 999px; background: var(--bg-soft); margin-bottom: 24px;
   }
+  .hero-copy { min-width: 0; }
   h1 {
     font-size: clamp(2.1rem, 5vw, 3.7rem);
     letter-spacing: -0.02em; line-height: 1.08; margin: 0 0 18px;
