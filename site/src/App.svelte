@@ -1,6 +1,7 @@
 <script>
   import Icon from './lib/Icon.svelte'
   import { reveal } from './lib/reveal.js'
+  import Hero from './lib/Hero.svelte'
   import DataFlowDiagram from './lib/DataFlowDiagram.svelte'
   import MergeDiagram from './lib/MergeDiagram.svelte'
   import ArchitectureDiagram from './lib/ArchitectureDiagram.svelte'
@@ -87,29 +88,7 @@
   </div>
 </nav>
 
-<!-- Hero -->
-<header id="top" class="hero">
-  <div class="wrap hero-inner">
-    <span class="pill reveal" use:reveal>
-      <Icon name="spark" size={14} /> Rust · Roblox Studio · bidirectional sync
-    </span>
-    <h1 class="reveal" use:reveal={{ delay: 60 }}>
-      The <span class="grad">seam</span> between your filesystem<br />and Roblox Studio.
-    </h1>
-    <div class="hero-cta reveal" use:reveal={{ delay: 180 }}>
-      <a class="btn primary" href="#start"><Icon name="bolt" size={17} /> Quickstart</a>
-      <a class="btn ghost" href="#sync"><Icon name="sync" size={17} /> See it sync</a>
-    </div>
-    <div class="hero-term reveal" use:reveal={{ delay: 240 }}>
-      <div class="term-bar"><i></i><i></i><i></i><span>naht serve</span></div>
-      <pre><span class="p">$</span> naht init demo &amp;&amp; cd demo
-<span class="c">Initialized Naht project 'demo'</span>
-<span class="p">$</span> naht serve
-<span class="c">naht serving demo on http://127.0.0.1:34872</span>
-<span class="g">✓ handshake ok; re-diffed on connect</span></pre>
-    </div>
-  </div>
-</header>
+<Hero />
 
 <main>
   <!-- Why Naht -->
@@ -317,55 +296,6 @@
     }
   }
 
-  /* ---- Hero ---- */
-  .hero {
-    padding: 84px 0 56px;
-    position: relative;
-  }
-  .hero-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-  }
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-family: var(--mono);
-    font-size: 0.76rem;
-    letter-spacing: 0.04em;
-    color: var(--fs);
-    padding: 7px 15px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-soft);
-    margin-bottom: 26px;
-  }
-  .hero h1 {
-    font-size: clamp(2.1rem, 5.6vw, 3.7rem);
-    margin-bottom: 32px;
-  }
-  /* Keep the intended two lines on desktop; let it wrap on narrow screens. */
-  @media (min-width: 720px) {
-    .hero h1 {
-      white-space: nowrap;
-    }
-  }
-  .grad {
-    background: linear-gradient(120deg, var(--fs), var(--merge) 55%, var(--studio));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-  .hero-cta {
-    display: flex;
-    gap: 13px;
-    flex-wrap: wrap;
-    justify-content: center;
-    margin-bottom: 50px;
-  }
-
   .btn {
     display: inline-flex;
     align-items: center;
@@ -394,64 +324,6 @@
   }
   .btn.ghost:hover {
     border-color: var(--studio);
-  }
-
-  .hero-term {
-    width: 100%;
-    max-width: 600px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-card);
-    overflow: hidden;
-    box-shadow: var(--shadow);
-    text-align: left;
-  }
-  .term-bar {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 11px 15px;
-    border-bottom: 1px solid var(--border-soft);
-    background: var(--bg-soft);
-  }
-  .term-bar i {
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    background: var(--border);
-  }
-  .term-bar i:first-child {
-    background: #f2616a;
-  }
-  .term-bar i:nth-child(2) {
-    background: #f5b54a;
-  }
-  .term-bar i:nth-child(3) {
-    background: #4ad295;
-  }
-  .term-bar span {
-    margin-left: 8px;
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    color: var(--text-faint);
-  }
-  .hero-term pre {
-    margin: 0;
-    padding: 18px 20px;
-    font-family: var(--mono);
-    font-size: 0.82rem;
-    line-height: 1.85;
-    color: var(--text);
-    overflow-x: auto;
-  }
-  .hero-term .p {
-    color: var(--fs);
-  }
-  .hero-term .c {
-    color: var(--text-faint);
-  }
-  .hero-term .g {
-    color: var(--ok);
   }
 
   /* ---- Section chrome ---- */
