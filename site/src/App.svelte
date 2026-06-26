@@ -113,19 +113,6 @@
     </div>
   </section>
 
-  <!-- Architecture -->
-  <section id="architecture" class="alt">
-    <div class="wrap">
-      <div class="eyebrow reveal" use:reveal><Icon name="layers" size={14} /> Architecture</div>
-      <h2 class="section-title reveal" use:reveal>A Cargo workspace and a thin Luau plugin.</h2>
-      <p class="section-lead reveal" use:reveal>
-        The brain has zero network I/O so it stays unit-testable; the daemon owns transport and the
-        disk; the plugin is kept deliberately thin — the thinner the plugin, the fewer the bugs.
-      </p>
-      <ArchitectureDiagram />
-    </div>
-  </section>
-
   <!-- Sync / data flow -->
   <FeatureRow id="sync" eyebrow="The seam, working" icon="sync"
     title="Bidirectional sync with a persisted base.">
@@ -135,6 +122,26 @@
       confirms it applied, so a half-applied batch re-diffs the rest instead of clobbering.
     </p>
     <DataFlowDiagram />
+  </FeatureRow>
+
+  <!-- Merge -->
+  <FeatureRow eyebrow="When both sides change the same script" icon="merge"
+    title="A real 3-way merge against the last-sync base." flip>
+    <p slot="lead">
+      Clean merges are written and the base advances; an unmergeable hunk freezes the path with
+      git-style markers and never auto-picks a winner.
+    </p>
+    <MergeDiagram />
+  </FeatureRow>
+
+  <!-- Architecture -->
+  <FeatureRow id="architecture" eyebrow="Architecture" icon="layers"
+    title="A Cargo workspace and a thin Luau plugin.">
+    <p slot="lead">
+      The brain has zero network I/O so it stays unit-testable; the daemon owns transport and the
+      disk; the plugin is kept deliberately thin — the thinner the plugin, the fewer the bugs.
+    </p>
+    <ArchitectureDiagram />
   </FeatureRow>
 
   <!-- CLI -->

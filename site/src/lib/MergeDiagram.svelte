@@ -66,6 +66,9 @@ local hp = 80
 
 <style>
   .grid {
+    width: 100%;
+    max-width: 560px;
+    margin-inline: auto;
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px;

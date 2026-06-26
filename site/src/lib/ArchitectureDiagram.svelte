@@ -62,6 +62,9 @@
 
 <style>
   .arch {
+    width: 100%;
+    max-width: 560px;
+    margin-inline: auto;
     display: flex;
     flex-direction: column;
     align-items: stretch;
