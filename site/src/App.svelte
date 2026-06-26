@@ -155,14 +155,14 @@
         An optional <code>naht.toml</code> (layered over <code>~/.naht/config.toml</code>) holds just
         the project name, the serve port, and the place-id guard.
       </p>
-      <div class="cmd-grid">
+      <BentoGrid cols={2}>
         {#each commands as c, i (c.cmd)}
-          <div class="cmd-card reveal" use:reveal={{ delay: (i % 2) * 80 }}>
-            <code><span class="prompt">$</span> {c.cmd}</code>
-            <p>{c.desc}</p>
-          </div>
+          <Card delay={(i % 2) * 80}>
+            <code class="cmd"><span class="prompt">$</span> {c.cmd}</code>
+            <p class="cmd-desc">{c.desc}</p>
+          </Card>
         {/each}
-      </div>
+      </BentoGrid>
     </div>
   </section>
 
@@ -366,86 +366,24 @@
   }
 
   /* ---- CLI grid ---- */
-  .cmd-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-  .cmd-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px 20px;
-    transition: border-color 0.2s ease;
-  }
-  .cmd-card:hover {
-    border-color: var(--fs);
-  }
-  .cmd-card code {
-    display: block;
-    font-size: 0.86rem;
-    color: var(--text);
-    margin-bottom: 7px;
-    word-break: break-word;
-  }
-  .cmd-card .prompt {
-    color: var(--fs);
-    margin-right: 8px;
-  }
-  .cmd-card p {
-    margin: 0;
-    font-size: 0.86rem;
-    color: var(--text-dim);
-  }
+  .cmd { font-family: var(--mono); font-size: 0.9rem; color: var(--text); display: block; }
+  .cmd .prompt { color: var(--fs); margin-right: 6px; }
+  .cmd-desc { color: var(--text-dim); font-size: 0.9rem; margin: 8px 0 0; }
 
   /* ---- Limits ---- */
-  .limits {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
+  .limits { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
   .limit-row {
-    display: grid;
-    grid-template-columns: 1.1fr 0.7fr 3fr;
-    gap: 16px;
-    align-items: center;
-    padding: 18px 22px;
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border-soft);
+    display: grid; grid-template-columns: 1fr auto 2fr; gap: 16px; align-items: center;
+    padding: 16px 18px; border-top: 1px solid var(--border); background: var(--bg-card);
   }
-  .limit-row:last-child {
-    border-bottom: none;
-  }
-  .limit-case {
-    font-family: var(--mono);
-    font-size: 0.88rem;
-    color: var(--text);
-  }
-  .status {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 4px 10px;
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-  .status.ok {
-    color: var(--ok);
-    background: rgba(74, 210, 149, 0.12);
-  }
-  .status.warn {
-    color: var(--fs);
-    background: var(--fs-soft);
-  }
-  .status.bad {
-    color: var(--danger);
-    background: rgba(242, 97, 106, 0.12);
-  }
-  .limit-note {
-    font-size: 0.88rem;
-    color: var(--text-dim);
-  }
+  .limit-row:first-child { border-top: none; }
+  .limit-case { font-family: var(--mono); font-size: 0.9rem; color: var(--text); }
+  .status { font-family: var(--mono); font-size: 0.72rem; padding: 3px 10px; border-radius: 999px; }
+  .status.ok { color: var(--ok); background: rgba(74, 210, 149, 0.12); }
+  .status.warn { color: var(--fs); background: rgba(245, 181, 74, 0.12); }
+  .status.bad { color: var(--danger); background: rgba(242, 97, 106, 0.12); }
+  .limit-note { color: var(--text-dim); font-size: 0.9rem; }
+  @media (max-width: 640px) { .limit-row { grid-template-columns: 1fr; gap: 6px; } }
 
   /* ---- Steps ---- */
   .steps {
@@ -536,13 +474,8 @@
     }
   }
   @media (max-width: 640px) {
-    .steps,
-    .cmd-grid {
+    .steps {
       grid-template-columns: 1fr;
-    }
-    .limit-row {
-      grid-template-columns: 1fr;
-      gap: 8px;
     }
   }
 </style>
