@@ -378,7 +378,7 @@
   }
   .limit-row:first-child { border-top: none; }
   .limit-case { font-family: var(--mono); font-size: 0.9rem; color: var(--text); }
-  .status { font-family: var(--mono); font-size: 0.72rem; padding: 3px 10px; border-radius: 999px; }
+  .status { font-family: var(--mono); font-size: 0.72rem; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
   .status.ok { color: var(--ok); background: rgba(74, 210, 149, 0.12); }
   .status.warn { color: var(--fs); background: rgba(245, 181, 74, 0.12); }
   .status.bad { color: var(--danger); background: rgba(242, 97, 106, 0.12); }

@@ -22,5 +22,8 @@
     box-shadow: 0 18px 40px -24px rgba(124, 131, 255, 0.5);
   }
   @media (max-width: 560px) { .card { grid-column: span 1 !important; } }
-  @media (prefers-reduced-motion: reduce) { .card:hover { transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .card { transition: none; }
+    .card:hover { transform: none; }
+  }
 </style>
