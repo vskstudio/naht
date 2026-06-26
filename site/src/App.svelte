@@ -7,6 +7,8 @@
   import FeatureRow from './lib/FeatureRow.svelte'
   import ArchitectureDiagram from './lib/ArchitectureDiagram.svelte'
   import logo from './assets/logo.png'
+  import BentoGrid from './lib/BentoGrid.svelte'
+  import Card from './lib/Card.svelte'
 
   const REPO = 'https://github.com/vskstudio/naht'
 
@@ -92,27 +94,6 @@
 <Hero />
 
 <main>
-  <!-- Why Naht -->
-  <section id="why">
-    <div class="wrap">
-      <div class="eyebrow reveal" use:reveal><Icon name="warn" size={14} /> Why Naht</div>
-      <h2 class="section-title reveal" use:reveal>Built around the failure modes that make the others painful.</h2>
-      <p class="section-lead reveal" use:reveal>
-        A from-scratch alternative to Rojo and Argon. Every decision is grounded in a concrete failure
-        of the incumbents — see the prior-art teardown in the repo.
-      </p>
-      <div class="pain-grid">
-        {#each pains as p, i (p.pain)}
-          <div class="pain-card reveal" use:reveal={{ delay: (i % 3) * 90 }}>
-            <span class="pain-icon"><Icon name={p.icon} size={20} /></span>
-            <div class="pain-bad"><Icon name="warn" size={14} /> {p.pain}</div>
-            <div class="pain-fix"><Icon name="check" size={14} /> {p.fix}</div>
-          </div>
-        {/each}
-      </div>
-    </div>
-  </section>
-
   <!-- Sync / data flow -->
   <FeatureRow id="sync" eyebrow="The seam, working" icon="sync"
     title="Bidirectional sync with a persisted base.">
@@ -143,6 +124,27 @@
     </p>
     <ArchitectureDiagram />
   </FeatureRow>
+
+  <!-- Why Naht -->
+  <section id="why">
+    <div class="wrap">
+      <div class="eyebrow reveal" use:reveal><Icon name="warn" size={14} /> Why Naht</div>
+      <h2 class="section-title reveal" use:reveal>Built around the failure modes that make the others painful.</h2>
+      <p class="section-lead reveal" use:reveal>
+        A from-scratch alternative to Rojo and Argon. Every decision is grounded in a concrete failure
+        of the incumbents — see the prior-art teardown in the repo.
+      </p>
+      <BentoGrid cols={3}>
+        {#each pains as p, i (p.pain)}
+          <Card delay={(i % 3) * 90}>
+            <span class="pain-icon"><Icon name={p.icon} size={20} /></span>
+            <div class="pain-bad"><Icon name="warn" size={14} /> {p.pain}</div>
+            <div class="pain-fix"><Icon name="check" size={14} /> {p.fix}</div>
+          </Card>
+        {/each}
+      </BentoGrid>
+    </div>
+  </section>
 
   <!-- CLI -->
   <section id="cli" class="alt">
@@ -331,27 +333,6 @@
     border-bottom: 1px solid var(--border-soft);
   }
   /* ---- Why grid ---- */
-  .pain-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 18px;
-  }
-  .pain-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 22px;
-    display: flex;
-    flex-direction: column;
-    gap: 13px;
-    transition:
-      transform 0.2s ease,
-      border-color 0.2s ease;
-  }
-  .pain-card:hover {
-    transform: translateY(-3px);
-    border-color: var(--border);
-  }
   .pain-icon {
     width: 44px;
     height: 44px;
@@ -550,13 +531,11 @@
   }
 
   @media (max-width: 860px) {
-    .pain-grid,
     .steps {
       grid-template-columns: 1fr 1fr;
     }
   }
   @media (max-width: 640px) {
-    .pain-grid,
     .steps,
     .cmd-grid {
       grid-template-columns: 1fr;
