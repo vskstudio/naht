@@ -45,7 +45,6 @@
   }
   .lead { color: var(--text-dim); font-size: 1.1rem; max-width: 44ch; margin: 0 0 28px; }
   .cta { display: flex; gap: 13px; flex-wrap: wrap; }
-  @media (min-width: 721px) { h1 { white-space: nowrap; } }
   @media (max-width: 720px) {
     .hero { padding: 60px 0 48px; text-align: center; }
     .hero-grid { grid-template-columns: 1fr; gap: 32px; }

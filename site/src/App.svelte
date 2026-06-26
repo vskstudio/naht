@@ -79,9 +79,9 @@
       <img class="brand-mark" src={logo} alt="" width="26" height="26" /> naht
     </a>
     <div class="nav-links">
-      <a href="#why">Why</a>
-      <a href="#architecture">Architecture</a>
       <a href="#sync">Sync</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#why">Why</a>
       <a href="#cli">CLI</a>
       <a href="#start">Quickstart</a>
       <a class="nav-cta" href={REPO} target="_blank" rel="noreferrer">
@@ -242,7 +242,7 @@
     top: 0;
     z-index: 50;
     backdrop-filter: blur(12px);
-    background: rgba(11, 14, 20, 0.72);
+    background: rgba(7, 8, 9, 0.72);
     border-bottom: 1px solid var(--border-soft);
   }
   .nav-inner {
@@ -294,36 +294,6 @@
     .nav-links a:not(.nav-cta) {
       display: none;
     }
-  }
-
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    padding: 12px 22px;
-    border-radius: 11px;
-    font-weight: 600;
-    font-size: 0.95rem;
-    transition:
-      transform 0.15s ease,
-      box-shadow 0.2s ease,
-      background 0.2s ease;
-  }
-  .btn:hover {
-    transform: translateY(-2px);
-  }
-  .btn.primary {
-    background: linear-gradient(120deg, var(--fs), #f0a030);
-    color: #1a1205;
-    box-shadow: 0 10px 30px -10px rgba(245, 181, 74, 0.6);
-  }
-  .btn.ghost {
-    color: var(--text);
-    border: 1px solid var(--border);
-    background: var(--bg-soft);
-  }
-  .btn.ghost:hover {
-    border-color: var(--studio);
   }
 
   /* ---- Section chrome ---- */
