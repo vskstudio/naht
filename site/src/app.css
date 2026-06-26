@@ -63,7 +63,7 @@ a {
   transition: color 0.15s ease;
 }
 a:hover {
-  color: #7ddcef;
+  color: #9adeff;
 }
 
 h1,
@@ -104,7 +104,7 @@ code {
   color: var(--text-dim);
   margin-bottom: 16px;
 }
-.eyebrow :global(svg) { color: var(--fs); }
+.eyebrow svg { color: var(--fs); }
 .section-title {
   font-size: clamp(1.7rem, 3.4vw, 2.5rem);
   letter-spacing: -0.02em;
