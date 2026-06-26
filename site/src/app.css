@@ -14,6 +14,9 @@
   --merge: #9aa0ff;    /* merge accent (periwinkle) */
   --danger: #f2616a;
   --ok: #4ad295;
+  --border-soft: #15171d;
+  --fs-soft: rgba(245, 181, 74, 0.14);
+  --studio-soft: rgba(92, 200, 255, 0.14);
 
   --grad: linear-gradient(110deg, var(--fs), var(--merge) 52%, var(--studio));
 
