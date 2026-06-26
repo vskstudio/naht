@@ -283,6 +283,8 @@
   }
   .brand-mark {
     display: block;
+    width: 26px;
+    height: 26px;
     image-rendering: pixelated;
   }
   .nav-links {
