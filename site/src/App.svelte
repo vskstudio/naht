@@ -4,6 +4,7 @@
   import DataFlowDiagram from './lib/DataFlowDiagram.svelte'
   import MergeDiagram from './lib/MergeDiagram.svelte'
   import ArchitectureDiagram from './lib/ArchitectureDiagram.svelte'
+  import logo from './assets/logo.png'
 
   const REPO = 'https://github.com/vskstudio/naht'
 
@@ -71,7 +72,7 @@
 <nav>
   <div class="wrap nav-inner">
     <a class="brand" href="#top">
-      <span class="brand-mark">🧵</span> naht
+      <img class="brand-mark" src={logo} alt="" width="26" height="26" /> naht
     </a>
     <div class="nav-links">
       <a href="#why">Why</a>
@@ -95,11 +96,6 @@
     <h1 class="reveal" use:reveal={{ delay: 60 }}>
       The <span class="grad">seam</span> between your filesystem<br />and Roblox Studio.
     </h1>
-    <p class="hero-lead reveal" use:reveal={{ delay: 120 }}>
-      <strong>Naht</strong> (German: <em>seam / suture</em>) keeps your code on disk and your Studio
-      session in lockstep <b>in both directions at once</b> — and when both sides change the same
-      script it does a <b>real 3-way merge</b> instead of silently overwriting your work.
-    </p>
     <div class="hero-cta reveal" use:reveal={{ delay: 180 }}>
       <a class="btn primary" href="#start"><Icon name="bolt" size={17} /> Quickstart</a>
       <a class="btn ghost" href="#sync"><Icon name="sync" size={17} /> See it sync</a>
@@ -244,7 +240,7 @@
 <footer>
   <div class="wrap foot-inner">
     <div class="foot-brand">
-      <span class="brand-mark">🧵</span>
+      <img class="brand-mark" src={logo} alt="" width="30" height="30" />
       <div>
         <strong>naht</strong>
         <span>The seam between your filesystem and Roblox Studio.</span>
@@ -286,7 +282,8 @@
     color: var(--text);
   }
   .brand-mark {
-    font-size: 1.2rem;
+    display: block;
+    image-rendering: pixelated;
   }
   .nav-links {
     display: flex;
@@ -344,23 +341,20 @@
     margin-bottom: 26px;
   }
   .hero h1 {
-    font-size: clamp(2.3rem, 6vw, 4.2rem);
-    margin-bottom: 22px;
+    font-size: clamp(2.1rem, 5.6vw, 3.7rem);
+    margin-bottom: 32px;
+  }
+  /* Keep the intended two lines on desktop; let it wrap on narrow screens. */
+  @media (min-width: 720px) {
+    .hero h1 {
+      white-space: nowrap;
+    }
   }
   .grad {
     background: linear-gradient(120deg, var(--fs), var(--merge) 55%, var(--studio));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-  }
-  .hero-lead {
-    max-width: 60ch;
-    color: var(--text-dim);
-    font-size: 1.12rem;
-    margin-bottom: 32px;
-  }
-  .hero-lead b {
-    color: var(--text);
   }
   .hero-cta {
     display: flex;
