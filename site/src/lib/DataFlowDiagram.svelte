@@ -55,6 +55,9 @@
 
 <style>
   .flow {
+    width: 100%;
+    max-width: 560px;
+    margin-inline: auto;
     display: grid;
     grid-template-columns: 1fr auto 1.25fr auto 1fr;
     align-items: center;

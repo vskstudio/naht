@@ -4,6 +4,7 @@
   import Hero from './lib/Hero.svelte'
   import DataFlowDiagram from './lib/DataFlowDiagram.svelte'
   import MergeDiagram from './lib/MergeDiagram.svelte'
+  import FeatureRow from './lib/FeatureRow.svelte'
   import ArchitectureDiagram from './lib/ArchitectureDiagram.svelte'
   import logo from './assets/logo.png'
 
@@ -126,25 +127,15 @@
   </section>
 
   <!-- Sync / data flow -->
-  <section id="sync">
-    <div class="wrap">
-      <div class="eyebrow reveal" use:reveal><Icon name="sync" size={14} /> The seam, working</div>
-      <h2 class="section-title reveal" use:reveal>Bidirectional sync with a persisted base.</h2>
-      <p class="section-lead reveal" use:reveal>
-        The filesystem is read fresh on every reconcile; the Studio side is mirrored in memory.
-        Filesystem → Studio patches are <b>ack-gated</b> — the base advances only once the plugin
-        confirms it applied, so a half-applied batch re-diffs the rest instead of clobbering.
-      </p>
-      <div class="reveal" use:reveal><DataFlowDiagram /></div>
-
-      <h3 class="sub reveal" use:reveal><Icon name="merge" size={18} /> When both sides change the same script</h3>
-      <p class="section-lead reveal" use:reveal>
-        A 3-way merge against the last-sync content. Clean merges are written and the base advances;
-        an unmergeable hunk freezes the path and never auto-picks a winner.
-      </p>
-      <div class="reveal" use:reveal><MergeDiagram /></div>
-    </div>
-  </section>
+  <FeatureRow id="sync" eyebrow="The seam, working" icon="sync"
+    title="Bidirectional sync with a persisted base.">
+    <p slot="lead">
+      The filesystem is read fresh on every reconcile; the Studio side is mirrored in memory.
+      Filesystem → Studio patches are <b>ack-gated</b> — the base advances only once the plugin
+      confirms it applied, so a half-applied batch re-diffs the rest instead of clobbering.
+    </p>
+    <DataFlowDiagram />
+  </FeatureRow>
 
   <!-- CLI -->
   <section id="cli" class="alt">
@@ -332,18 +323,6 @@
     border-top: 1px solid var(--border-soft);
     border-bottom: 1px solid var(--border-soft);
   }
-  .sub {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 1.3rem;
-    margin: 64px 0 12px;
-    color: var(--text);
-  }
-  .sub :global(svg) {
-    color: var(--merge);
-  }
-
   /* ---- Why grid ---- */
   .pain-grid {
     display: grid;
