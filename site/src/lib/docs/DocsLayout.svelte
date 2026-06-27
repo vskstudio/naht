@@ -1,18 +1,29 @@
 <script>
+  import { onMount } from 'svelte'
   import TopBar from './TopBar.svelte'
   import Sidebar from './Sidebar.svelte'
   import MarkdownView from './MarkdownView.svelte'
   import TocRight from './TocRight.svelte'
+  import Search from './Search.svelte'
   export let slug
   let toc = []
+  let searchOpen = false
+  onMount(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); searchOpen = !searchOpen }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 </script>
 
-<TopBar />
+<TopBar onSearch={() => (searchOpen = true)} />
 <div class="shell">
   <Sidebar {slug} />
   <main class="content">{#key slug}<MarkdownView {slug} bind:toc />{/key}</main>
   <div class="rail">{#key slug}<TocRight {toc} />{/key}</div>
 </div>
+<Search bind:open={searchOpen} />
 
 <style>
   .shell {
