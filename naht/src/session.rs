@@ -104,7 +104,7 @@ impl Session {
         let pre_base = self.base_snapshot()?;
         let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
         let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
-        self.absorb(patches, &pre_base);
+        self.absorb(patches, &pre_base)?;
         self.reconcile_blobs()?;
         Ok(())
     }
@@ -130,7 +130,7 @@ impl Session {
         let pre_base = self.base_snapshot()?;
         let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
         let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
-        self.absorb(patches, &pre_base);
+        self.absorb(patches, &pre_base)?;
         // Settle the blob channel too, exactly as `rescan()` does: a filesystem terrain change that
         // landed between the last rescan and this batch is otherwise not reconciled until the next
         // rescan. Idempotent when nothing changed — no spurious patch on every text edit.
@@ -272,7 +272,11 @@ impl Session {
 
     /// Record the result of a reconcile. Filesystem-bound effects already advanced the base; for a
     /// Studio-bound patch the base is held (ack-gated) until the plugin confirms it.
-    fn absorb(&mut self, patches: Vec<Patch>, pre_base: &BTreeMap<String, InstanceRecord>) {
+    fn absorb(
+        &mut self,
+        patches: Vec<Patch>,
+        pre_base: &BTreeMap<String, InstanceRecord>,
+    ) -> Result<()> {
         let fs_bound: BTreeSet<String> = patches
             .iter()
             .filter(|patch| patch.direction == Direction::ToFs)
@@ -317,12 +321,13 @@ impl Session {
                 // A pure Studio-bound patch is ack-gated: hold the base at the agreed content and do
                 // not touch the mirror, so it re-diffs until the plugin confirms it.
                 Direction::ToStudio => {
-                    self.revert_base(&patch.path, pre_base);
+                    self.revert_base(&patch.path, pre_base)?;
                     self.unacked.insert(patch.path.clone(), patch.clone());
                     self.enqueue(patch);
                 }
             }
         }
+        Ok(())
     }
 
     fn enqueue(&mut self, patch: Patch) {
@@ -339,14 +344,21 @@ impl Session {
 
     /// Undo the base advance the reconciler made for a held Studio-bound patch, restoring the agreed
     /// ancestor (or removing it if the path was new).
-    fn revert_base(&mut self, path: &str, pre_base: &BTreeMap<String, InstanceRecord>) {
-        let result = match pre_base.get(path) {
-            Some(record) => self.store.upsert(record),
-            None => self.store.remove(path),
-        };
-        if let Err(error) = result {
-            tracing::warn!(target: "naht::sync", %path, %error, "failed to hold base");
+    ///
+    /// A failure here must surface, not be swallowed: leaving the base advanced while the patch is
+    /// still ack-gated would let the next reconcile treat the path as synced and clobber it
+    /// (architecture §8 — surface the error, never silently diverge). The caller fails the reconcile;
+    /// the next filesystem event or reconnect re-diff retries cleanly.
+    fn revert_base(
+        &mut self,
+        path: &str,
+        pre_base: &BTreeMap<String, InstanceRecord>,
+    ) -> Result<()> {
+        match pre_base.get(path) {
+            Some(record) => self.store.upsert(record)?,
+            None => self.store.remove(path)?,
         }
+        Ok(())
     }
 
     /// Advance the Studio mirror to the state a durable patch leaves behind.

@@ -1,9 +1,10 @@
 //! The localhost HTTP server the Studio plugin talks to (architecture §7).
 //!
-//! Four endpoints, all MessagePack: `GET /info` (handshake + `servePlaceId` guard + reconnect
-//! re-diff), `GET /patches` (long-poll held open until a change or timeout), `POST /changes`
-//! (Studio → filesystem), and `GET /heartbeat` (liveness). All sync decisions are delegated to the
-//! [`Session`]; this layer is pure transport.
+//! All endpoints speak MessagePack: `GET /info` (handshake + `servePlaceId` guard + reconnect
+//! re-diff), `GET /patches` (text long-poll held open until a change or timeout), `POST /changes`
+//! (Studio → filesystem), `GET /blobs` + `POST /blobs` (the separate terrain blob channel),
+//! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
+//! decisions are delegated to the [`Session`]; this layer is pure transport.
 
 use std::sync::Arc;
 use std::time::Duration;
