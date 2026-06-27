@@ -158,6 +158,8 @@ export default {
   },
   legal: {
     title: 'Legal notice',
+    eyebrow: 'Legal',
+    back: 'Back to home',
     intro: "Identification of the Service's editor in accordance with French law (LCEN).",
     rows: [
       { k: 'Legal name', v: 'VSK' },

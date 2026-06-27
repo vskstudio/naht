@@ -1,13 +1,17 @@
 import { readable } from 'svelte/store'
 
 // Parse the current location hash into a route.
-// '#/docs/<slug>' -> docs; '#/', '', '#', or a bare '#anchor' -> landing.
+// '#/docs/<slug>' -> docs; '#/legal' -> legal; '#/', '', '#', or a bare
+// '#anchor' -> landing.
 export function parseHash(hash) {
   const h = hash ?? (typeof location !== 'undefined' ? location.hash : '')
   if (h === '#/docs' || h.startsWith('#/docs/')) {
     const rest = h.slice('#/docs/'.length)
     const [slug, anchor = ''] = rest.split('#')
     return { name: 'docs', slug: slug || 'introduction', anchor }
+  }
+  if (h === '#/legal' || h.startsWith('#/legal#')) {
+    return { name: 'legal' }
   }
   return { name: 'landing' }
 }

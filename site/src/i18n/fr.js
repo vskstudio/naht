@@ -158,6 +158,8 @@ export default {
   },
   legal: {
     title: 'Mentions légales',
+    eyebrow: 'Légal',
+    back: "Retour à l'accueil",
     intro: "Identification de l'éditeur du Service conformément à la loi française pour la confiance dans l'économie numérique (LCEN).",
     rows: [
       { k: 'Raison sociale', v: 'VSK' },

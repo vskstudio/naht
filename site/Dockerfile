@@ -25,6 +25,13 @@ RUN npm run build
 # --- runtime stage ---------------------------------------------------------
 FROM nginxinc/nginx-unprivileged:1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6 AS runtime
 
+# Patch OS packages to pick up security fixes published after the base image was
+# built (e.g. openssl/libxml2/libexpat HIGH CVEs the digest pin would otherwise
+# freeze us on). Needs root; the base image drops back to uid 101 below via USER.
+USER root
+RUN apk upgrade --no-cache
+USER 101
+
 # Non-root by default in this image (USER 101). Replace the stock site config.
 COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build --chown=101:101 /app/dist /usr/share/nginx/html
