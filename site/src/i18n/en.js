@@ -156,4 +156,19 @@ export default {
     links: { github: 'GitHub', quickstart: 'Quickstart', architecture: 'Architecture', priorArt: 'Prior art' },
     license: 'Dual-licensed MIT or Apache-2.0.',
   },
+  legal: {
+    title: 'Legal notice',
+    intro: "Identification of the Service's editor in accordance with French law (LCEN).",
+    rows: [
+      { k: 'Legal name', v: 'VSK' },
+      { k: 'Legal form', v: 'SARL with variable capital' },
+      { k: 'Share capital', v: '€3 (variable capital, minimum €1)' },
+      { k: 'SIREN', v: '105 185 789' },
+      { k: 'Trade Register (RCS)', v: 'Paris — 105 185 789 (registered on 2026-05-20)' },
+      { k: 'Intra-EU VAT number', v: 'FR83 105 185 789' },
+      { k: 'Registered office', v: '47, rue Vivienne, 75002 Paris, France' },
+      { k: 'Contact email', v: 'contact@vskstudio.fr' },
+      { k: 'Hosting provider', v: 'Contabo GmbH — Aschauer Straße 32a, 81549 München, Germany' },
+    ],
+  },
 }

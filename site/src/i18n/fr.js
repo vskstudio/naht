@@ -156,4 +156,19 @@ export default {
     links: { github: 'GitHub', quickstart: 'Quickstart', architecture: 'Architecture', priorArt: 'Prior art' },
     license: 'Dual-licensed MIT ou Apache-2.0.',
   },
+  legal: {
+    title: 'Mentions légales',
+    intro: "Identification de l'éditeur du Service conformément à la loi française pour la confiance dans l'économie numérique (LCEN).",
+    rows: [
+      { k: 'Raison sociale', v: 'VSK' },
+      { k: 'Forme juridique', v: 'SARL à capital variable' },
+      { k: 'Capital social', v: '3 € (capital variable, minimum 1 €)' },
+      { k: 'SIREN', v: '105 185 789' },
+      { k: 'RCS', v: 'Paris — 105 185 789 (immatriculée le 20/05/2026)' },
+      { k: 'TVA intracommunautaire', v: 'FR83 105 185 789' },
+      { k: 'Siège social', v: '47, rue Vivienne, 75002 Paris, France' },
+      { k: 'E-mail de contact', v: 'contact@vskstudio.fr' },
+      { k: 'Hébergeur', v: 'Contabo GmbH — Aschauer Straße 32a, 81549 München, Allemagne' },
+    ],
+  },
 }

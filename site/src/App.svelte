@@ -24,7 +24,6 @@
       <a href="#merge">{$t.nav.merge}</a>
       <a href="#architecture">{$t.nav.architecture}</a>
       <a href="#start">{$t.nav.quickstart}</a>
-      <LanguageToggle />
       <a class="nav-cta" href={REPO} target="_blank" rel="noreferrer"><Icon name="git" size={16} /> {$t.nav.github}</a>
     </div>
   </div>
@@ -96,17 +95,31 @@
 </main>
 
 <footer>
-  <div class="wrap foot-inner">
-    <div class="foot-brand">
-      <img class="brand-mark" src={logo} alt="" width="30" height="30" />
-      <div><strong>naht</strong><span>{$t.footer.tagline}</span></div>
+  <div class="wrap">
+    <div class="foot-inner">
+      <div class="foot-brand">
+        <img class="brand-mark" src={logo} alt="" width="30" height="30" />
+        <div><strong>naht</strong><span>{$t.footer.tagline}</span></div>
+      </div>
+      <div class="foot-links">
+        <a href={REPO} target="_blank" rel="noreferrer">{$t.footer.links.github}</a>
+        <a href={REPO + '/blob/main/docs/quickstart.md'} target="_blank" rel="noreferrer">{$t.footer.links.quickstart}</a>
+        <a href={REPO + '/blob/main/docs/architecture.md'} target="_blank" rel="noreferrer">{$t.footer.links.architecture}</a>
+        <a href={REPO + '/blob/main/docs/prior-art.md'} target="_blank" rel="noreferrer">{$t.footer.links.priorArt}</a>
+      </div>
+      <LanguageToggle />
     </div>
-    <div class="foot-links">
-      <a href={REPO} target="_blank" rel="noreferrer">{$t.footer.links.github}</a>
-      <a href={REPO + '/blob/main/docs/quickstart.md'} target="_blank" rel="noreferrer">{$t.footer.links.quickstart}</a>
-      <a href={REPO + '/blob/main/docs/architecture.md'} target="_blank" rel="noreferrer">{$t.footer.links.architecture}</a>
-      <a href={REPO + '/blob/main/docs/prior-art.md'} target="_blank" rel="noreferrer">{$t.footer.links.priorArt}</a>
-    </div>
+
+    <details class="legal">
+      <summary>{$t.legal.title}</summary>
+      <p class="legal-intro">{$t.legal.intro}</p>
+      <dl class="legal-grid">
+        {#each $t.legal.rows as r (r.k)}
+          <div class="legal-row"><dt>{r.k}</dt><dd>{r.v}</dd></div>
+        {/each}
+      </dl>
+    </details>
+
     <div class="foot-license">{$t.footer.license}</div>
   </div>
 </footer>
@@ -150,5 +163,17 @@
   .foot-links { display: flex; gap: 18px; }
   .foot-links a { color: var(--text-dim); font-size: 0.9rem; }
   .foot-links a:hover { color: var(--text); }
-  .foot-license { color: var(--text-faint); font-size: 0.82rem; }
+  .foot-license { color: var(--text-faint); font-size: 0.82rem; margin-top: 22px; }
+
+  .legal { margin-top: 26px; border-top: 1px solid var(--border-soft); padding-top: 20px; }
+  .legal summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 0.78rem; letter-spacing: .04em; color: var(--text-dim); }
+  .legal summary::-webkit-details-marker { display: none; }
+  .legal summary::before { content: '+'; color: var(--fs); font-weight: 700; }
+  .legal[open] summary::before { content: '−'; }
+  .legal summary:hover { color: var(--text); }
+  .legal-intro { color: var(--text-faint); font-size: 0.82rem; max-width: 64ch; margin: 14px 0 18px; }
+  .legal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px 28px; margin: 0; }
+  .legal-row { display: flex; flex-direction: column; gap: 2px; }
+  .legal-row dt { font-family: var(--mono); font-size: 0.66rem; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint); }
+  .legal-row dd { margin: 0; font-size: 0.84rem; color: var(--text-dim); }
 </style>
