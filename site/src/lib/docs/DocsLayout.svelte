@@ -1,10 +1,11 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import TopBar from './TopBar.svelte'
   import Sidebar from './Sidebar.svelte'
   import MarkdownView from './MarkdownView.svelte'
   import TocRight from './TocRight.svelte'
   import Search from './Search.svelte'
+  import { route } from './router.js'
   export let slug
   let toc = []
   let searchOpen = false
@@ -12,6 +13,22 @@
 
   // Close drawer on any slug change (back/forward nav, link click)
   $: slug, (menuOpen = false)
+
+  function prefersReduced() {
+    return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }
+  async function scrollToAnchor(anchor) {
+    await tick()
+    requestAnimationFrame(() => {
+      if (anchor) {
+        const el = document.getElementById(anchor)
+        if (el) { el.scrollIntoView({ behavior: prefersReduced() ? 'auto' : 'smooth', block: 'start' }); return }
+      }
+      window.scrollTo({ top: 0, behavior: 'auto' })
+    })
+  }
+  $: routeKey = `${$route.slug}#${$route.anchor}`
+  $: routeKey, scrollToAnchor($route.anchor)
 
   onMount(() => {
     const onKey = (e) => {
@@ -30,7 +47,7 @@
 <div class="shell">
   <Sidebar {slug} open={menuOpen} onClose={() => (menuOpen = false)} />
   <main class="content">{#key slug}<MarkdownView {slug} bind:toc />{/key}</main>
-  <div class="rail">{#key slug}<TocRight {toc} />{/key}</div>
+  <div class="rail">{#key slug}<TocRight {toc} {slug} />{/key}</div>
 </div>
 <Search bind:open={searchOpen} />
 

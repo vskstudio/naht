@@ -5,8 +5,9 @@ import { readable } from 'svelte/store'
 export function parseHash(hash) {
   const h = hash ?? (typeof location !== 'undefined' ? location.hash : '')
   if (h === '#/docs' || h.startsWith('#/docs/')) {
-    const slug = h.slice('#/docs/'.length).split('#')[0]
-    return { name: 'docs', slug: slug || 'quickstart' }
+    const rest = h.slice('#/docs/'.length)
+    const [slug, anchor = ''] = rest.split('#')
+    return { name: 'docs', slug: slug || 'quickstart', anchor }
   }
   return { name: 'landing' }
 }

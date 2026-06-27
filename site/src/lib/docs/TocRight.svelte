@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   export let toc = []
+  export let slug
   let activeId = ''
 
   let observer
@@ -32,7 +33,7 @@
   <nav class="toc">
     <div class="toc-title">On this page</div>
     {#each toc as t}
-      <a class="toc-link" class:sub={t.level === 3} class:active={t.id === activeId} href={`#${t.id}`}>{t.text}</a>
+      <a class="toc-link" class:sub={t.level === 3} class:active={t.id === activeId} href={`#/docs/${slug}#${t.id}`}>{t.text}</a>
     {/each}
   </nav>
 {/if}
