@@ -8,3 +8,6 @@
 *.rbxmx
 *.rbxl
 *.rbxlx
+
+# Brainstorm visual companion
+.superpowers/
