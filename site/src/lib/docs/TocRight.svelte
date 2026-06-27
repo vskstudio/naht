@@ -3,27 +3,28 @@
   export let toc = []
   let activeId = ''
 
+  let observer
+  function wire() {
+    observer?.disconnect()
+    const targets = toc.map((t) => document.getElementById(t.id)).filter(Boolean)
+    if (!targets.length) return
+    observer = new IntersectionObserver(
+      (entries) => { for (const e of entries) if (e.isIntersecting) activeId = e.target.id },
+      { rootMargin: '0px 0px -70% 0px', threshold: 0 },
+    )
+    targets.forEach((el) => observer.observe(el))
+  }
+
   onMount(() => {
-    let observer
-    const wire = () => {
-      observer?.disconnect()
-      const targets = toc.map((t) => document.getElementById(t.id)).filter(Boolean)
-      if (!targets.length) return
-      observer = new IntersectionObserver(
-        (entries) => {
-          for (const e of entries) if (e.isIntersecting) activeId = e.target.id
-        },
-        { rootMargin: '0px 0px -70% 0px', threshold: 0 },
-      )
-      targets.forEach((el) => observer.observe(el))
-    }
     wire()
     return () => observer?.disconnect()
   })
 
-  // Re-wire when the toc changes (doc switched).
+  // Re-wire when the toc changes (doc switched). queueMicrotask lets the new
+  // headings render before we query them.
   $: toc, typeof document !== 'undefined' && queueMicrotask(() => {
     activeId = ''
+    wire()
   })
 </script>
 
