@@ -9,6 +9,7 @@
       <div class="lr">
         <span class="time">{line.time}</span>
         <span class="lv {line.lv}">{line.lv.toUpperCase()}</span>
+        <!-- line.msg is static, author-controlled dictionary copy (emphasis spans only) — no user input, so {@html} is safe here. -->
         <span class="msg">{@html line.msg}{#if i === $t.nondestructive.logs.length - 1}<span class="logcur"></span>{/if}</span>
       </div>
     {/each}
