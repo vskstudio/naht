@@ -8,8 +8,8 @@ stream, a Cargo workspace tree with `cargo test`, and a guided terminal session)
 
 The content is **bilingual (EN / FR)** via a small dependency-free i18n layer, and mirrors the repo
 docs — [`../README.md`](../README.md), [`../docs/architecture.md`](../docs/architecture.md),
-[`../docs/quickstart.md`](../docs/quickstart.md), and [`../docs/prior-art.md`](../docs/prior-art.md)
-— so it stays a faithful surface over the project.
+and [`../docs/quickstart.md`](../docs/quickstart.md) — so it stays a faithful surface over the
+project.
 
 ## Develop
 
@@ -29,6 +29,32 @@ npm test           # Vitest: i18n logic + EN/FR dictionary parity
 
 `vite.config.js` sets `base: './'`, so `dist/` works from any path — GitHub Pages subpaths, a static
 host, or opened directly. It also holds the Vitest config (jsdom environment).
+
+## Production (naht.dev)
+
+The site ships as a hardened static-file container fronted by the shared `edge` nginx reverse
+proxy (separate repo) — the edge terminates TLS, enforces the Cloudflare-origin lock-down, rate
+limits, and sets all security response headers. **There is intentionally no deploy script, no
+webhook, and no CI publish step**: the production image is brought up by hand on the host.
+
+```sh
+# on the production host, in this directory
+docker compose up -d --build
+```
+
+- `Dockerfile` — two-stage build (Node → `nginxinc/nginx-unprivileged`), both base images pinned by
+  digest. The runtime runs **non-root (uid 101)** and binds the unprivileged port `8080`.
+- `nginx.conf` — container-internal server: serves `dist/` on `:8080`, `/healthz` for the
+  healthcheck, immutable caching for hashed `/assets/`, SPA fallback to `index.html`. It owns **no**
+  TLS or security headers — the edge does.
+- `docker-compose.yml` — joins the external `web` network as `naht_site:8080`, publishes **no host
+  port**, and is hardened: `read_only` rootfs, `cap_drop: ALL`, `no-new-privileges`, tmpfs for
+  `/tmp` + nginx cache.
+- `vite.config.js` sets `build.sourcemap: false` so no original source or local paths ship.
+
+CI (`.github/workflows/ci.yml`) verifies the image builds and runs a Trivy scan (fails on
+HIGH/CRITICAL), but never pushes it anywhere. See [`SECURITY.md`](../SECURITY.md) for the full
+production posture and the manual edge wiring (cert, DNS, Authenticated Origin Pulls).
 
 ## Internationalization
 

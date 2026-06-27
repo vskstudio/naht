@@ -1,0 +1,64 @@
+---
+title: Introduction
+icon: sparkles
+accent: fs
+desc: "What Naht is, the seam it maintains between disk and Studio, and the guarantees that set it apart."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+**Naht** (German for *seam* / *suture*) is a Rust filesystem-sync tool for Roblox Studio. It keeps
+your source on disk and your live Studio session in lockstep **in both directions at once**, and when
+both sides change the same script it performs a **real 3-way merge** instead of silently overwriting
+your work.
+
+It is a from-scratch alternative to [Rojo](https://github.com/rojo-rbx/rojo) and
+[Argon](https://github.com/argon-rbx/argon), built specifically around the failure modes that make
+those tools painful. If you have ever lost Studio edits to an "experimental" two-way sync, or watched
+a daemon crash on a permission error, Naht exists to make that impossible.
+
+## The seam
+
+Picture two living surfaces: your **filesystem** — where your editor, your git history, and your CI
+live — and the **Studio DataModel** — where the engine, the physics, and your collaborators live. Most
+tools pick one as the source of truth and push at the other. Naht treats them as **symmetric peers**
+stitched along a seam: edits flow whichever way they were made, and the seam holds even when both
+sides move at once.
+
+<Callout type="note">
+
+The seam is not a pipe. A pipe forgets everything the moment data passes through. Naht **remembers**
+the last state both sides agreed on — the *persisted base* — and every decision is made against it.
+
+</Callout>
+
+## What makes Naht different
+
+| Guarantee | How Naht delivers it |
+|---|---|
+| **Never destructive** | No `unwrap()`/`expect()` on filesystem or network in the sync loop. A failed write pauses *one path* and surfaces the error — it never kills the session or discards your change. |
+| **Truly bidirectional** | FS ↔ Studio are peers, not a primary and a mirror. Two-way is the core engine, not an experimental toggle. |
+| **Conflict-safe** | A persisted last-sync base enables a real 3-way text merge. Unmergeable edits get git-style markers and the path *freezes* until you resolve it — neither side is auto-picked. |
+| **Survives restarts** | The base lives in SQLite (`.naht/state.db`). Restart the daemon, reconnect Studio — Naht re-diffs against real state instead of re-clobbering. |
+| **Convention over config** | Zero config for the common case. An optional `naht.toml` carries only the exceptions, layered over a per-machine config. |
+| **Honest about limits** | Terrain, CSG, asset references, and security-locked properties are **detected and reported** with guidance — never dropped silently. |
+
+## When to use Naht
+
+- You write Luau in a real editor (VS Code, Neovim, …) and want it live in Studio.
+- You collaborate and care about not losing edits when two people touch the same script.
+- You want your Studio project under version control without a brittle export step.
+- You are migrating off Rojo and want your `default.project.json` understood, not rewritten by hand.
+
+## How the docs are organized
+
+- **Getting Started** — install Naht and get a confirmed round-trip sync running.
+- **Core Concepts** — the mental model: the seam, the persisted base, the sync engine, conflicts.
+- **Configuration** — file→instance mapping, `naht.toml`, and migrating from Rojo.
+- **Reference** — exhaustive CLI, the localhost protocol, and the limits of the Studio API.
+- **Project** — troubleshooting the seam when something goes wrong.
+
+New here? Jump straight to the [Quickstart](#/docs/quickstart) — zero to a confirmed bidirectional
+sync in five minutes.

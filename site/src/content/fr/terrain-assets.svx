@@ -1,0 +1,84 @@
+---
+title: Terrain, Assets & Limites
+icon: mountain
+accent: merge
+desc: "Le plafond de l'API Studio que Naht ne peut pas dépasser — et comment il détecte et signale les limites au lieu de les abandonner en silence."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Certaines données Roblox ne peuvent pas faire l'aller-retour via un plugin en direct — c'est une limite dure de l'API Studio, pas
+un bug de Naht. Ce que Naht fait différemment de Rojo et Argon, c'est **détecter et signaler explicitement** au lieu
+d'abandonner en silence, et traiter les cas binaires aussi proprement que l'API le permet.
+
+## Les limites en un coup d'œil
+
+| Cas | Statut | Approche |
+|---|---|---|
+| **`MeshId` / images** | upload (opt-in) | La chaîne asset-id se synchronise comme n'importe quelle propriété. Avec `[assets]` activé, un fichier mesh/image *local* est uploadé une fois via Open Cloud, mis en cache par hash de contenu, et sa propriété réécrite en `rbxassetid://…`. Désactivé par défaut. |
+| **Terrain** | synchronisable (opt-in) | Lu/écrit via `ReadVoxels`/`WriteVoxels` et synchronisé comme un blob voxel binaire opaque — comparé par hash, last-writer-wins ; un changement des deux côtés **gèle**. Piloté par le canal `/blobs` quand `[serve] terrain_sync` est activé. |
+| **CSG / Unions** | aller-retour binaire | La géométrie binaire générée par le moteur ne peut pas être reconstruite depuis du texte, mais fait l'aller-retour dans les fichiers modèle `rbxm` (opaque, au niveau fichier). |
+| **`HttpEnabled` & propriétés verrouillées par sécurité** | blocage dur | Non réglables par scripts/plugins par conception. Naht avertit et renvoie vers les Game Settings ; propose un repli par fichier de place. |
+
+## Terrain
+
+Le terrain, ce sont des données voxel, pas du texte — il n'y a rien à fusionner ligne par ligne. Quand tu l'actives :
+
+```toml
+[serve]
+terrain_sync = true
+```
+
+le daemon pilote un **canal blob séparé** (`GET`/`POST /blobs`, voir [Protocole](#/docs/protocol)).
+Le terrain est lu/écrit via `ReadVoxels`/`WriteVoxels` et synchronisé comme un seul blob opaque, comparé par hash et
+last-writer-wins. Si les **deux** côtés ont changé le terrain depuis la base, Naht le **gèle** plutôt que de
+deviner — le même principe « ne jamais écraser » que pour les [conflits](#/docs/conflicts) de texte, appliqué au binaire.
+
+<Callout type="note">
+
+Quand `terrain_sync` est **désactivé** (le défaut), le terrain est simplement signalé comme non synchronisé — rapporté, pas
+ignoré en silence. Active-le seulement quand tu veux que le terrain franchisse la couture.
+
+</Callout>
+
+## Assets (meshes, images, audio)
+
+Un outil de sync référence un asset id ; il ne synchronise pas les pixels. Par défaut Naht traite les chaînes `rbxassetid://…`
+comme des propriétés ordinaires — elles se synchronisent comme n'importe quelle autre valeur.
+
+Active l'upload avec :
+
+```toml
+[assets]
+enabled = true
+api_key_env = "ROBLOX_OPEN_CLOUD_KEY"
+```
+
+Avec ceci activé, un fichier mesh ou image *local* est uploadé une fois via **Open Cloud**, mis en cache par hash de contenu
+(pour ne pas être ré-uploadé), et sa propriété est réécrite vers le `rbxassetid://…` résultant. Un échec d'upload
+est **isolé au chemin en échec** — il ne fait jamais tomber la session.
+
+<Callout type="warning">
+
+`api_key_env` est le **nom** d'une variable d'environnement, jamais la clé elle-même. Garde ta clé Open Cloud
+dans ton environnement, hors de tout fichier commité. Voir [Configuration](#/docs/configuration).
+
+</Callout>
+
+## CSG / Unions
+
+La géométrie binaire générée par le moteur ne peut pas être reconstruite depuis du texte. Elle fait l'aller-retour de manière opaque dans les fichiers modèle `rbxm`
+via [`naht build`](#/docs/cli) — au niveau fichier, pas fusionnée en direct.
+
+## Propriétés verrouillées par sécurité
+
+Des propriétés comme `HttpService.HttpEnabled` ne sont pas réglables par scripts ou plugins, par conception. Naht ne
+prétend pas le contraire : il **avertit** et te renvoie vers les Game Settings, et propose un repli par fichier de place
+via `naht build`.
+
+## Le principe
+
+Naht ne peut pas dépasser le plafond de l'API. Là où il peut faire **mieux que Rojo** — détection claire, avertissements
+explicites, allers-retours opaques propres au lieu d'abandons ou d'écrasements silencieux — il le fait.

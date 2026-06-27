@@ -1,0 +1,64 @@
+---
+title: Migrer depuis Rojo
+icon: swap
+accent: merge
+desc: "Comment naht init --from-rojo convertit un default.project.json existant — nom, place id et tout l'arbre d'instances."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Naht te rejoint là où tu es. Si tu as déjà un projet Rojo, `naht init --from-rojo` lit ton
+`default.project.json` et le convertit — tu ne réécris rien à la main.
+
+## Lancer la migration
+
+Depuis le répertoire contenant `default.project.json` :
+
+```sh
+naht init --from-rojo
+```
+
+Cela crée un `naht.toml` à côté de ton projet existant. Il **refuse d'écraser** un
+`naht.toml` existant, donc il est sûr à exécuter dans un vrai dépôt.
+
+## Ce qui est traduit
+
+- **Nom du projet** → `[project] name`.
+- **Place id** → `[serve] place_id` (la garde du place-id, voir [Configuration](#/docs/configuration)).
+- **L'arbre d'instances** — chaque `$path` / `$className` / `$properties` de Rojo est traduit dans la
+  disposition par convention de Naht. Les vraies exceptions (où la convention ne peut pas exprimer le mapping) sont enregistrées comme
+  entrées `[[tree]]` dans `naht.toml`.
+
+Les fichiers source sont **laissés en place**. `naht build` assemble l'arbre d'instances à partir de ces mappings, donc
+le build correspond à ce que Rojo produisait.
+
+<Callout type="note">
+
+Tout ce que Naht ne peut pas représenter est **signalé comme un avertissement** pendant la migration plutôt que jeté
+silencieusement. Lis les avertissements — ils te disent exactement ce qui nécessite une entrée `[[tree]]` manuelle ou une
+directive de frontmatter.
+
+</Callout>
+
+## Ce qui change pour toi
+
+| Rojo | Naht |
+|---|---|
+| Chaque service déclaré à la main dans `default.project.json` | Convention d'abord ; seules les exceptions dans `naht.toml` |
+| Propriétés non par défaut éparpillées dans des sidecars `.meta.json` | Frontmatter inline `--!naht { … }` [frontmatter](#/docs/file-mapping) à côté de la source |
+| Un seul fichier de projet mélangeant build + synchro | Config de build gardée séparée du mapping de synchro |
+| État en mémoire, perdu au redémarrage | Base SQLite persistée — redémarrages et reconnexions sûrs |
+| Synchro bidirectionnelle expérimentale / destructrice | Moteur cœur bidirectionnel avec [merge](#/docs/conflicts) à 3 voies |
+
+## Après la migration
+
+1. Relis le `naht.toml` généré et les éventuels avertissements.
+2. Démarre le daemon : `naht serve`.
+3. Connecte Studio et confirme un aller-retour d'édition (voir le [Quickstart](#/docs/quickstart)).
+4. Optionnellement, supprime tes sidecars `.meta.json` une fois leurs propriétés exprimées en frontmatter ou
+   en entrées `[[tree]]`.
+
+Le [merge](#/docs/conflicts) 3-way est ce qui rend le cœur bidirectionnel sûr — découvre comment les
+conflits sont gérés juste après.

@@ -1,0 +1,74 @@
+---
+title: The Sync Engine
+icon: route
+accent: studio
+desc: "A change traced end to end in both directions, plus the long-poll, ack-gating, and reconnect machinery that keeps the seam alive."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+This page traces a change end to end, in both directions, and explains the resilience machinery that
+keeps the seam alive across crashes and reconnects. For the component breakdown, see the
+[Architecture](#/docs/architecture); for what happens when both sides change, see
+[Conflicts](#/docs/conflicts).
+
+## Filesystem → Studio
+
+1. The **watcher** (`notify-debouncer-full`) detects a saved file and hands it to the VFS.
+2. **Middleware** turns the file into a `Snapshot` (class + properties + content).
+3. The **reconciler** diffs the snapshot against the persisted base and produces a **patch**.
+4. The patch is **queued**. The plugin's next long-poll (`GET /patches`) picks it up.
+5. The plugin applies it to the DataModel and **acks** it (`POST /ack`); only then does the daemon
+   advance the base.
+
+## Studio → Filesystem
+
+1. The plugin detects a DataModel change and **POSTs** it to the daemon (`POST /changes`).
+2. Middleware turns the instance change back into file content.
+3. The reconciler diffs against the persisted base.
+4. The daemon **writes the file** (or raises a conflict). On success it advances the base.
+
+Because both directions diff against the *same* base, the engine is genuinely symmetric — neither side
+is privileged.
+
+## Long-polling, not pushing
+
+The Studio plugin API forbids server push: `HttpService` is request/response only, with no WebSocket
+client. So the plugin must **initiate** every exchange. Naht uses **long-polling**: `GET /patches` is
+held open by the daemon until a change is ready or a timeout elapses, then returns immediately. The
+daemon can never spontaneously push — it can only answer a poll. The same pattern drives the separate
+terrain [blob channel](#/docs/terrain-assets).
+
+## Ack-gating: why a patch isn't "done" when it's sent
+
+A Studio-bound patch advances the base **only after the plugin acks it**. This matters on a flaky
+connection: if a batch is half-applied and the link drops, the un-acked patches are *not* treated as
+synced. On reconnect, Naht re-diffs them against the persisted base and resends what's actually
+missing — instead of assuming the whole batch landed.
+
+## Resilience
+
+Resilience is a headline feature, precisely because it is what Rojo and Argon get wrong:
+
+- **Heartbeat** — `GET /heartbeat` is a liveness ping; the connection state is explicit, not guessed.
+- **Automatic reconnect with backoff** — a dropped link is retried, not fatal.
+- **Visible connection state** — the plugin widget shows `Connecting → Connected → Reconnecting →
+  Conflict`, so you always know the seam's status.
+- **Re-diff on reconnect** — on `GET /info` the daemon re-diffs against persisted state rather than
+  blindly re-pushing. Combined with ack-gating, a reconnect can never silently lose or duplicate work.
+
+<Callout type="note">
+
+A failed filesystem write never kills the session. The affected **path is paused**, the error is
+surfaced, and the pending change is retained. Every other path keeps syncing.
+
+</Callout>
+
+## Where this lives in the code
+
+- `naht-core` — VFS, middleware, reconciler, merge, state store, protocol types. Pure logic, no I/O.
+- `naht` (binary) — the `axum` HTTP server, the watcher, session orchestration, SQLite ownership.
+- `plugin/` (Luau) — long-poll, apply patches, POST edits, render state. **No sync logic** — the
+  thinner the plugin, the fewer the bugs.

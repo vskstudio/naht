@@ -1,0 +1,15 @@
+# Keep the build context minimal and leak-free: only source needed to `npm ci && build`.
+node_modules
+dist
+.vite
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+*.log
+npm-debug.log*
+.DS_Store
+coverage
+.env
+.env.*

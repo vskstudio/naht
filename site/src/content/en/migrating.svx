@@ -1,0 +1,64 @@
+---
+title: Migrating from Rojo
+icon: swap
+accent: merge
+desc: "How naht init --from-rojo converts an existing default.project.json — name, place id, and the full instance tree."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Naht meets you where you are. If you already have a Rojo project, `naht init --from-rojo` reads your
+`default.project.json` and converts it — you do not hand-rewrite anything.
+
+## Run the migration
+
+From the directory containing `default.project.json`:
+
+```sh
+naht init --from-rojo
+```
+
+This creates a `naht.toml` next to your existing project. It **refuses to overwrite** an existing
+`naht.toml`, so it is safe to run in a real repo.
+
+## What gets translated
+
+- **Project name** → `[project] name`.
+- **Place id** → `[serve] place_id` (the place-id guard, see [Configuration](#/docs/configuration)).
+- **The instance tree** — every Rojo `$path` / `$className` / `$properties` is translated into Naht's
+  convention layout. Genuine exceptions (where convention can't express the mapping) are recorded as
+  `[[tree]]` entries in `naht.toml`.
+
+Source files are **left in place**. `naht build` assembles the instance tree from these mappings, so
+the build matches what Rojo produced.
+
+<Callout type="note">
+
+Anything Naht cannot represent is **reported as a warning** during migration rather than dropped
+silently. Read the warnings — they tell you exactly what needs a manual `[[tree]]` entry or a
+frontmatter directive.
+
+</Callout>
+
+## What changes for you
+
+| Rojo | Naht |
+|---|---|
+| Every service hand-declared in `default.project.json` | Convention-first; only exceptions in `naht.toml` |
+| Non-default properties in scattered `.meta.json` sidecars | Inline `--!naht { … }` [frontmatter](#/docs/file-mapping) next to the source |
+| Single project file mixing build + sync | Build config kept separate from sync mapping |
+| In-memory state, lost on restart | Persisted SQLite base — safe restarts and reconnects |
+| Two-way sync experimental / destructive | Bidirectional core engine with 3-way [merge](#/docs/conflicts) |
+
+## After migrating
+
+1. Review the generated `naht.toml` and any warnings.
+2. Start the daemon: `naht serve`.
+3. Connect Studio and confirm a round-trip edit (see the [Quickstart](#/docs/quickstart)).
+4. Optionally delete your `.meta.json` sidecars once their properties are expressed as frontmatter or
+   `[[tree]]` entries.
+
+The 3-way [merge](#/docs/conflicts) is what makes the bidirectional core safe — see how conflicts are
+handled next.

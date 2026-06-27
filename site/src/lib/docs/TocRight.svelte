@@ -1,7 +1,9 @@
 <script>
   import { onMount } from 'svelte'
+  import Icon from '../Icon.svelte'
   export let toc = []
   export let slug
+  export let locale = 'en'
   let activeId = ''
 
   let observer
@@ -31,7 +33,7 @@
 
 {#if toc.length}
   <nav class="toc">
-    <div class="toc-title">On this page</div>
+    <div class="toc-title"><Icon name="list" size={13} stroke={2.2} /> {locale === 'fr' ? 'Sur cette page' : 'On this page'}</div>
     {#each toc as t}
       <a class="toc-link" class:sub={t.level === 3} class:active={t.id === activeId} href={`#/docs/${slug}#${t.id}`}>{t.text}</a>
     {/each}
@@ -40,7 +42,8 @@
 
 <style>
   .toc { position: sticky; top: 76px; }
-  .toc-title { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 10px; }
+  .toc-title { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 12px; }
+  .toc-title :global(svg) { opacity: 0.6; }
   .toc-link { display: block; padding: 3px 0; color: var(--text-dim); font-size: 0.85rem; border-left: 2px solid transparent; padding-left: 12px; }
   .toc-link.sub { padding-left: 24px; }
   .toc-link:hover { color: var(--text); }

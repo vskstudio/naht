@@ -1,0 +1,67 @@
+---
+title: Protocole & Transport
+icon: network
+accent: studio
+desc: "Le protocole HTTP + MessagePack sur localhost — endpoints, la garde du handshake, les canaux long-poll et l'ack-gating."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Le daemon et le plugin Studio parlent **HTTP sur `localhost`**, avec des corps encodés en **MessagePack**.
+HTTP est imposé par l'API Studio (pas de client WebSocket) ; MessagePack est choisi plutôt que JSON parce qu'il est
+binaire, gère les types Roblox complexes, et a des bibliothèques Luau utilisables. L'encodage est isolé derrière
+des types de protocole `serde` pour pouvoir être changé (par ex. protobuf) plus tard sans réécriture. gRPC n'est pas poursuivi
+— il a besoin de HTTP/2, que `HttpService` ne supporte pas.
+
+## Endpoints
+
+| Méthode + chemin | Rôle |
+|---|---|
+| `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session, et la garde `servePlaceId`. Déclenche un re-diff contre l'état persisté à la (re)connexion. |
+| `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. |
+| `POST /changes` | Éditions Studio → système de fichiers (un lot d'upserts/deletes). |
+| `GET /blobs` | Long-poll pour le canal **blob terrain** (daemon → Studio). Gardé séparé de `/patches` parce que les blobs se synchronisent de façon opaque, sans diff/merge. |
+| `POST /blobs` | Changements de blob Studio → daemon (voxels de terrain). |
+| `POST /ack` | Le plugin confirme quels patches il a réellement appliqués. Gate l'avancée de la base. |
+| `GET /heartbeat` | Ping de vivacité ; pilote l'état de connexion explicite. |
+
+## Le handshake (`GET /info`)
+
+Le handshake retourne un `ServerInfo` portant la **version de protocole**, la version du serveur, le nom du
+projet, un id de session, et l'optionnel `serve_place_id`. Deux gardes vivent ici :
+
+- **Version gate** — un décalage de version de protocole est signalé au lieu de synchroniser contre un pair
+  incompatible. Mets à jour la CLI et le plugin ensemble. Voir [Installation](#/docs/installation).
+- **Garde `servePlaceId`** — si le projet définit `[serve] place_id`, le daemon ne procède qu'avec la
+  session Studio dont le place id correspond. Un décalage est rejeté ici, avant qu'aucune source ne bouge.
+
+<Callout type="important">
+
+La garde `servePlaceId` est l'assurance pas chère qui t'empêche de déverser la source d'un jeu dans un autre.
+Un décalage échoue au handshake — rien n'est écrit.
+
+</Callout>
+
+## Deux canaux long-poll
+
+Le long-polling existe parce que `HttpService` ne fait que requête/réponse — le daemon ne peut jamais pousser. Le
+plugin maintient ouverte une requête `GET /patches` (texte) et une `GET /blobs` (terrain) ; le daemon répond à
+l'instant où un changement est prêt, ou retourne vide au timeout pour que le plugin puisse re-poller.
+
+Les deux canaux sont délibérément séparés : les **patches texte** portent une sémantique de diff/merge, tandis que les **blobs**
+(voxels de terrain) sont synchronisés de façon opaque — comparés par hash, last-writer-wins, avec un changement des deux côtés
+qui gèle plutôt que de merger. Voir [Terrain & assets](#/docs/terrain-assets).
+
+## Ack-gating
+
+Un patch à destination de Studio fait avancer la base persistée **seulement après que le plugin l'a acquitté** via `POST /ack`. Sur
+une connexion instable, un lot à moitié appliqué laisse les patches non acquittés non avancés, donc la prochaine reconnexion
+re-diffe et renvoie exactement ce qui manque — sans jamais supposer qu'un lot perdu est arrivé. C'est l'
+épine dorsale de la sûreté de reconnexion de Naht, détaillée dans le [Moteur de synchro](#/docs/sync-engine).
+
+## Versionnage
+
+Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `1`). Il fait partie du handshake pour que les
+deux moitiés puissent refuser de se parler à travers une frontière incompatible au lieu de corrompre l'état.

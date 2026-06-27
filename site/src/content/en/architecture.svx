@@ -1,0 +1,132 @@
+---
+title: Architecture
+icon: blocks
+accent: studio
+desc: "The authoritative system design — components, data flow, the SQLite base, transport, and the hard Studio API ceiling."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+This is the authoritative design.
+
+## One sentence
+
+Naht keeps a filesystem tree of Roblox source and a live Studio DataModel in **bidirectional sync**,
+using a **persisted last-sync base** to do **real 3-way merges** and to **never silently overwrite**
+either side.
+
+## Hard constraints (the ceiling no tool can beat)
+
+These come from the Roblox Studio plugin API and shape every decision:
+
+1. **Studio plugins run Luau only** — no Rust/WASM/native inside Studio.
+2. **No filesystem access from inside Studio** — all disk I/O lives in the external daemon; the plugin
+   only speaks HTTP to `localhost`.
+3. **`HttpService` is request/response only** — no server push, no WebSocket client. The plugin must
+   *initiate* every exchange (long-poll). The daemon can never spontaneously push to Studio.
+4. **Property/type coverage is incomplete** — terrain, CSG geometry, `MeshPart.MeshId` binary data, and
+   security-locked properties like `HttpService.HttpEnabled` cannot round-trip live. See
+   [Terrain & assets](#/docs/terrain-assets).
+5. **Assets (meshes, images, audio) are cloud uploads, not files** — a sync tool references an asset
+   id; it does not sync pixels.
+6. **Conflict is inevitable** — two live editors (FS + Studio) means a merge/conflict policy is
+   mandatory, not optional.
+
+## Components
+
+A Cargo workspace plus a hand-written Luau plugin.
+
+### `naht-core` (library) — the brain, zero network I/O
+
+- **VFS** — a pluggable virtual filesystem trait (real disk or in-memory) so the reconciler is
+  unit-testable without touching the disk.
+- **PathMapper** — convention-based mapping between files and the Roblox instance tree, plus the
+  optional config overlay.
+- **Middleware** — converts a file to an instance `Snapshot` and back, using the
+  [`rbx-dom`](https://github.com/rojo-rbx/rbx-dom) ecosystem (`rbx_dom_weak`, `rbx_reflection`,
+  `rbx_binary`, `rbx_xml`). We depend on it; we do not reinvent Roblox type handling.
+- **Reconciler** — diffs the current tree against the persisted last-sync base and produces patches,
+  in either direction.
+- **Merge** — 3-way text merge for scripts (base = last-sync content); conflict detection for binary.
+- **State store** — the SQLite-backed persisted base.
+- **Protocol types** — the messages exchanged with the plugin, defined with `serde` so the wire
+  encoding is a swappable layer.
+
+All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on fallible I/O.
+
+### `naht` (binary) — CLI + daemon
+
+- The localhost HTTP server (`axum`) that the plugin talks to.
+- The file watcher (`notify-debouncer-full`).
+- Session orchestration and ownership of the SQLite database.
+- All [CLI commands](#/docs/cli): `init`, `serve`, `pull`, `build`, `status`, `resolve`,
+  `package-plugin`.
+- `anyhow` at this boundary for ergonomic error context.
+
+### `plugin/` (Luau) — the hands, kept deliberately thin
+
+- Long-polls the daemon, applies received patches to the DataModel, POSTs Studio-side edits back.
+- Renders connection state (connected / reconnecting / conflict).
+- Encodes/decodes MessagePack.
+- **No sync logic** lives here. Mapping, reconciliation, and merge all live in `naht-core`. The
+  thinner the plugin, the fewer the bugs — this is exactly where Rojo/Argon went wrong.
+
+## Data flow
+
+See the [Sync engine](#/docs/sync-engine) for the step-by-step trace in both directions. In short:
+both directions diff against the **same persisted base**, so neither side is privileged, and a
+both-sides change becomes a [conflict](#/docs/conflicts) rather than an overwrite.
+
+## State store (SQLite)
+
+The persisted last-sync base — the thing neither Rojo nor Argon keeps — lives in `.naht/state.db`. Per
+instance, keyed by stable GUID:
+
+| Column | Purpose |
+|---|---|
+| `guid` (PK) | stable instance identity across sessions |
+| `path` | filesystem path it maps to |
+| `class` | Roblox class name |
+| `content_hash` | fast change detection |
+| `base_content` (BLOB) | last-synced content — the **base** for 3-way text merge (text only) |
+| `mtime` | filesystem modification time |
+| `conflicted` | whether this path is frozen pending resolution |
+
+A `meta` table holds the schema version and project identity. Writes are transactional. For binary
+instances only the hash is stored (no merge base).
+
+## Transport & protocol
+
+HTTP on `localhost`, bodies encoded as **MessagePack**, isolated behind `serde` protocol types so the
+encoding can be swapped later. The full endpoint list and handshake gating are in the
+[Protocol reference](#/docs/protocol).
+
+<Callout type="note">
+
+**Resilience is the headline.** Heartbeat, automatic reconnect with backoff, an explicit
+connection-state indicator, and — on reconnect — a re-diff against the persisted state rather than a
+blind re-push. Studio-bound patches are ack-gated: a patch's base advances only once the plugin acks
+it.
+
+</Callout>
+
+## Error handling
+
+- **No `unwrap()`/`expect()` on any FS or network operation in the sync loop.** This is the literal
+  root cause of Rojo's data-loss crashes.
+- A failed write **pauses the affected path** and surfaces the error; it never kills the session and
+  never discards the pending change.
+- `thiserror` in `naht-core`, `anyhow` at the binary boundary.
+- **Safety guard:** `servePlaceId` refuses to sync into a Studio session whose place id doesn't match
+  the project.
+
+## Testing strategy
+
+- **`naht-core`:** unit tests over an in-memory VFS — mapping, reconcile, merge, and state store in
+  isolation.
+- **Integration:** a fake Studio HTTP client drives end-to-end FS ↔ simulated-Studio scenarios,
+  including conflict and reconnect.
+- **Plugin:** the codec/apply paths run headless under [lune](https://github.com/lune-org/lune); the
+  live loop is validated manually against the Studio validation checklist.

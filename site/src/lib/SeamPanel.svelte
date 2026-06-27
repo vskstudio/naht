@@ -85,4 +85,18 @@
     .t2dash, .chip.toS, .chip.toD { animation: none; }
     .chip.toS { offset-distance: 50%; } .chip.toD { offset-distance: 50%; }
   }
+  @media (max-width: 600px) {
+    .lace { grid-template-columns: 1fr; gap: 16px; }
+    /* The horizontal lacing SVG only reads in a 3-column layout; swap it for a slim vertical seam. */
+    .gap { width: 100%; height: 30px; }
+    .gap svg { display: none; }
+    .gap::after {
+      content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+      transform: translateX(-50%);
+      background: linear-gradient(180deg, var(--fs), var(--merge), var(--studio));
+      border-radius: 2px; opacity: .6;
+    }
+    .chip { display: none; }
+    .code, .tree { font-size: .72rem; }
+  }
 </style>

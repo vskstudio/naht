@@ -1,0 +1,49 @@
+# Production stack for naht.dev — a single static-site container fronted by the
+# shared `edge` nginx reverse proxy (separate repo). This file is the deployment
+# definition, NOT a deploy script: bring it up by hand on the host with
+#   docker compose up -d --build
+# There is intentionally no auto-deploy / webhook / CI push.
+#
+# The container joins the external `web` network so edge-nginx can reach it as
+# `naht_site:8080`. It publishes NO host port — it is never exposed to the public
+# internet directly, only through the edge (which terminates TLS + Cloudflare
+# origin lock-down). Hardened: read-only rootfs, all caps dropped, no privilege
+# escalation.
+
+services:
+  naht_site:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: naht-site:latest
+    container_name: naht_site
+    restart: always
+    networks:
+      - web
+    # No `ports:` — reachable only on the internal `web` network via the edge.
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  web:
+    external: true
+    name: web

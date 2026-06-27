@@ -25,6 +25,11 @@
 <style>
   .mx { border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--bg-card); }
   table { border-collapse: collapse; width: 100%; font-size: .94rem; }
+  @media (max-width: 620px) {
+    .mx { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { min-width: 520px; font-size: .84rem; }
+    th, td { padding: 12px 12px; }
+  }
   th, td { padding: 15px 18px; text-align: center; border-top: 1px solid var(--border-soft); }
   thead th { background: #0a0b0e; font-weight: 700; border-top: none; position: relative; }
   tbody th { text-align: left; color: #cdd2db; font-weight: 500; }

@@ -24,7 +24,7 @@
       <a href="#merge">{$t.nav.merge}</a>
       <a href="#architecture">{$t.nav.architecture}</a>
       <a href="#start">{$t.nav.quickstart}</a>
-      <a href="#/docs">Docs</a>
+      <a class="keep" href="#/docs">Docs</a>
       <a class="nav-cta" href={REPO} target="_blank" rel="noreferrer"><Icon name="git" size={16} /> {$t.nav.github}</a>
     </div>
   </div>
@@ -107,7 +107,6 @@
         <a href="#/docs">Docs</a>
         <a href={REPO + '/blob/main/docs/quickstart.md'} target="_blank" rel="noreferrer">{$t.footer.links.quickstart}</a>
         <a href={REPO + '/blob/main/docs/architecture.md'} target="_blank" rel="noreferrer">{$t.footer.links.architecture}</a>
-        <a href={REPO + '/blob/main/docs/prior-art.md'} target="_blank" rel="noreferrer">{$t.footer.links.priorArt}</a>
       </div>
       <LanguageToggle />
     </div>
@@ -136,7 +135,8 @@
   .nav-links a:hover { color: var(--text); }
   .nav-cta { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px; border: 1px solid var(--border); border-radius: 9px; color: var(--text) !important; }
   .nav-cta:hover { border-color: var(--fs); }
-  @media (max-width: 820px) { .nav-links a:not(.nav-cta) { display: none; } }
+  @media (max-width: 820px) { .nav-links a:not(.nav-cta):not(.keep) { display: none; } .nav-links { gap: 14px; } }
+  @media (max-width: 420px) { .nav-cta { font-size: 0.84rem; padding: 6px 10px; } }
 
   section.alt { background: var(--bg-soft); border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
   .idx { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 18px; }

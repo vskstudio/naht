@@ -1,0 +1,86 @@
+---
+title: Dépannage
+icon: lifeBuoy
+accent: merge
+desc: "La poignée de choses qui tournent vraiment mal — handshakes incompatibles, conflits de port, chemins gelés — et comment résoudre chacune."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+La plupart des problèmes relèvent d'une poignée de cas à la couture entre le daemon et Studio. Chacun a un signal
+clair et une correction claire.
+
+## Le plugin ne se connecte pas
+
+1. **Le daemon tourne-t-il ?** Démarre-le avec [`naht serve`](#/docs/cli) et laisse-le tourner.
+2. **Le bon port ?** Le plugin et le daemon doivent s'accorder. Si tu as lancé `naht serve --port 40000`, pointe le
+   plugin sur le même port. Le défaut est `34872`.
+3. **`HttpService` activé ?** Le `HttpService.HttpEnabled` de Studio doit être activé pour que le plugin fasse des
+   requêtes. C'est une propriété verrouillée par sécurité — règle-la dans les **Game Settings**, pas depuis un script. Voir
+   [Terrain & assets](#/docs/terrain-assets).
+
+## Port déjà utilisé
+
+Un autre daemon (ou un autre outil — Rojo et Naht partagent le défaut `34872`) est sur le port. Soit tu l'arrêtes,
+soit tu tournes sur un autre port :
+
+```sh
+naht serve --port 40000
+```
+
+## « Place id mismatch » à la connexion
+
+Si ton projet définit `[serve] place_id`, le daemon ne synchronise qu'avec la session Studio dont le place id
+correspond — le [garde de handshake](#/docs/protocol) qui t'empêche de déverser la source d'un jeu dans un autre.
+
+- Tu as ouvert la bonne place ? Confirme le place id.
+- Tu as changé la place cible exprès ? Mets à jour `place_id` dans `naht.toml`.
+
+<Callout type="important">
+
+C'est une fonctionnalité de sécurité, pas un bug. Une non-correspondance échoue au handshake — **rien n'est écrit** — alors
+corrige l'id, ne le contourne pas.
+
+</Callout>
+
+## Version de protocole incompatible
+
+Le CLI et le plugin portent un `PROTOCOL_VERSION` et refusent de se synchroniser à travers une frontière incompatible.
+Mets à jour **les deux** moitiés ensemble pour qu'elles correspondent — voir [Installation](#/docs/installation).
+
+## Un chemin est gelé / `naht status` montre un conflit
+
+Naht a gelé un fichier parce que les deux côtés l'ont modifié et que le changement n'a pas pu être fusionné automatiquement. C'est le
+[workflow de conflit](#/docs/conflicts) qui fonctionne comme prévu — il n'écrase jamais en silence.
+
+1. `naht status` — vois quels chemins sont gelés.
+2. Ouvre chaque fichier ; résous les marqueurs `<<<<<<<` / `=======` / `>>>>>>>` à la main.
+3. `naht resolve <path>` — il **refuse tant qu'il reste des marqueurs**, donc un fichier à moitié résolu ne peut pas passer
+   au travers.
+
+## Les éditions ont cessé de se synchroniser après une déconnexion
+
+À la reconnexion, le daemon relance `GET /info`, re-diffe contre la **base persistée** (`.naht/state.db`),
+et renvoie tout ce qui n'a pas été acquitté. Si le sync semble bloqué :
+
+- Vérifie que le daemon est toujours actif et que l'état de connexion affiche connecté (heartbeat).
+- Un `naht pull` force une re-synchro immédiate plutôt que d'attendre le prochain événement du système de fichiers.
+
+Parce que la base n'avance que sur [`POST /ack`](#/docs/protocol), un lot perdu est renvoyé plutôt que
+supposé appliqué — tu ne devrais pas perdre d'éditions à travers une reconnexion.
+
+## Quelque chose s'est mal construit
+
+`naht build` assemble l'arbre d'instances depuis ton mapping de sync et les entrées `[[tree]]`. Si la sortie a des
+instances manquantes, vérifie le [mapping de fichiers](#/docs/file-mapping) et tout avertissement de migration de
+[`naht init --from-rojo`](#/docs/migrating). La config de build est séparée du sync, donc un problème de build
+concerne le mapping, pas la session en direct.
+
+<Callout type="note">
+
+Toujours bloqué ? Lance n'importe quelle commande avec `-v` (ou `-vv`) pour des logs debug/trace — ils nomment le chemin et
+l'opération exacts qui ont échoué.
+
+</Callout>

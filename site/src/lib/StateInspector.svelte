@@ -34,6 +34,13 @@
   .dbtb .cyl { width: 13px; height: 16px; border-radius: 50%/22%; border: 1px solid rgba(154,160,255,.5); background: linear-gradient(180deg, rgba(154,160,255,.2), transparent); }
   .dbtb .path { color: var(--text-faint); } .dbtb .q { margin-left: auto; color: var(--text-faint); font-size: .62rem; }
   .tbl { width: 100%; border-collapse: collapse; font-size: .74rem; }
+  @media (max-width: 560px) {
+    .tbl { font-size: .68rem; }
+    .tbl th, .tbl td { padding: 8px 10px; }
+    /* Drop the timestamp column on narrow screens so path/hash/rev stay readable without scroll. */
+    .tbl th:nth-child(4), .tbl td:nth-child(4) { display: none; }
+    .dbtb .q { display: none; }
+  }
   .tbl th { text-align: left; padding: 9px 14px; color: var(--text-faint); font-weight: 500; font-size: .62rem; letter-spacing: .04em; background: #0a0c10; border-bottom: 1px solid var(--border-soft); }
   .tbl td { padding: 9px 14px; border-bottom: 1px solid var(--border-soft); color: var(--text-dim); }
   .tbl tr:last-child td { border-bottom: none; }

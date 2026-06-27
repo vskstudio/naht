@@ -1,0 +1,74 @@
+---
+title: Conflicts & 3-Way Merge
+icon: merge
+accent: merge
+desc: "What a conflict is, how the 3-way text merge works, and the freeze-then-resolve workflow that never auto-picks a winner."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+A conflict is when **both peers change the same instance** since the last agreed base. Two live editors
+make conflicts inevitable — so Naht treats a merge/conflict policy as mandatory, not optional. The rule
+above all others: **Naht never silently overwrites either side.**
+
+## How a conflict is detected
+
+The reconciler compares content hashes against the SQLite base. If the FS hash *and* the Studio hash
+have both diverged from the base hash, the instance is in conflict. From there the path depends on the
+content type.
+
+## Text: 3-way merge
+
+For scripts, Naht runs a **3-way text merge** using the last-synced content as the base:
+
+- **Clean merge** — the two sides changed different regions. Naht merges them, writes the result, and
+  advances the base. You never see anything.
+- **Unmergeable** — the two sides changed overlapping lines. Naht does **not** pick a winner. Instead
+  it:
+  1. writes git-style markers into the file on disk:
+     ```
+     <<<<<<< FS
+     your on-disk version
+     =======
+     the Studio version
+     >>>>>>> Studio
+     ```
+  2. **freezes** that path — no further sync until you resolve it;
+  3. shows `Conflict` with the path in the plugin's status widget.
+
+## Binary: file-level conflict
+
+Binary instances (e.g. CSG geometry, terrain blobs) cannot be line-merged. A both-sides change is a
+**file-level conflict** — never auto-merged. Terrain specifically **freezes** on a both-sides change;
+see [Terrain & assets](#/docs/terrain-assets).
+
+## Resolving a conflict
+
+```sh
+naht status                 # lists every frozen path
+# open the file, delete the conflict markers, keep the content you want
+naht resolve src/Hello.luau # clears the freeze — refuses while markers remain
+```
+
+`naht resolve` is deliberately strict: it **refuses while any markers remain**, so you can't
+accidentally commit a half-resolved file. Once the markers are gone and the path is cleared, sync
+resumes for that path automatically.
+
+<Callout type="warning">
+
+Don't delete the file to "fix" a conflict — that's a real deletion that will sync. Edit the file,
+remove the markers, keep what you want, then `naht resolve`.
+
+</Callout>
+
+## Why this is safe by construction
+
+- The **base is persisted**, so the merge always has a real third input even across restarts.
+- A frozen path is *isolated*: every other path keeps syncing while you resolve.
+- `resolve` validating that markers are gone means a frozen path can only leave the frozen state in a
+  clean condition.
+
+This is the core difference from Rojo's overwrite-with-accept/reject dialog and Argon's instance-level
+reconciliation: Naht never picks for you.

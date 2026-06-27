@@ -7,7 +7,7 @@ export function parseHash(hash) {
   if (h === '#/docs' || h.startsWith('#/docs/')) {
     const rest = h.slice('#/docs/'.length)
     const [slug, anchor = ''] = rest.split('#')
-    return { name: 'docs', slug: slug || 'quickstart', anchor }
+    return { name: 'docs', slug: slug || 'introduction', anchor }
   }
   return { name: 'landing' }
 }

@@ -1,0 +1,89 @@
+---
+title: Installation
+icon: download
+accent: fs
+desc: "Install the CLI/daemon and the Studio plugin, enable HTTP, and keep the two halves in version lockstep."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Naht has two halves that must both be installed: the **CLI/daemon** (runs on your machine) and the
+**Studio plugin** (runs inside Roblox Studio). They talk to each other over `localhost` HTTP.
+
+## Requirements
+
+- **Roblox Studio** with **Allow HTTP Requests** enabled (Game Settings → Security).
+- A machine running Linux, macOS, or Windows.
+- For building from source only: a **Rust** toolchain (stable).
+
+## Install the CLI
+
+### From a release (recommended)
+
+No toolchain needed. Download the `naht` binary for your platform from the
+[GitHub Releases](https://github.com/vskstudio/naht/releases) page and put it on your `PATH`.
+
+| Platform | Asset |
+|---|---|
+| Linux (x86-64) | `naht-x86_64-unknown-linux-gnu` |
+| macOS (Apple silicon) | `naht-aarch64-apple-darwin` |
+| macOS (Intel) | `naht-x86_64-apple-darwin` |
+| Windows (x86-64) | `naht-x86_64-pc-windows-msvc.exe` |
+
+On macOS/Linux, mark it executable and move it onto your path:
+
+```sh
+chmod +x naht-*
+mv naht-* /usr/local/bin/naht
+```
+
+### From source
+
+```sh
+git clone https://github.com/vskstudio/naht
+cd naht
+cargo build --release -p naht
+# binary at target/release/naht
+```
+
+### Verify
+
+```sh
+naht --version
+```
+
+## Install the Studio plugin
+
+Each release also ships `naht-plugin.rbxmx`. From a source checkout you can produce it yourself:
+
+```sh
+naht package-plugin --src plugin/src --output naht-plugin.rbxmx
+```
+
+Then install it as a **local plugin**, either way:
+
+1. In Studio, right-click in the Explorer → **Insert from File…** and pick the `.rbxmx`; **or**
+2. Drop the `.rbxmx` into your local Plugins folder.
+
+Finally, enable HTTP so the plugin can reach the daemon:
+
+<Callout type="important">
+
+**Game Settings → Security → Allow HTTP Requests** must be on. The plugin talks to the daemon over
+`http://localhost`, and Studio blocks all HTTP until you enable it. `HttpService.HttpEnabled` is
+security-locked and *cannot* be flipped by a plugin — only you can, here.
+
+</Callout>
+
+## Upgrading
+
+The CLI and plugin share a **protocol version**. When you upgrade one, upgrade the other from the same
+release. On a version mismatch the handshake (`GET /info`) reports it rather than syncing against an
+incompatible peer. See the [Protocol reference](#/docs/protocol) for how the handshake is gated.
+
+## Next
+
+You are ready for the [Quickstart](#/docs/quickstart) — `init`, `serve`, connect Studio, and your
+first round-trip edit.

@@ -1,0 +1,93 @@
+---
+title: Installation
+icon: download
+accent: fs
+desc: "Installe la CLI/le démon et le plugin Studio, active HTTP, et garde les deux moitiés synchronisées en version."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Naht a deux moitiés qui doivent toutes les deux être installées : la **CLI/le démon** (s'exécute sur
+ta machine) et le **plugin Studio** (s'exécute à l'intérieur de Roblox Studio). Ils se parlent via
+`localhost` HTTP.
+
+## Prérequis
+
+- **Roblox Studio** avec **Allow HTTP Requests** activé (Game Settings → Security).
+- Une machine sous Linux, macOS ou Windows.
+- Pour la compilation depuis les sources uniquement : une chaîne d'outils **Rust** (stable).
+
+## Installer la CLI
+
+### Depuis une release (recommandé)
+
+Aucune chaîne d'outils requise. Télécharge le binaire `naht` pour ta plateforme depuis la page
+[GitHub Releases](https://github.com/vskstudio/naht/releases) et place-le dans ton `PATH`.
+
+| Plateforme | Asset |
+|---|---|
+| Linux (x86-64) | `naht-x86_64-unknown-linux-gnu` |
+| macOS (Apple silicon) | `naht-aarch64-apple-darwin` |
+| macOS (Intel) | `naht-x86_64-apple-darwin` |
+| Windows (x86-64) | `naht-x86_64-pc-windows-msvc.exe` |
+
+Sur macOS/Linux, rends-le exécutable et déplace-le dans ton path :
+
+```sh
+chmod +x naht-*
+mv naht-* /usr/local/bin/naht
+```
+
+### Depuis les sources
+
+```sh
+git clone https://github.com/vskstudio/naht
+cd naht
+cargo build --release -p naht
+# binaire dans target/release/naht
+```
+
+### Vérifier
+
+```sh
+naht --version
+```
+
+## Installer le plugin Studio
+
+Chaque release fournit aussi `naht-plugin.rbxmx`. Depuis un clone des sources, tu peux le produire
+toi-même :
+
+```sh
+naht package-plugin --src plugin/src --output naht-plugin.rbxmx
+```
+
+Puis installe-le comme **plugin local**, dans un cas comme dans l'autre :
+
+1. Dans Studio, clique droit dans l'Explorer → **Insert from File…** et choisis le `.rbxmx` ; **ou**
+2. Dépose le `.rbxmx` dans ton dossier Plugins local.
+
+Enfin, active HTTP pour que le plugin puisse atteindre le démon :
+
+<Callout type="important">
+
+**Game Settings → Security → Allow HTTP Requests** doit être activé. Le plugin parle au démon via
+`http://localhost`, et Studio bloque tout HTTP tant que tu ne l'as pas activé.
+`HttpService.HttpEnabled` est verrouillé pour des raisons de sécurité et *ne peut pas* être basculé
+par un plugin — toi seul le peux, ici.
+
+</Callout>
+
+## Mise à niveau
+
+La CLI et le plugin partagent une **version de protocole**. Quand tu mets à niveau l'un, mets à niveau
+l'autre depuis la même release. En cas de non-correspondance de version, le handshake (`GET /info`) le
+signale plutôt que de synchroniser avec un pair incompatible. Voir la
+[référence Protocole](#/docs/protocol) pour savoir comment le handshake est verrouillé.
+
+## Suite
+
+Tu es prêt pour le [Démarrage rapide](#/docs/quickstart) — `init`, `serve`, connecter Studio, et ta
+première modification aller-retour.

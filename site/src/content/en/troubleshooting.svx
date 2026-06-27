@@ -1,0 +1,86 @@
+---
+title: Troubleshooting
+icon: lifeBuoy
+accent: merge
+desc: "The handful of things that actually go wrong — handshake mismatches, port conflicts, frozen paths — and how to clear each."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Most problems are one of a handful of cases at the seam between the daemon and Studio. Each has a clear
+signal and a clear fix.
+
+## The plugin won't connect
+
+1. **Is the daemon running?** Start it with [`naht serve`](#/docs/cli) and leave it running.
+2. **Right port?** The plugin and daemon must agree. If you ran `naht serve --port 40000`, point the
+   plugin at the same port. Default is `34872`.
+3. **`HttpService` enabled?** Studio's `HttpService.HttpEnabled` must be on for the plugin to make
+   requests. It is a security-locked property — set it in **Game Settings**, not from a script. See
+   [Terrain & assets](#/docs/terrain-assets).
+
+## Port already in use
+
+Another daemon (or another tool — Rojo and Naht share the default `34872`) is on the port. Either stop
+it, or run on a different port:
+
+```sh
+naht serve --port 40000
+```
+
+## "Place id mismatch" at connect
+
+If your project sets `[serve] place_id`, the daemon only syncs with the Studio session whose place id
+matches — the [handshake guard](#/docs/protocol) that stops you pouring one game's source into another.
+
+- Opened the right place? Confirm the place id.
+- Changed the target place on purpose? Update `place_id` in `naht.toml`.
+
+<Callout type="important">
+
+This is a safety feature, not a bug. A mismatch fails at the handshake — **nothing is written** — so
+fix the id, don't work around it.
+
+</Callout>
+
+## Protocol version mismatch
+
+The CLI and the plugin carry a `PROTOCOL_VERSION` and refuse to sync across an incompatible boundary.
+Upgrade **both** halves together so they match — see [Installation](#/docs/installation).
+
+## A path is frozen / `naht status` shows a conflict
+
+Naht froze a file because both sides changed it and the change couldn't be auto-merged. This is the
+[conflict workflow](#/docs/conflicts) working as designed — it never silently overwrites.
+
+1. `naht status` — see which paths are frozen.
+2. Open each file; resolve the `<<<<<<<` / `=======` / `>>>>>>>` markers by hand.
+3. `naht resolve <path>` — it **refuses while any markers remain**, so a half-resolved file can't slip
+   through.
+
+## Edits stopped syncing after a disconnect
+
+On reconnect the daemon re-runs `GET /info`, re-diffs against the **persisted base** (`.naht/state.db`),
+and resends anything un-acked. If sync seems stuck:
+
+- Check the daemon is still up and the connection state shows connected (heartbeat).
+- A `naht pull` forces an immediate re-sync rather than waiting for the next filesystem event.
+
+Because the base only advances on [`POST /ack`](#/docs/protocol), a dropped batch is re-sent rather than
+assumed applied — you should not lose edits across a reconnect.
+
+## Something built wrong
+
+`naht build` assembles the instance tree from your sync mapping and `[[tree]]` entries. If output is
+missing instances, check the [file mapping](#/docs/file-mapping) and any migration warnings from
+[`naht init --from-rojo`](#/docs/migrating). Build config is separate from sync, so a build issue is
+about the mapping, not the live session.
+
+<Callout type="note">
+
+Still stuck? Run any command with `-v` (or `-vv`) for debug/trace logs — they name the exact path and
+operation that failed.
+
+</Callout>

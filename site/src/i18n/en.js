@@ -31,7 +31,7 @@ export default {
     label: 'Comparison',
     title: 'Built around the failure modes that make the others painful.',
     lead: 'A from-scratch alternative to Rojo and Argon. Every row is anchored in a concrete failure of the incumbents — detailed just below.',
-    note: 'Source: docs/prior-art.md — sourced teardown (June 2026).',
+    note: 'Every row is anchored in a documented failure of the incumbent tools.',
     head: { naht: 'Naht', rojo: 'Rojo', argon: 'Argon' },
     rows: [
       { label: 'Bidirectional sync', naht: 'core', rojo: 'experimental', argon: '✓', rojoCls: 'wn', argonCls: 'yes' },
@@ -153,7 +153,7 @@ export default {
 
   footer: {
     tagline: 'The seam between your filesystem and Roblox Studio.',
-    links: { github: 'GitHub', quickstart: 'Quickstart', architecture: 'Architecture', priorArt: 'Prior art' },
+    links: { github: 'GitHub', quickstart: 'Quickstart', architecture: 'Architecture' },
     license: 'Dual-licensed MIT or Apache-2.0.',
   },
   legal: {

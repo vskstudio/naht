@@ -1,0 +1,67 @@
+---
+title: Protocol & Transport
+icon: network
+accent: studio
+desc: "The localhost HTTP + MessagePack protocol — endpoints, the handshake guard, long-poll channels, and ack-gating."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+The daemon and the Studio plugin speak **HTTP on `localhost`**, with bodies encoded as **MessagePack**.
+HTTP is forced by the Studio API (no WebSocket client); MessagePack is chosen over JSON because it is
+binary, handles complex Roblox types, and has usable Luau libraries. The encoding is isolated behind
+`serde` protocol types so it can be swapped (e.g. protobuf) later without a rewrite. gRPC is not pursued
+— it needs HTTP/2, which `HttpService` does not support.
+
+## Endpoints
+
+| Method + path | Purpose |
+|---|---|
+| `GET /info` | Handshake: protocol/server version, project name, session id, and the `servePlaceId` guard. Triggers a re-diff against persisted state on (re)connect. |
+| `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. |
+| `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
+| `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. |
+| `POST /blobs` | Studio → daemon blob changes (terrain voxels). |
+| `POST /ack` | The plugin confirms which patches it actually applied. Gates the base advance. |
+| `GET /heartbeat` | Liveness ping; drives the explicit connection state. |
+
+## The handshake (`GET /info`)
+
+The handshake returns a `ServerInfo` carrying the **protocol version**, the server version, the project
+name, a session id, and the optional `serve_place_id`. Two guards live here:
+
+- **Version gate** — a protocol-version mismatch is reported instead of syncing against an incompatible
+  peer. Upgrade the CLI and plugin together. See [Installation](#/docs/installation).
+- **`servePlaceId` guard** — if the project sets `[serve] place_id`, the daemon only proceeds with the
+  Studio session whose place id matches. A mismatch is rejected here, before any source moves.
+
+<Callout type="important">
+
+The `servePlaceId` guard is the cheap insurance that stops you pouring one game's source into another.
+A mismatch fails at the handshake — nothing is written.
+
+</Callout>
+
+## Two long-poll channels
+
+Long-polling exists because `HttpService` is request/response only — the daemon can never push. The
+plugin holds open a `GET /patches` (text) and a `GET /blobs` (terrain) request; the daemon answers the
+moment a change is ready, or returns empty on timeout so the plugin can poll again.
+
+The two channels are deliberately separate: **text patches** carry diff/merge semantics, while **blobs**
+(terrain voxels) are synced opaquely — hash-compared, last-writer-wins, with a both-sides change
+freezing rather than merging. See [Terrain & assets](#/docs/terrain-assets).
+
+## Ack-gating
+
+A Studio-bound patch advances the persisted base **only after the plugin acks it** via `POST /ack`. On
+a flaky connection a half-applied batch leaves the un-acked patches un-advanced, so the next reconnect
+re-diffs and resends exactly what's missing — never assuming a dropped batch landed. This is the
+backbone of Naht's reconnect safety, detailed in the [Sync engine](#/docs/sync-engine).
+
+## Versioning
+
+The protocol carries an integer `PROTOCOL_VERSION` (currently `1`). It is part of the handshake so the
+two halves can refuse to talk across an incompatible boundary instead of corrupting state.

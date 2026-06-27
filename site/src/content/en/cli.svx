@@ -1,0 +1,123 @@
+---
+title: CLI Reference
+icon: terminal
+accent: fs
+desc: "Every naht command and flag — init, serve, pull, build, status, resolve, and package-plugin."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+The `naht` binary is both the CLI and the daemon. A global `-v` / `-vv` raises log verbosity on any
+command. Most commands take an optional project path that **defaults to the current directory**.
+
+## `naht init [path]`
+
+Scaffold a new project, or convert a Rojo one.
+
+```sh
+naht init                 # scaffold in the current directory
+naht init demo            # scaffold in ./demo
+naht init --from-rojo     # convert an existing default.project.json
+```
+
+| Flag | Purpose |
+|---|---|
+| `--from-rojo` | Convert an existing `default.project.json` instead of scaffolding a fresh project. See [Migrating from Rojo](#/docs/migrating). |
+
+A fresh scaffold writes `src/Hello.luau`, a minimal `naht.toml`, and a `.gitignore` that excludes the
+`.naht/` state directory. It **refuses to overwrite** an existing `naht.toml`.
+
+## `naht serve [path]`
+
+Run the localhost sync daemon for a project.
+
+```sh
+naht serve                # serve the current project on the configured/default port
+naht serve --port 40000   # override the port for this run
+naht serve -v             # debug logs
+```
+
+| Flag | Purpose |
+|---|---|
+| `--port <PORT>` | Override the configured/default port (`34872`). |
+
+The daemon serves over `http://localhost:<port>`, watches the filesystem, and accepts the Studio
+plugin's connection. Leave it running while you work.
+
+## `naht pull [path]`
+
+Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event.
+
+```sh
+naht pull
+```
+
+## `naht build [path] -o <out>`
+
+Build the project into a Roblox model or place file. The extension picks the format: `.rbxm`/`.rbxmx`
+(model) or `.rbxl`/`.rbxlx` (place); binary vs XML follows the extension too.
+
+```sh
+naht build -o game.rbxm          # binary model
+naht build -o game.rbxlx         # XML place
+naht build -o game.rbxm --watch  # rebuild on every change
+```
+
+| Flag | Purpose |
+|---|---|
+| `-o`, `--output <FILE>` | Output file; extension selects model/place and binary/XML. |
+| `--watch` | Rebuild the output on every debounced change instead of building once. |
+
+<Callout type="note">
+
+Build config is **separate from sync mapping** — a change to how files sync will never break a
+reproducible build.
+
+</Callout>
+
+## `naht status [path]`
+
+Show the project's conflict state: the paths frozen pending `resolve`, or that the project is clean.
+
+```sh
+naht status
+```
+
+## `naht resolve <path>`
+
+Clear a conflict once its markers are gone. **Refuses while any conflict markers remain.**
+
+```sh
+naht resolve src/Hello.luau
+naht resolve src/Hello.luau --project ../demo   # scope to another project dir
+```
+
+| Flag | Purpose |
+|---|---|
+| `--project <DIR>` | The project directory (defaults to `.`). |
+
+See [Conflicts](#/docs/conflicts) for the full resolution workflow.
+
+## `naht package-plugin -o <out.rbxmx>`
+
+Package the Studio plugin source into an installable `.rbxmx`. Used by the release pipeline; handy
+from a source checkout.
+
+```sh
+naht package-plugin --src plugin/src -o naht-plugin.rbxmx
+```
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--src <DIR>` | `plugin/src` | The plugin source directory. |
+| `-o`, `--output <FILE>` | — | The output `.rbxmx` file. |
+
+## Global flags
+
+| Flag | Purpose |
+|---|---|
+| `-v`, `-vv` | Increase log verbosity (info → debug → trace). Works on every command. |
+| `--version` | Print the version and exit. |
+| `--help` | Print help for the binary or a subcommand. |

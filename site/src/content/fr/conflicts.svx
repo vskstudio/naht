@@ -1,0 +1,78 @@
+---
+title: Conflits & merge 3 voies
+icon: merge
+accent: merge
+desc: "Ce qu'est un conflit, comment fonctionne le merge texte 3 voies, et le workflow gel-puis-résolution qui ne désigne jamais un gagnant automatiquement."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Un conflit, c'est quand **les deux pairs changent la même instance** depuis la dernière base convenue.
+Deux éditeurs en direct rendent les conflits inévitables — c'est pourquoi Naht traite une politique de
+merge/conflit comme obligatoire, pas optionnelle. La règle au-dessus de toutes les autres : **Naht
+n'écrase jamais silencieusement l'un ou l'autre côté.**
+
+## Comment un conflit est détecté
+
+Le reconciler compare les hashs de contenu à la base SQLite. Si le hash FS *et* le hash Studio ont tous
+deux divergé du hash de base, l'instance est en conflit. À partir de là, le chemin dépend du type de
+contenu.
+
+## Texte : merge 3 voies
+
+Pour les scripts, Naht exécute un **merge texte 3 voies** en utilisant le dernier contenu synchronisé
+comme base :
+
+- **Merge propre** — les deux côtés ont changé des régions différentes. Naht les fusionne, écrit le
+  résultat, et fait avancer la base. Tu ne vois jamais rien.
+- **Non fusionnable** — les deux côtés ont changé des lignes qui se chevauchent. Naht ne désigne **pas**
+  de gagnant. À la place, il :
+  1. écrit des marqueurs façon git dans le fichier sur le disque :
+     ```
+     <<<<<<< FS
+     your on-disk version
+     =======
+     the Studio version
+     >>>>>>> Studio
+     ```
+  2. **gèle** ce chemin — plus aucune sync jusqu'à ce que tu le résolves ;
+  3. affiche `Conflict` avec le chemin dans le widget de statut du plugin.
+
+## Binaire : conflit au niveau fichier
+
+Les instances binaires (par ex. géométrie CSG, blobs de terrain) ne peuvent pas être mergées ligne par
+ligne. Un changement des deux côtés est un **conflit au niveau fichier** — jamais auto-mergé. Le
+terrain en particulier **gèle** sur un changement des deux côtés ; voir [Terrain & assets](#/docs/terrain-assets).
+
+## Résoudre un conflit
+
+```sh
+naht status                 # lists every frozen path
+# open the file, delete the conflict markers, keep the content you want
+naht resolve src/Hello.luau # clears the freeze — refuses while markers remain
+```
+
+`naht resolve` est volontairement strict : il **refuse tant qu'il reste des marqueurs**, donc tu ne
+peux pas committer accidentellement un fichier à moitié résolu. Une fois les marqueurs partis et le
+chemin libéré, la sync reprend automatiquement pour ce chemin.
+
+<Callout type="warning">
+
+Ne supprime pas le fichier pour « régler » un conflit — c'est une vraie suppression qui sera
+synchronisée. Édite le fichier, retire les marqueurs, garde ce que tu veux, puis `naht resolve`.
+
+</Callout>
+
+## Pourquoi c'est sûr par construction
+
+- La **base est persistée**, donc le merge a toujours une vraie troisième entrée même après un
+  redémarrage.
+- Un chemin gelé est *isolé* : tous les autres chemins continuent à se synchroniser pendant que tu
+  résous.
+- Le fait que `resolve` valide l'absence de marqueurs signifie qu'un chemin gelé ne peut quitter l'état
+  gelé que dans un état propre.
+
+C'est la différence fondamentale avec le dialogue écraser-avec-accepter/rejeter de Rojo et la
+réconciliation au niveau instance d'Argon : Naht ne choisit jamais à ta place.

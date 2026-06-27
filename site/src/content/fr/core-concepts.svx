@@ -1,0 +1,74 @@
+---
+title: Concepts fondamentaux
+icon: waypoints
+accent: studio
+desc: "Les cinq idées — les pairs, la base persistée, les snapshots, la convention et le jamais-destructeur — qui expliquent tout le reste."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Cinq idées expliquent presque tout ce que fait Naht. Garde-les en tête et le reste de la documentation
+se lit comme du détail.
+
+## 1. Deux pairs, une couture
+
+Naht n'a pas de « source » et de « miroir ». Le **système de fichiers** et le **DataModel de Studio**
+sont des pairs symétriques. Une modification faite sur le disque circule vers Studio ; une
+modification faite dans Studio circule vers le disque. La couture est la correspondance vivante entre
+eux, maintenue en continu tant que le démon tourne.
+
+## 2. La base persistée
+
+L'objet le plus important de Naht est la **base** : le dernier état sur lequel les deux pairs étaient
+d'accord. Elle est stockée sur le disque dans SQLite (`.naht/state.db`), indexée par un GUID
+d'instance stable.
+
+Chaque décision de synchronisation est une comparaison *par rapport à la base*, pas pair-contre-pair :
+
+- Le FS a changé, la base non, Studio non → push FS → Studio, avancer la base.
+- Studio a changé, la base non, le FS non → écrire sur le disque, avancer la base.
+- **Les deux** ont changé depuis la base → un conflit ; résolution par une fusion à 3 voies.
+
+Parce que la base est persistée, redémarrer le démon ou reconnecter Studio ne **perd pas** le
+contexte. Naht re-diffe par rapport à l'état réel au lieu de supposer que tout est neuf. C'est la
+chose que Rojo et Argon ne gardent qu'en mémoire — et la raison pour laquelle ils réécrasent au
+redémarrage.
+
+<Callout type="tip">
+
+« 3 voies » signifie trois entrées : la **base** (ce sur quoi on était d'accord en dernier), la
+version **FS**, et la version **Studio**. Avec les trois, Naht peut déterminer *qui a réellement
+changé quoi* — impossible avec seulement les deux versions actuelles.
+
+</Callout>
+
+## 3. Snapshots et réconciliation
+
+Un **snapshot** est la représentation neutre d'une instance dans Naht — classe, propriétés et contenu
+— dérivée d'un fichier (via le middleware qui enveloppe l'écosystème
+[`rbx-dom`](https://github.com/rojo-rbx/rbx-dom)) ou d'une instance du DataModel. Le **réconciliateur**
+diffe un snapshot par rapport à la base et émet des **patches** dans la bonne direction. Tout cela vit
+dans la bibliothèque `naht-core` et est testé unitairement sur un système de fichiers virtuel en
+mémoire — pas de disque, pas de réseau.
+
+## 4. Convention plutôt que configuration
+
+La correspondance entre les fichiers et l'arbre d'instances Roblox est **d'abord conventionnelle**.
+`foo.luau` est un `ModuleScript`, `foo.server.luau` est un `Script`, un répertoire est un `Folder`, et
+un `init.luau` fait *devenir* son répertoire une instance. Tu n'écris de la configuration que pour les
+exceptions. Voir [Correspondance des fichiers](#/docs/file-mapping).
+
+## 5. Jamais destructeur
+
+Naht traite ton travail comme sacré. Il n'y a aucun `unwrap()`/`expect()` sur les opérations de
+système de fichiers ou de réseau dans la boucle de synchronisation — le plantage littéral qui cause la
+perte de données de Rojo. Une écriture échouée **met en pause ce seul chemin** et fait remonter
+l'erreur ; la session continue de tourner et le changement en attente est conservé. Un conflit qu'il
+ne peut pas fusionner **gèle** le chemin au lieu de deviner. Rien n'est jamais écrasé silencieusement.
+
+---
+
+Suite : voir ces concepts en action dans le [Moteur de synchronisation](#/docs/sync-engine), ou la
+conception complète du système dans l'[Architecture](#/docs/architecture).

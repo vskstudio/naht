@@ -1,0 +1,84 @@
+---
+title: Terrain, Assets & Limits
+icon: mountain
+accent: merge
+desc: "The Studio API ceiling Naht can't beat — and how it detects and reports limits instead of dropping them silently."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Some Roblox data cannot round-trip through a live plugin — that is a hard limit of the Studio API, not
+a Naht bug. What Naht does differently from Rojo and Argon is **detect and report explicitly** instead
+of dropping silently, and handle the binary cases as cleanly as the API allows.
+
+## The limits at a glance
+
+| Case | Status | Approach |
+|---|---|---|
+| **`MeshId` / images** | upload (opt-in) | The asset-id string syncs like any property. With `[assets]` on, a *local* mesh/image file is uploaded once via Open Cloud, cached by content hash, and its property rewritten to `rbxassetid://…`. Off by default. |
+| **Terrain** | syncable (opt-in) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob — hash-compared, last-writer-wins; a both-sides change **freezes**. Driven through the `/blobs` channel when `[serve] terrain_sync` is on. |
+| **CSG / Unions** | binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
+| **`HttpEnabled` & security-locked props** | hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
+
+## Terrain
+
+Terrain is voxel data, not text — there is nothing to line-merge. When you enable it:
+
+```toml
+[serve]
+terrain_sync = true
+```
+
+the daemon drives a **separate blob channel** (`GET`/`POST /blobs`, see [Protocol](#/docs/protocol)).
+Terrain is read/written via `ReadVoxels`/`WriteVoxels` and synced as one opaque blob, hash-compared and
+last-writer-wins. If **both** sides changed the terrain since the base, Naht **freezes** it rather than
+guessing — the same never-overwrite principle as text [conflicts](#/docs/conflicts), applied to binary.
+
+<Callout type="note">
+
+When `terrain_sync` is **off** (the default), terrain is simply flagged as unsynced — reported, not
+silently skipped. Turn it on only when you want terrain to move across the seam.
+
+</Callout>
+
+## Assets (meshes, images, audio)
+
+A sync tool references an asset id; it does not sync pixels. By default Naht treats `rbxassetid://…`
+strings as ordinary properties — they sync like any other value.
+
+Opt into upload with:
+
+```toml
+[assets]
+enabled = true
+api_key_env = "ROBLOX_OPEN_CLOUD_KEY"
+```
+
+With this on, a *local* mesh or image file is uploaded once via **Open Cloud**, cached by content hash
+(so it isn't re-uploaded), and its property is rewritten to the resulting `rbxassetid://…`. An upload
+failure is **isolated to the failing path** — it never takes down the session.
+
+<Callout type="warning">
+
+`api_key_env` is the **name** of an environment variable, never the key itself. Keep your Open Cloud
+key in your environment, out of any committed file. See [Configuration](#/docs/configuration).
+
+</Callout>
+
+## CSG / Unions
+
+Engine-generated binary geometry cannot be rebuilt from text. It round-trips opaquely inside `rbxm`
+model files via [`naht build`](#/docs/cli) — file-level, not live-merged.
+
+## Security-locked properties
+
+Properties like `HttpService.HttpEnabled` are not settable by scripts or plugins, by design. Naht does
+not pretend otherwise: it **warns** and points you to Game Settings, and offers a place-file fallback
+through `naht build`.
+
+## The principle
+
+Naht cannot beat the API ceiling. Where it can do **better than Rojo** — clear detection, explicit
+warnings, clean opaque round-trips instead of silent drops or overwrites — it does.

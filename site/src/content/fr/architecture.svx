@@ -1,0 +1,132 @@
+---
+title: Architecture
+icon: blocks
+accent: studio
+desc: "La conception système de référence — composants, flux de données, la base SQLite, le transport et le plafond dur de l'API Studio."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Voici la conception de référence.
+
+## En une phrase
+
+Naht garde une arborescence de fichiers de source Roblox et un DataModel Studio vivant en **synchronisation bidirectionnelle**,
+en utilisant une **base de dernière synchro persistée** pour faire de **vrais merges à 3 voies** et pour ne **jamais écraser silencieusement**
+aucun des deux côtés.
+
+## Contraintes dures (le plafond qu'aucun outil ne peut dépasser)
+
+Elles viennent de l'API plugin de Roblox Studio et façonnent chaque décision :
+
+1. **Les plugins Studio n'exécutent que du Luau** — pas de Rust/WASM/natif dans Studio.
+2. **Aucun accès au système de fichiers depuis Studio** — toutes les I/O disque vivent dans le daemon externe ; le plugin
+   ne parle qu'en HTTP vers `localhost`.
+3. **`HttpService` ne fait que requête/réponse** — pas de push serveur, pas de client WebSocket. Le plugin doit
+   *initier* chaque échange (long-poll). Le daemon ne peut jamais pousser spontanément vers Studio.
+4. **La couverture des propriétés/types est incomplète** — le terrain, la géométrie CSG, les données binaires `MeshPart.MeshId` et
+   les propriétés verrouillées pour la sécurité comme `HttpService.HttpEnabled` ne peuvent pas faire l'aller-retour à chaud. Voir
+   [Terrain & assets](#/docs/terrain-assets).
+5. **Les assets (meshes, images, audio) sont des uploads cloud, pas des fichiers** — un outil de synchro référence un id
+   d'asset ; il ne synchronise pas des pixels.
+6. **Le conflit est inévitable** — deux éditeurs vivants (FS + Studio) signifient qu'une politique de merge/conflit est
+   obligatoire, pas optionnelle.
+
+## Composants
+
+Un workspace Cargo plus un plugin Luau écrit à la main.
+
+### `naht-core` (bibliothèque) — le cerveau, zéro I/O réseau
+
+- **VFS** — un trait de système de fichiers virtuel enfichable (disque réel ou en mémoire) pour que le reconciliateur soit
+  testable unitairement sans toucher au disque.
+- **PathMapper** — mapping par convention entre les fichiers et l'arbre d'instances Roblox, plus la
+  surcouche de configuration optionnelle.
+- **Middleware** — convertit un fichier en `Snapshot` d'instance et inversement, en utilisant l'écosystème
+  [`rbx-dom`](https://github.com/rojo-rbx/rbx-dom) (`rbx_dom_weak`, `rbx_reflection`,
+  `rbx_binary`, `rbx_xml`). Nous en dépendons ; nous ne réinventons pas la gestion des types Roblox.
+- **Reconciler** — compare l'arbre actuel à la base de dernière synchro persistée et produit des patches,
+  dans l'une ou l'autre direction.
+- **Merge** — merge texte à 3 voies pour les scripts (base = contenu de dernière synchro) ; détection de conflit pour le binaire.
+- **State store** — la base persistée adossée à SQLite.
+- **Types de protocole** — les messages échangés avec le plugin, définis avec `serde` pour que l'encodage
+  filaire soit une couche interchangeable.
+
+Toutes les erreurs de `naht-core` sont typées avec `thiserror`. Pas d'`unwrap()`/`expect()` sur les I/O faillibles.
+
+### `naht` (binaire) — CLI + daemon
+
+- Le serveur HTTP localhost (`axum`) auquel le plugin parle.
+- Le watcher de fichiers (`notify-debouncer-full`).
+- L'orchestration de session et la possession de la base de données SQLite.
+- Toutes les [commandes CLI](#/docs/cli) : `init`, `serve`, `pull`, `build`, `status`, `resolve`,
+  `package-plugin`.
+- `anyhow` à cette frontière pour un contexte d'erreur ergonomique.
+
+### `plugin/` (Luau) — les mains, gardées volontairement fines
+
+- Long-poll le daemon, applique les patches reçus au DataModel, POST les éditions côté Studio en retour.
+- Affiche l'état de connexion (connecté / reconnexion / conflit).
+- Encode/décode le MessagePack.
+- **Aucune logique de synchro** ne vit ici. Le mapping, la réconciliation et le merge vivent tous dans `naht-core`. Plus
+  le plugin est fin, moins il y a de bugs — c'est exactement là où Rojo/Argon se sont trompés.
+
+## Flux de données
+
+Voir le [Moteur de synchro](#/docs/sync-engine) pour le déroulé pas à pas dans les deux directions. En bref :
+les deux directions comparent à la **même base persistée**, donc aucun côté n'est privilégié, et un
+changement des deux côtés devient un [conflit](#/docs/conflicts) plutôt qu'un écrasement.
+
+## State store (SQLite)
+
+La base de dernière synchro persistée — la chose que ni Rojo ni Argon ne garde — vit dans `.naht/state.db`. Par
+instance, indexée par GUID stable :
+
+| Colonne | Rôle |
+|---|---|
+| `guid` (PK) | identité d'instance stable entre les sessions |
+| `path` | chemin du système de fichiers auquel elle correspond |
+| `class` | nom de classe Roblox |
+| `content_hash` | détection rapide des changements |
+| `base_content` (BLOB) | contenu de dernière synchro — la **base** du merge texte à 3 voies (texte uniquement) |
+| `mtime` | heure de modification du système de fichiers |
+| `conflicted` | si ce chemin est gelé en attente de résolution |
+
+Une table `meta` contient la version de schéma et l'identité du projet. Les écritures sont transactionnelles. Pour les
+instances binaires, seul le hash est stocké (pas de base de merge).
+
+## Transport & protocole
+
+HTTP sur `localhost`, corps encodés en **MessagePack**, isolés derrière des types de protocole `serde` pour que
+l'encodage puisse être changé plus tard. La liste complète des endpoints et le verrouillage du handshake sont dans la
+[Référence du protocole](#/docs/protocol).
+
+<Callout type="note">
+
+**La résilience est le titre.** Heartbeat, reconnexion automatique avec backoff, un indicateur d'état de
+connexion explicite, et — à la reconnexion — un re-diff contre l'état persisté plutôt qu'un
+re-push aveugle. Les patches à destination de Studio sont ack-gated : la base d'un patch n'avance qu'une fois que le plugin
+l'a acquitté.
+
+</Callout>
+
+## Gestion des erreurs
+
+- **Pas d'`unwrap()`/`expect()` sur la moindre opération FS ou réseau dans la boucle de synchro.** C'est la cause
+  racine littérale des crashs avec perte de données de Rojo.
+- Une écriture échouée **met en pause le chemin concerné** et fait remonter l'erreur ; elle ne tue jamais la session et
+  ne jette jamais le changement en attente.
+- `thiserror` dans `naht-core`, `anyhow` à la frontière du binaire.
+- **Garde-fou :** `servePlaceId` refuse de synchroniser dans une session Studio dont le place id ne correspond pas
+  au projet.
+
+## Stratégie de test
+
+- **`naht-core` :** tests unitaires sur un VFS en mémoire — mapping, reconcile, merge et state store en
+  isolation.
+- **Intégration :** un faux client HTTP Studio pilote des scénarios bout-en-bout FS ↔ Studio simulé,
+  conflit et reconnexion inclus.
+- **Plugin :** les chemins codec/apply tournent en headless sous [lune](https://github.com/lune-org/lune) ; la
+  boucle vivante est validée manuellement contre la checklist de validation Studio.

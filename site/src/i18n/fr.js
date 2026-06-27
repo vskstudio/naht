@@ -31,7 +31,7 @@ export default {
     label: 'Comparatif',
     title: 'Construit autour des modes d\'échec qui rendent les autres pénibles.',
     lead: 'Alternative repensée de zéro à Rojo et Argon. Chaque ligne est ancrée dans un échec concret des outils en place — détaillée juste en dessous.',
-    note: 'Source : docs/prior-art.md — teardown sourcé (juin 2026).',
+    note: 'Chaque ligne s\'ancre dans un échec documenté des outils en place.',
     head: { naht: 'Naht', rojo: 'Rojo', argon: 'Argon' },
     rows: [
       { label: 'Sync bidirectionnel', naht: 'cœur', rojo: 'expérimental', argon: '✓', rojoCls: 'wn', argonCls: 'yes' },
@@ -153,7 +153,7 @@ export default {
 
   footer: {
     tagline: 'La couture entre ton filesystem et Roblox Studio.',
-    links: { github: 'GitHub', quickstart: 'Quickstart', architecture: 'Architecture', priorArt: 'Prior art' },
+    links: { github: 'GitHub', quickstart: 'Quickstart', architecture: 'Architecture' },
     license: 'Dual-licensed MIT ou Apache-2.0.',
   },
   legal: {

@@ -152,6 +152,11 @@ section {
   padding: 92px 0;
   position: relative;
 }
+@media (max-width: 720px) {
+  section { padding: 56px 0; }
+  .wrap { padding: 0 18px; }
+  .btn { padding: 11px 18px; font-size: 0.9rem; }
+}
 
 /* Scroll-reveal: elements start shifted + transparent, the `reveal` action flips `.in`. */
 .reveal {

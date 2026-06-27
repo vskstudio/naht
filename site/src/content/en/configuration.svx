@@ -1,0 +1,113 @@
+---
+title: Configuration
+icon: settings
+accent: studio
+desc: "The full naht.toml reference — layered config and the [project], [serve], [assets], and [[tree]] sections."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Naht is convention-first: most projects need little or no configuration. When you do need it, it lives
+in **`naht.toml`** at the project root, layered over a per-machine config. For how files map to
+instances, see [File mapping](#/docs/file-mapping).
+
+## Layered config
+
+Settings are resolved in order, with later layers overriding earlier ones **field by field**:
+
+```
+built-in defaults  →  ~/.naht/config.toml  (per-machine)  →  ./naht.toml  (per-project)
+```
+
+So you can set a machine-wide default (say, a preferred port) and let individual projects override
+only what they need. Unknown keys are rejected (`deny_unknown_fields`) — a typo fails loudly instead
+of being silently ignored.
+
+## `[project]`
+
+```toml
+[project]
+name = "my-game"   # defaults to the project directory name when unset
+```
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `name` | string | directory name | The project's display name. |
+
+## `[serve]`
+
+```toml
+[serve]
+port = 34872         # localhost port the daemon listens on
+place_id = 0         # optional place-id guard (see below)
+terrain_sync = false # opt into live terrain blob sync
+```
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `port` | u16 | `34872` | The localhost port the daemon binds. Overridable per-run with `--port`. |
+| `place_id` | u64 | _unset_ | If set, the daemon only connects to the Studio session whose place id matches. |
+| `terrain_sync` | bool | `false` | Sync terrain live as an opaque voxel blob. Off by default; when off, terrain is flagged as unsynced. |
+
+<Callout type="important">
+
+**`place_id` is a cheap, high-value safety guard.** With it set, a mismatched place id is rejected at
+the handshake — so you can't accidentally pour one game's source into another. Set it on any project
+that ships.
+
+</Callout>
+
+## `[assets]`
+
+Open Cloud asset upload. Disabled by default, so the unchanged behavior is to sync asset-id strings as
+plain properties. See [Terrain & assets](#/docs/terrain-assets).
+
+```toml
+[assets]
+enabled = true
+api_key_env = "ROBLOX_OPEN_CLOUD_KEY"   # NAME of the env var, never the key itself
+```
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Upload local mesh/image files and rewrite their references to `rbxassetid://…`. |
+| `api_key_env` | string | _unset_ | The **name** of the environment variable holding your Open Cloud key. |
+
+<Callout type="warning">
+
+`api_key_env` holds the *name of an environment variable*, not the key. Naht never reads a literal key
+from config — keeping secrets out of files you might commit.
+
+</Callout>
+
+## `[[tree]]`
+
+Explicit instance declarations, for what convention can't express. Each entry is one node:
+
+```toml
+[[tree]]
+instance = "ReplicatedStorage/Shared"
+path = "src/shared"
+class = "Folder"
+
+[tree.properties]
+Archivable = false
+```
+
+| Key | Type | Purpose |
+|---|---|---|
+| `instance` | string | The instance's path in the DataModel. |
+| `path` | string? | The filesystem path it maps to. |
+| `class` | string? | The Roblox class name, when not implied by convention. |
+| `properties` | table | Non-default properties for this node. |
+
+These are written automatically by `naht init --from-rojo` for the genuine exceptions in a migrated
+project — see [Migrating from Rojo](#/docs/migrating).
+
+## Minimal vs. explicit
+
+A brand-new `naht init` writes essentially nothing but a name — convention handles the rest. Reach for
+`naht.toml` only when you need a non-default port, a place-id guard, asset upload, or a tree node
+convention can't represent.

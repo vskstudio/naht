@@ -6,6 +6,7 @@
   import TocRight from './TocRight.svelte'
   import Search from './Search.svelte'
   import { route } from './router.js'
+  import { locale } from '../../i18n/index.js'
   export let slug
   let toc = []
   let searchOpen = false
@@ -45,20 +46,28 @@
   <div class="drawer-backdrop" on:click={() => (menuOpen = false)} role="presentation"></div>
 {/if}
 <div class="shell">
-  <Sidebar {slug} open={menuOpen} onClose={() => (menuOpen = false)} />
-  <main class="content">{#key slug}<MarkdownView {slug} bind:toc />{/key}</main>
-  <div class="rail">{#key slug}<TocRight {toc} {slug} />{/key}</div>
+  <Sidebar {slug} locale={$locale} open={menuOpen} onClose={() => (menuOpen = false)} />
+  <main class="content">{#key `${slug}-${$locale}`}<MarkdownView {slug} locale={$locale} bind:toc />{/key}</main>
+  <div class="rail">{#key `${slug}-${$locale}`}<TocRight {toc} {slug} locale={$locale} />{/key}</div>
 </div>
-<Search bind:open={searchOpen} />
+<Search bind:open={searchOpen} locale={$locale} />
 
 <style>
   .shell {
-    display: grid; grid-template-columns: 256px minmax(0, 1fr) 240px;
-    max-width: 1380px; margin: 0 auto; align-items: start;
+    display: grid; grid-template-columns: 288px minmax(0, 1fr) 264px;
+    width: 100%; align-items: start;
   }
-  .content { padding: 40px 48px; min-width: 0; }
-  .rail { padding: 40px 16px; }
-  @media (max-width: 960px) { .shell { grid-template-columns: 256px minmax(0,1fr); } .rail { display: none; } }
+  .shell > :global(.sidebar) { border-right: 1px solid var(--border-soft); }
+  .content {
+    padding: 52px clamp(40px, 6vw, 96px); min-width: 0;
+    border-right: 1px solid var(--border-soft);
+  }
+  .rail { padding: 52px 24px; }
+  @media (max-width: 1100px) {
+    .shell { grid-template-columns: 264px minmax(0,1fr); }
+    .content { border-right: none; }
+    .rail { display: none; }
+  }
   @media (max-width: 720px) { .shell { grid-template-columns: 1fr; } .content { padding: 28px 20px; } }
   .drawer-backdrop { display: none; }
   @media (max-width: 720px) {

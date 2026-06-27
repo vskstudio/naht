@@ -1,8 +1,7 @@
 # Naht — Architecture
 
 This document is the authoritative design. It is written so an implementer needs no outside context:
-every component, boundary, and decision is stated here. The reasoning behind each decision is in
-[`prior-art.md`](prior-art.md); the build order is in [`spec.md`](spec.md).
+every component, boundary, and decision is stated here. The build order is in [`spec.md`](spec.md).
 
 ## 1. One sentence
 

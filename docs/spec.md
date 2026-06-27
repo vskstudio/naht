@@ -2,7 +2,7 @@
 
 Naht was built in **stages**, each one a single self-contained PR that left the project working. This
 file records what shipped; the per-stage detail lives in git history. Design context:
-[`architecture.md`](architecture.md). Decision rationale: [`prior-art.md`](prior-art.md).
+[`architecture.md`](architecture.md).
 
 **Conventions that held for every stage**
 - TDD: the failing test came first.

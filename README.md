@@ -31,8 +31,7 @@ paths run headless under [lune](https://github.com/lune-org/lune); the live Stud
 manually against the [Studio validation checklist](plugin/README.md#studio-validation-checklist).
 
 **New here?** Start with the [quickstart](docs/quickstart.md) — zero to a confirmed bidirectional
-sync. See [`docs/`](docs/) for the architecture, the staged build plan, and the prior-art analysis
-that grounds every design decision.
+sync. See [`docs/`](docs/) for the architecture and the staged build plan.
 
 ## Usage
 
@@ -55,7 +54,6 @@ bidirectional sync between the daemon and Studio requires the plugin (Stage 6).
 - [`docs/quickstart.md`](docs/quickstart.md) — install, init, serve, first round-trip, conflicts
 - [`docs/architecture.md`](docs/architecture.md) — the system design
 - [`docs/spec.md`](docs/spec.md) — the staged implementation spec (one stage = one PR)
-- [`docs/prior-art.md`](docs/prior-art.md) — Rojo/Argon teardown and the decisions it drove
 - [`site/`](site/) — an animated Svelte documentation site (`cd site && npm install && npm run dev`)
 
 ## License

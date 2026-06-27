@@ -1,0 +1,62 @@
+---
+title: File Mapping
+icon: folderTree
+accent: fs
+desc: "How filesystem layout maps to the Roblox instance tree by convention — and the two escape hatches for the exceptions."
+---
+
+Naht maps your filesystem to the Roblox instance tree by **convention first**. For the common case you
+write *no* config at all — the layout *is* the mapping. Exceptions live in `naht.toml` (see
+[Configuration](#/docs/configuration)).
+
+## The conventions
+
+| On disk | Becomes in Studio |
+|---|---|
+| `foo.luau` | `ModuleScript` named `foo` |
+| `foo.server.luau` | `Script` named `foo` |
+| `foo.client.luau` | `LocalScript` named `foo` |
+| a plain directory `bar/` | `Folder` named `bar` |
+| `bar/init.luau` | the directory `bar` **becomes** a `ModuleScript` |
+| `bar/init.server.luau` | the directory `bar` becomes a `Script` |
+| `bar/init.client.luau` | the directory `bar` becomes a `LocalScript` |
+
+The `init.*` rule is how you attach children to a script: a folder with an `init.luau` turns into that
+script, and everything else in the folder becomes its children.
+
+### Example
+
+```
+src/
+  init.luau            -> ModuleScript "src"
+  Util.luau            -> ├─ ModuleScript "Util"
+  Network/             -> ├─ Folder "Network"
+    Remote.luau        -> │   └─ ModuleScript "Remote"
+  Main.server.luau     -> └─ Script "Main"
+```
+
+## Property frontmatter
+
+Non-default properties live **with the source**, as a leading directive comment — not in a separate
+sidecar file. This is the deliberate counter to Rojo's scattered `.meta.json` files:
+
+```lua
+--!naht { Disabled = true }
+print("this script ships disabled")
+```
+
+Source and its properties stay in one place, so moving or reviewing a script never desynchronizes its
+configuration.
+
+## When convention isn't enough
+
+Two escape hatches, both in `naht.toml`:
+
+- **`[[tree]]` entries** — declare an instance explicitly with a `path`, `class`, and/or `properties`
+  when the convention can't express what you need.
+- **Frontmatter** — for one-off property exceptions on a single file (above).
+
+Build mapping is kept **separate from sync mapping** on purpose: a change to how files sync must never
+break a reproducible [build](#/docs/cli). See [Configuration](#/docs/configuration) for the full
+`naht.toml` schema, and [Migrating from Rojo](#/docs/migrating) for how an existing
+`default.project.json` is translated into this layout.

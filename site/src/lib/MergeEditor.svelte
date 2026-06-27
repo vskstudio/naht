@@ -87,5 +87,13 @@
   .cfmark.sep { color: var(--text-faint); }
   .vfoot { display: flex; align-items: center; gap: 9px; padding: 9px 14px; font-size: .64rem; color: var(--ok); background: #0a0c10; border-top: 1px solid var(--border-soft); }
   .vfoot .gd { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  @media (max-width: 540px) {
+    .inputs { grid-template-columns: 1fr; }
+    .vpane { border-right: none; border-bottom: 1px solid var(--border-soft); }
+    .cfbar { flex-wrap: wrap; gap: 7px; }
+    .cfbar .actions { margin-left: 0; }
+    .vphd, .rhd { flex-wrap: wrap; }
+    .ved { font-size: .68rem; }
+  }
   .vfoot .sep { color: var(--text-faint); } .vfoot .frozen { color: var(--danger); }
 </style>

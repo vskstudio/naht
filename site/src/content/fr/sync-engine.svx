@@ -1,0 +1,78 @@
+---
+title: Le moteur de synchronisation
+icon: route
+accent: studio
+desc: "Un changement tracé de bout en bout dans les deux sens, plus la mécanique de long-poll, d'ack-gating et de reconnexion qui maintient la jonction en vie."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Cette page trace un changement de bout en bout, dans les deux sens, et explique la mécanique de
+résilience qui maintient la jonction en vie à travers les crashs et les reconnexions. Pour le détail
+des composants, voir l'[Architecture](#/docs/architecture) ; pour ce qui se passe quand les deux côtés
+changent, voir les [Conflits](#/docs/conflicts).
+
+## Système de fichiers → Studio
+
+1. Le **watcher** (`notify-debouncer-full`) détecte un fichier sauvegardé et le transmet au VFS.
+2. Le **middleware** transforme le fichier en `Snapshot` (classe + propriétés + contenu).
+3. Le **reconciler** compare le snapshot à la base persistée et produit un **patch**.
+4. Le patch est **mis en file**. Le prochain long-poll du plugin (`GET /patches`) le récupère.
+5. Le plugin l'applique au DataModel et l'**acquitte** (`POST /ack`) ; ce n'est qu'alors que le daemon
+   fait avancer la base.
+
+## Studio → Système de fichiers
+
+1. Le plugin détecte un changement du DataModel et l'envoie au daemon via **POST** (`POST /changes`).
+2. Le middleware retransforme le changement d'instance en contenu de fichier.
+3. Le reconciler compare à la base persistée.
+4. Le daemon **écrit le fichier** (ou lève un conflit). En cas de succès, il fait avancer la base.
+
+Comme les deux sens comparent à la *même* base, le moteur est réellement symétrique — aucun côté n'est
+privilégié.
+
+## Long-polling, pas de push
+
+L'API plugin de Studio interdit le push serveur : `HttpService` est purement requête/réponse, sans
+client WebSocket. Le plugin doit donc **initier** chaque échange. Naht utilise le **long-polling** :
+`GET /patches` est maintenu ouvert par le daemon jusqu'à ce qu'un changement soit prêt ou qu'un timeout
+expire, puis renvoie immédiatement. Le daemon ne peut jamais pousser spontanément — il ne peut que
+répondre à un poll. Le même schéma anime le [canal blob](#/docs/terrain-assets) de terrain séparé.
+
+## Ack-gating : pourquoi un patch n'est pas « fini » dès qu'il est envoyé
+
+Un patch destiné à Studio ne fait avancer la base **qu'après son acquittement par le plugin**. Cela
+compte sur une connexion instable : si un lot est appliqué à moitié et que le lien tombe, les patches
+non acquittés ne sont *pas* considérés comme synchronisés. À la reconnexion, Naht les recompare à la
+base persistée et renvoie ce qui manque réellement — au lieu de supposer que tout le lot est arrivé.
+
+## Résilience
+
+La résilience est une fonctionnalité phare, précisément parce que c'est ce que Rojo et Argon ratent :
+
+- **Heartbeat** — `GET /heartbeat` est un ping de vivacité ; l'état de la connexion est explicite, pas
+  deviné.
+- **Reconnexion automatique avec backoff** — un lien tombé est réessayé, pas fatal.
+- **État de connexion visible** — le widget du plugin affiche `Connecting → Connected → Reconnecting →
+  Conflict`, donc tu connais toujours le statut de la jonction.
+- **Re-diff à la reconnexion** — sur `GET /info` le daemon recompare à l'état persisté plutôt que de
+  re-pousser aveuglément. Combiné à l'ack-gating, une reconnexion ne peut jamais perdre ou dupliquer du
+  travail silencieusement.
+
+<Callout type="note">
+
+Une écriture de fichier échouée ne tue jamais la session. Le **chemin concerné est mis en pause**,
+l'erreur est remontée, et le changement en attente est conservé. Tous les autres chemins continuent à
+se synchroniser.
+
+</Callout>
+
+## Où ça vit dans le code
+
+- `naht-core` — VFS, middleware, reconciler, merge, store d'état, types de protocole. Logique pure,
+  pas d'I/O.
+- `naht` (binaire) — le serveur HTTP `axum`, le watcher, l'orchestration de session, la propriété SQLite.
+- `plugin/` (Luau) — long-poll, application des patches, POST des éditions, rendu de l'état. **Aucune
+  logique de sync** — plus le plugin est mince, moins il y a de bugs.

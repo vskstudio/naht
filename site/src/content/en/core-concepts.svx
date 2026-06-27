@@ -1,0 +1,68 @@
+---
+title: Core Concepts
+icon: waypoints
+accent: studio
+desc: "The five ideas — peers, the persisted base, snapshots, convention, and never-destructive — that explain everything else."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Five ideas explain almost everything Naht does. Hold these and the rest of the docs read as detail.
+
+## 1. Two peers, one seam
+
+Naht does not have a "source" and a "mirror". The **filesystem** and the **Studio DataModel** are
+symmetric peers. An edit made on disk flows to Studio; an edit made in Studio flows to disk. The seam
+is the live correspondence between them, maintained continuously while the daemon runs.
+
+## 2. The persisted base
+
+The single most important object in Naht is the **base**: the last state both peers agreed on. It is
+stored on disk in SQLite (`.naht/state.db`), keyed by a stable instance GUID.
+
+Every sync decision is a comparison *against the base*, not peer-against-peer:
+
+- FS changed, base didn't, Studio didn't → push FS → Studio, advance base.
+- Studio changed, base didn't, FS didn't → write to disk, advance base.
+- **Both** changed since the base → a conflict; resolve with a 3-way merge.
+
+Because the base is persisted, restarting the daemon or reconnecting Studio does **not** lose context.
+Naht re-diffs against real state instead of assuming everything is fresh. This is the thing Rojo and
+Argon keep only in memory — and the reason they re-clobber on restart.
+
+<Callout type="tip">
+
+"3-way" means three inputs: the **base** (what we last agreed on), the **FS** version, and the
+**Studio** version. With all three, Naht can tell *who actually changed what* — impossible with only
+the two current versions.
+
+</Callout>
+
+## 3. Snapshots and reconciliation
+
+A **snapshot** is Naht's neutral representation of an instance — class, properties, and content —
+derived from a file (via the middleware that wraps the [`rbx-dom`](https://github.com/rojo-rbx/rbx-dom)
+ecosystem) or from a DataModel instance. The **reconciler** diffs a snapshot against the base and
+emits **patches** in the appropriate direction. All of this lives in the `naht-core` library and is
+unit-tested over an in-memory virtual filesystem — no disk, no network.
+
+## 4. Convention over configuration
+
+The mapping between files and the Roblox instance tree is **convention-first**. `foo.luau` is a
+`ModuleScript`, `foo.server.luau` is a `Script`, a directory is a `Folder`, and an `init.luau` makes
+its directory *become* an instance. You only write config for the exceptions. See
+[File mapping](#/docs/file-mapping).
+
+## 5. Never destructive
+
+Naht treats your work as sacred. There is no `unwrap()`/`expect()` on filesystem or network operations
+in the sync loop — the literal crash that causes Rojo's data loss. A failed write **pauses that one
+path** and surfaces the error; the session keeps running and the pending change is kept. A conflict it
+cannot merge **freezes** the path rather than guessing. Nothing is silently overwritten, ever.
+
+---
+
+Next: see these concepts in motion in the [Sync engine](#/docs/sync-engine), or the full system design
+in the [Architecture](#/docs/architecture).

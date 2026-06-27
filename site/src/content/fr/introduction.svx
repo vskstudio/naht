@@ -1,0 +1,67 @@
+---
+title: Introduction
+icon: sparkles
+accent: fs
+desc: "Ce qu'est Naht, la couture qu'il entretient entre le disque et Studio, et les garanties qui le distinguent."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+**Naht** (mot allemand pour *couture* / *suture*) est un outil Rust de synchronisation de système de
+fichiers pour Roblox Studio. Il maintient ton code source sur le disque et ta session Studio en cours
+parfaitement alignés **dans les deux sens à la fois**, et lorsque les deux côtés modifient le même
+script, il effectue une **vraie fusion à 3 voies** au lieu d'écraser silencieusement ton travail.
+
+C'est une alternative repensée de zéro à [Rojo](https://github.com/rojo-rbx/rojo) et
+[Argon](https://github.com/argon-rbx/argon), construite spécifiquement autour des modes de défaillance
+qui rendent ces outils pénibles. Si tu as déjà perdu des modifications Studio à cause d'une
+synchronisation bidirectionnelle « expérimentale », ou vu un démon planter sur une erreur de
+permission, Naht existe pour rendre cela impossible.
+
+## La couture
+
+Imagine deux surfaces vivantes : ton **système de fichiers** — où vivent ton éditeur, ton historique
+git et ta CI — et le **DataModel de Studio** — où vivent le moteur, la physique et tes
+collaborateurs. La plupart des outils choisissent l'un comme source de vérité et poussent vers
+l'autre. Naht les traite comme des **pairs symétriques** cousus le long d'une couture : les
+modifications circulent dans le sens où elles ont été faites, et la couture tient même quand les deux
+côtés bougent en même temps.
+
+<Callout type="note">
+
+La couture n'est pas un tuyau. Un tuyau oublie tout dès que les données le traversent. Naht **se
+souvient** du dernier état sur lequel les deux côtés étaient d'accord — la *base persistée* — et
+chaque décision est prise par rapport à elle.
+
+</Callout>
+
+## Ce qui rend Naht différent
+
+| Garantie | Comment Naht la tient |
+|---|---|
+| **Jamais destructeur** | Aucun `unwrap()`/`expect()` sur le système de fichiers ou le réseau dans la boucle de synchronisation. Une écriture échouée met en pause *un seul chemin* et fait remonter l'erreur — elle ne tue jamais la session ni ne jette ta modification. |
+| **Réellement bidirectionnel** | FS ↔ Studio sont des pairs, pas un primaire et un miroir. Le bidirectionnel est le cœur du moteur, pas une bascule expérimentale. |
+| **Sûr face aux conflits** | Une base de dernière synchronisation persistée permet une vraie fusion textuelle à 3 voies. Les modifications non fusionnables reçoivent des marqueurs façon git et le chemin *gèle* jusqu'à ce que tu le résolves — aucun côté n'est choisi automatiquement. |
+| **Survit aux redémarrages** | La base vit dans SQLite (`.naht/state.db`). Redémarre le démon, reconnecte Studio — Naht re-diffe par rapport à l'état réel au lieu de tout réécraser. |
+| **Convention plutôt que configuration** | Zéro configuration pour le cas courant. Un `naht.toml` optionnel ne porte que les exceptions, superposé à une configuration propre à chaque machine. |
+| **Honnête sur ses limites** | Le terrain, le CSG, les références d'assets et les propriétés verrouillées pour des raisons de sécurité sont **détectés et signalés** avec des conseils — jamais abandonnés silencieusement. |
+
+## Quand utiliser Naht
+
+- Tu écris du Luau dans un vrai éditeur (VS Code, Neovim, …) et tu le veux en direct dans Studio.
+- Tu collabores et tiens à ne pas perdre de modifications quand deux personnes touchent au même script.
+- Tu veux ton projet Studio sous contrôle de version sans une étape d'export fragile.
+- Tu migres depuis Rojo et tu veux que ton `default.project.json` soit compris, pas réécrit à la main.
+
+## Comment la documentation est organisée
+
+- **Premiers pas** — installe Naht et obtiens une synchronisation aller-retour confirmée.
+- **Concepts fondamentaux** — le modèle mental : la couture, la base persistée, le moteur de synchronisation, les conflits.
+- **Configuration** — la correspondance fichier→instance, `naht.toml`, et la migration depuis Rojo.
+- **Référence** — la CLI exhaustive, le protocole localhost et les limites de l'API Studio.
+- **Projet** — le dépannage de la couture quand quelque chose tourne mal.
+
+Nouveau ici ? Va directement au [Démarrage rapide](#/docs/quickstart) — de zéro à une synchronisation
+bidirectionnelle confirmée en cinq minutes.

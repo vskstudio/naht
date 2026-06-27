@@ -1,0 +1,64 @@
+---
+title: Mapping des fichiers
+icon: folderTree
+accent: fs
+desc: "Comment la structure du système de fichiers se mappe à l'arbre d'instances Roblox par convention — et les deux échappatoires pour les exceptions."
+---
+
+Naht mappe ton système de fichiers à l'arbre d'instances Roblox **d'abord par convention**. Pour le cas
+courant, tu n'écris *aucune* config — la structure *est* le mapping. Les exceptions vivent dans
+`naht.toml` (voir [Configuration](#/docs/configuration)).
+
+## Les conventions
+
+| Sur le disque | Devient dans Studio |
+|---|---|
+| `foo.luau` | `ModuleScript` nommé `foo` |
+| `foo.server.luau` | `Script` nommé `foo` |
+| `foo.client.luau` | `LocalScript` nommé `foo` |
+| un dossier simple `bar/` | `Folder` nommé `bar` |
+| `bar/init.luau` | le dossier `bar` **devient** un `ModuleScript` |
+| `bar/init.server.luau` | le dossier `bar` devient un `Script` |
+| `bar/init.client.luau` | le dossier `bar` devient un `LocalScript` |
+
+La règle `init.*` est la façon d'attacher des enfants à un script : un dossier avec un `init.luau` se
+transforme en ce script, et tout le reste du dossier en devient les enfants.
+
+### Exemple
+
+```
+src/
+  init.luau            -> ModuleScript "src"
+  Util.luau            -> ├─ ModuleScript "Util"
+  Network/             -> ├─ Folder "Network"
+    Remote.luau        -> │   └─ ModuleScript "Remote"
+  Main.server.luau     -> └─ Script "Main"
+```
+
+## Frontmatter de propriétés
+
+Les propriétés non par défaut vivent **avec la source**, sous forme de commentaire directive en tête —
+pas dans un fichier sidecar séparé. C'est le contre-pied délibéré aux fichiers `.meta.json` éparpillés
+de Rojo :
+
+```lua
+--!naht { Disabled = true }
+print("this script ships disabled")
+```
+
+La source et ses propriétés restent au même endroit, donc déplacer ou relire un script ne désynchronise
+jamais sa configuration.
+
+## Quand la convention ne suffit pas
+
+Deux échappatoires, toutes deux dans `naht.toml` :
+
+- **Entrées `[[tree]]`** — déclare une instance explicitement avec un `path`, une `class`, et/ou des
+  `properties` quand la convention ne peut pas exprimer ce dont tu as besoin.
+- **Frontmatter** — pour des exceptions de propriété ponctuelles sur un seul fichier (ci-dessus).
+
+Le mapping de build est gardé **séparé du mapping de sync** à dessein : un changement dans la façon dont
+les fichiers se synchronisent ne doit jamais casser un [build](#/docs/cli) reproductible. Voir
+[Configuration](#/docs/configuration) pour le schéma complet de `naht.toml`, et
+[Migrer depuis Rojo](#/docs/migrating) pour savoir comment un `default.project.json` existant est
+traduit dans cette structure.

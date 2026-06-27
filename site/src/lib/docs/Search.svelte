@@ -1,12 +1,14 @@
 <script>
   import { onMount } from 'svelte'
-  import { buildSearchIndex } from './markdown.js'
+  import { buildSearchIndex } from './registry.js'
+  import { order } from './nav.js'
   import { navigate } from './router.js'
 
   export let open = false
+  export let locale = 'en'
   let q = ''
   let sel = 0
-  const index = buildSearchIndex()
+  $: index = buildSearchIndex(locale, order)
 
   $: results = q.trim()
     ? index.filter((e) => e.text.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 12)

@@ -1,0 +1,116 @@
+---
+title: Configuration
+icon: settings
+accent: studio
+desc: "La référence complète de naht.toml — la config en couches et les sections [project], [serve], [assets] et [[tree]]."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+Naht privilégie la convention : la plupart des projets ont besoin de peu ou pas de configuration. Quand
+tu en as besoin, elle vit dans **`naht.toml`** à la racine du projet, superposée à une config par
+machine. Pour savoir comment les fichiers se mappent aux instances, voir
+[Mapping des fichiers](#/docs/file-mapping).
+
+## Config en couches
+
+Les réglages sont résolus dans l'ordre, les couches plus tardives écrasant les précédentes **champ par
+champ** :
+
+```
+built-in defaults  →  ~/.naht/config.toml  (per-machine)  →  ./naht.toml  (per-project)
+```
+
+Tu peux ainsi définir un défaut à l'échelle de la machine (par exemple un port préféré) et laisser
+chaque projet n'écraser que ce dont il a besoin. Les clés inconnues sont rejetées
+(`deny_unknown_fields`) — une faute de frappe échoue bruyamment au lieu d'être ignorée silencieusement.
+
+## `[project]`
+
+```toml
+[project]
+name = "my-game"   # defaults to the project directory name when unset
+```
+
+| Clé | Type | Défaut | Rôle |
+|---|---|---|---|
+| `name` | string | nom du dossier | Le nom d'affichage du projet. |
+
+## `[serve]`
+
+```toml
+[serve]
+port = 34872         # localhost port the daemon listens on
+place_id = 0         # optional place-id guard (see below)
+terrain_sync = false # opt into live terrain blob sync
+```
+
+| Clé | Type | Défaut | Rôle |
+|---|---|---|---|
+| `port` | u16 | `34872` | Le port localhost sur lequel le daemon se lie. Surchargeable par exécution avec `--port`. |
+| `place_id` | u64 | _non défini_ | Si défini, le daemon ne se connecte qu'à la session Studio dont le place id correspond. |
+| `terrain_sync` | bool | `false` | Synchronise le terrain en direct comme un blob de voxels opaque. Désactivé par défaut ; quand désactivé, le terrain est marqué comme non synchronisé. |
+
+<Callout type="important">
+
+**`place_id` est un garde-fou peu coûteux et à forte valeur.** Une fois défini, un place id qui ne
+correspond pas est rejeté à la poignée de main — tu ne peux donc pas verser accidentellement la source
+d'un jeu dans un autre. Définis-le sur tout projet destiné à être publié.
+
+</Callout>
+
+## `[assets]`
+
+Upload d'assets via Open Cloud. Désactivé par défaut, donc le comportement inchangé est de synchroniser
+les chaînes d'asset-id comme de simples propriétés. Voir [Terrain & assets](#/docs/terrain-assets).
+
+```toml
+[assets]
+enabled = true
+api_key_env = "ROBLOX_OPEN_CLOUD_KEY"   # NAME of the env var, never the key itself
+```
+
+| Clé | Type | Défaut | Rôle |
+|---|---|---|---|
+| `enabled` | bool | `false` | Upload les fichiers mesh/image locaux et réécrit leurs références en `rbxassetid://…`. |
+| `api_key_env` | string | _non défini_ | Le **nom** de la variable d'environnement contenant ta clé Open Cloud. |
+
+<Callout type="warning">
+
+`api_key_env` contient le *nom d'une variable d'environnement*, pas la clé. Naht ne lit jamais une clé
+littérale depuis la config — pour garder les secrets hors des fichiers que tu pourrais committer.
+
+</Callout>
+
+## `[[tree]]`
+
+Déclarations d'instances explicites, pour ce que la convention ne peut pas exprimer. Chaque entrée est
+un nœud :
+
+```toml
+[[tree]]
+instance = "ReplicatedStorage/Shared"
+path = "src/shared"
+class = "Folder"
+
+[tree.properties]
+Archivable = false
+```
+
+| Clé | Type | Rôle |
+|---|---|---|
+| `instance` | string | Le chemin de l'instance dans le DataModel. |
+| `path` | string? | Le chemin du système de fichiers auquel elle se mappe. |
+| `class` | string? | Le nom de classe Roblox, quand il n'est pas impliqué par la convention. |
+| `properties` | table | Les propriétés non par défaut de ce nœud. |
+
+Celles-ci sont écrites automatiquement par `naht init --from-rojo` pour les véritables exceptions d'un
+projet migré — voir [Migrer depuis Rojo](#/docs/migrating).
+
+## Minimal vs. explicite
+
+Un tout nouveau `naht init` n'écrit pratiquement rien d'autre qu'un nom — la convention gère le reste.
+Recours à `naht.toml` uniquement quand tu as besoin d'un port non par défaut, d'un garde place-id, de
+l'upload d'assets, ou d'un nœud de tree que la convention ne peut pas représenter.

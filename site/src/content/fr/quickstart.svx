@@ -1,0 +1,107 @@
+---
+title: Démarrage rapide
+icon: rocket
+accent: fs
+desc: "De zéro à une synchronisation bidirectionnelle confirmée entre ton système de fichiers et Roblox Studio."
+---
+
+<script>
+  import Callout from '../../lib/docs/Callout.svelte'
+</script>
+
+De zéro à une synchronisation bidirectionnelle confirmée entre ton système de fichiers et Roblox
+Studio. Pour la conception qui se cache derrière, voir l'[Architecture](#/docs/architecture).
+
+## 1. Installer la CLI
+
+**Depuis une release** (aucune chaîne d'outils requise) : télécharge le binaire `naht` pour ta
+plateforme depuis la page [GitHub Releases](https://github.com/vskstudio/naht/releases) et place-le
+dans ton `PATH`.
+
+- Linux : `naht-x86_64-unknown-linux-gnu`
+- macOS : `naht-aarch64-apple-darwin` (Apple silicon) ou `naht-x86_64-apple-darwin` (Intel)
+- Windows : `naht-x86_64-pc-windows-msvc.exe`
+
+**Depuis les sources** (nécessite Rust) : `cargo build --release -p naht` produit `target/release/naht`.
+
+Vérifie qu'il s'exécute :
+
+```sh
+naht --version
+```
+
+Voir [Installation](#/docs/installation) pour la configuration complète, y compris le plugin Studio.
+
+## 2. Installer le plugin Studio
+
+Chaque release fournit aussi `naht-plugin.rbxmx`. (Depuis un clone des sources, produis-le toi-même
+avec `naht package-plugin --src plugin/src --output naht-plugin.rbxmx`.)
+
+1. Dans Studio, clique droit dans l'Explorer et **Insert from File…**, ou dépose le `.rbxmx` dans ton
+   dossier Plugins local, pour l'installer comme plugin local.
+2. Active **Game Settings → Security → Allow HTTP Requests** — le plugin parle au démon via
+   `localhost` HTTP.
+
+## 3. Créer un projet
+
+```sh
+naht init demo
+cd demo
+```
+
+Cela génère `src/Hello.luau`, un `naht.toml` minimal, et un `.gitignore` qui exclut le répertoire
+d'état interne `.naht/` de Naht. Tu migres depuis Rojo plutôt ? `naht init --from-rojo` lit un
+`default.project.json` existant et convertit le nom, le place id, et l'arbre d'instances — voir
+[Migrer depuis Rojo](#/docs/migrating).
+
+## 4. Démarrer le démon
+
+```sh
+naht serve          # ajoute -v pour les logs de debug, --port pour remplacer le 34872 par défaut
+```
+
+Il sert le projet via `http://localhost:34872` et surveille les changements du système de fichiers.
+
+## 5. Connecter Studio
+
+Clique sur **Naht Sync** dans la barre d'outils. Le widget de statut parcourt `Connecting →
+Connected`, et le source de ton projet apparaît sous `ServerStorage/Naht`.
+
+<Callout type="note">
+
+Si tu définis `[serve] place_id` dans `naht.toml`, le démon ne se connecte qu'à la session Studio dont
+le place id correspond — un garde-fou contre la synchronisation du source dans le mauvais jeu. Une
+non-correspondance est rejetée lors du handshake.
+
+</Callout>
+
+## 6. Modifier des deux côtés
+
+**Disque → Studio.** Modifie `src/Hello.luau` sur le disque et enregistre. Le changement apparaît dans
+le `ModuleScript` correspondant dans Studio en un instant.
+
+**Studio → disque.** Modifie le source de ce `ModuleScript` dans Studio. Le fichier sur le disque se
+met à jour pour correspondre.
+
+C'est la couture qui fonctionne dans les deux sens à la fois — aucun push ou pull manuel.
+
+## 7. Lire et résoudre un conflit
+
+Si le **même script change des deux côtés** avant qu'une synchronisation ne se stabilise et que les
+modifications ne peuvent pas être fusionnées automatiquement, Naht n'écrase **aucune** des deux
+copies. À la place, il écrit des marqueurs de conflit façon git dans le fichier, **gèle** ce chemin,
+et affiche `Conflict` dans le widget de statut du plugin.
+
+```sh
+naht status                 # liste le(s) chemin(s) gelé(s)
+# édite le fichier, retire les marqueurs de conflit, garde le contenu que tu veux
+naht resolve src/Hello.luau # lève le gel ; refuse tant que des marqueurs restent
+```
+
+La synchronisation reprend pour ce chemin une fois qu'il est résolu. Le mécanisme complet est dans
+[Conflits](#/docs/conflicts).
+
+## La suite
+
+- La liste complète des commandes est dans la [référence CLI](#/docs/cli).
+- Le modèle mental derrière tout cela est dans [Concepts fondamentaux](#/docs/core-concepts).
