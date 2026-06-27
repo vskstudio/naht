@@ -2,6 +2,7 @@
   import TopBar from './TopBar.svelte'
   import Sidebar from './Sidebar.svelte'
   import MarkdownView from './MarkdownView.svelte'
+  import TocRight from './TocRight.svelte'
   export let slug
   let toc = []
 </script>
@@ -9,8 +10,8 @@
 <TopBar />
 <div class="shell">
   <Sidebar {slug} />
-  <main class="content"><MarkdownView {slug} bind:toc /></main>
-  <div class="rail"><!-- TocRight lands here in Task 4 --></div>
+  <main class="content">{#key slug}<MarkdownView {slug} bind:toc />{/key}</main>
+  <div class="rail">{#key slug}<TocRight {toc} />{/key}</div>
 </div>
 
 <style>
