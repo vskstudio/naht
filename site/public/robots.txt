@@ -1,0 +1,5 @@
+# naht.dev
+User-agent: *
+Allow: /
+
+Sitemap: https://naht.dev/sitemap.xml

@@ -53,8 +53,8 @@ docker compose up -d --build
 - `vite.config.js` sets `build.sourcemap: false` so no original source or local paths ship.
 
 CI (`.github/workflows/ci.yml`) verifies the image builds and runs a Trivy scan (fails on
-HIGH/CRITICAL), but never pushes it anywhere. See [`SECURITY.md`](../SECURITY.md) for the full
-production posture and the manual edge wiring (cert, DNS, Authenticated Origin Pulls).
+HIGH/CRITICAL), but never pushes it anywhere. TLS, the Cloudflare-origin lock-down, and DNS are
+wired up at the edge (private infra), not described here.
 
 ## Internationalization
 
