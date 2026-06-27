@@ -22,7 +22,7 @@
   function onKey(ev) {
     if (!open) return
     if (ev.key === 'Escape') open = false
-    else if (ev.key === 'ArrowDown') { sel = Math.min(sel + 1, results.length - 1); ev.preventDefault() }
+    else if (ev.key === 'ArrowDown') { if (!results.length) return; sel = Math.min(sel + 1, results.length - 1); ev.preventDefault() }
     else if (ev.key === 'ArrowUp') { sel = Math.max(sel - 1, 0); ev.preventDefault() }
     else if (ev.key === 'Enter') { go(results[sel]); ev.preventDefault() }
   }

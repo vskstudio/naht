@@ -36,7 +36,8 @@
   .prose :global(blockquote) {
     border-left: 2px solid var(--border-strong); margin: 16px 0; padding: 2px 16px; color: var(--text-faint);
   }
-  .prose :global(table) { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  .prose :global(.table-wrap) { overflow-x: auto; margin: 16px 0; }
+  .prose :global(table) { border-collapse: collapse; width: 100%; margin: 0; }
   .prose :global(th), .prose :global(td) {
     border: 1px solid var(--border); padding: 8px 12px; text-align: left; font-size: 0.92rem;
   }

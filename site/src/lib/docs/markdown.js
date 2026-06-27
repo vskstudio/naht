@@ -29,6 +29,13 @@ export function renderDoc(md) {
     const m = /^(?:\.\/)?([\w-]+)\.md(#.*)?$/.exec(a.getAttribute('href') || '')
     if (m) a.setAttribute('href', `#/docs/${m[1]}${m[2] || ''}`)
   })
+  // Wrap tables so they scroll horizontally on narrow viewports without breaking layout
+  doc.querySelectorAll('table').forEach((table) => {
+    const wrap = doc.createElement('div')
+    wrap.className = 'table-wrap'
+    table.parentNode.insertBefore(wrap, table)
+    wrap.appendChild(table)
+  })
   return { html: doc.body.innerHTML, toc }
 }
 
