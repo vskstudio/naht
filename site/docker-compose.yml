@@ -1,49 +1,25 @@
-# Production stack for naht.dev — a single static-site container fronted by the
-# shared `edge` nginx reverse proxy (separate repo). This file is the deployment
-# definition, NOT a deploy script: bring it up by hand on the host with
-#   docker compose up -d --build
-# There is intentionally no auto-deploy / webhook / CI push.
+# Build definition for naht.dev — a static site served straight from disk by the
+# shared `edge` nginx reverse proxy (separate repo, EDGE_SITE=white). There is
+# NO runtime server here: this stack builds the site, copies the artifacts onto
+# the host, and exits. Nothing stays resident — zero idle RAM, no host port, no
+# `web` network membership.
 #
-# The container joins the external `web` network so edge-nginx can reach it as
-# `naht_site:8080`. It publishes NO host port — it is never exposed to the public
-# internet directly, only through the edge (which terminates TLS + Cloudflare
-# origin lock-down). Hardened: read-only rootfs, all caps dropped, no privilege
-# escalation.
+# Deploy by hand on the host:
+#   docker compose up --build      # builds, copies ./dist, container exits 0
+# The edge serves ./dist as /var/www/naht (mounted read-only); rebuild to
+# publish a new version and edge picks it up immediately (no reload needed).
+#
+# There is intentionally no auto-deploy / webhook / CI push.
 
 services:
-  naht_site:
+  naht_build:
     build:
       context: .
       dockerfile: Dockerfile
-    image: naht-site:latest
-    container_name: naht_site
-    restart: always
-    networks:
-      - web
-    # No `ports:` — reachable only on the internal `web` network via the edge.
-    expose:
-      - "8080"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/cache/nginx
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-networks:
-  web:
-    external: true
-    name: web
+    image: naht-build:latest
+    container_name: naht_build
+    # Disposable: wipe the target and copy the freshly built dist onto the host,
+    # then stop. `-a` preserves the pre-compressed .gz alongside each asset.
+    command: sh -c "rm -rf /out/* && cp -a /app/dist/. /out/"
+    volumes:
+      - ./dist:/out

@@ -32,25 +32,32 @@ host, or opened directly. It also holds the Vitest config (jsdom environment).
 
 ## Production (naht.dev)
 
-The site ships as a hardened static-file container fronted by the shared `edge` nginx reverse
-proxy (separate repo) — the edge terminates TLS, enforces the Cloudflare-origin lock-down, rate
-limits, and sets all security response headers. **There is intentionally no deploy script, no
-webhook, and no CI publish step**: the production image is brought up by hand on the host.
+The site is served **straight from disk** by the shared `edge` nginx reverse proxy (separate repo,
+`EDGE_SITE=white`) — there is **no per-site container** at runtime, no host port, and zero idle RAM.
+The edge terminates TLS, enforces the Cloudflare-origin lock-down, and sets all security response
+headers. **There is intentionally no deploy script, no webhook, and no CI publish step**: the build
+is run by hand on the host.
 
 ```sh
-# on the production host, in this directory
-docker compose up -d --build
+# on the white production host, in /home/naht.dev (this directory)
+docker compose up --build     # builds, copies ./dist onto the host, container exits 0
 ```
 
-- `Dockerfile` — two-stage build (Node → `nginxinc/nginx-unprivileged`), both base images pinned by
-  digest. The runtime runs **non-root (uid 101)** and binds the unprivileged port `8080`.
-- `nginx.conf` — container-internal server: serves `dist/` on `:8080`, `/healthz` for the
-  healthcheck, immutable caching for hashed `/assets/`, SPA fallback to `index.html`. It owns **no**
-  TLS or security headers — the edge does.
-- `docker-compose.yml` — joins the external `web` network as `naht_site:8080`, publishes **no host
-  port**, and is hardened: `read_only` rootfs, `cap_drop: ALL`, `no-new-privileges`, tmpfs for
-  `/tmp` + nginx cache.
+The edge mounts `/home/naht.dev/dist` read-only as `/var/www/naht` and serves it; rebuild to
+publish a new version and the edge picks it up immediately (no reload needed).
+
+- `Dockerfile` — **build-only** image (Node, pinned by digest). It builds the Vite SPA and
+  pre-compresses every text asset (`gzip -9 -k`) so the edge serves the `.gz` via `gzip_static` with
+  no request-time CPU. There is no runtime server stage.
+- `docker-compose.yml` — a disposable `naht_build` service: it copies `/app/dist` (with the
+  pre-compressed `.gz` alongside) onto the host `./dist`, then exits. No `web` network, no exposed
+  port.
 - `vite.config.js` sets `build.sourcemap: false` so no original source or local paths ship.
+
+The edge vhost (`nginx/white.conf` in the edge repo) owns the SPA fallback to `index.html`,
+immutable caching for hashed assets, security headers, and the `naht/origin.{pem,key}` Cloudflare
+Origin cert. Moving hosts also requires the naht.dev Cloudflare DNS to point at the white origin and
+Authenticated Origin Pulls to stay enabled on the zone.
 
 CI (`.github/workflows/ci.yml`) verifies the image builds and runs a Trivy scan (fails on
 HIGH/CRITICAL), but never pushes it anywhere. TLS, the Cloudflare-origin lock-down, and DNS are
