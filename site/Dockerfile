@@ -28,3 +28,12 @@ RUN find dist -type f \
       \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.mjs' \
          -o -name '*.json' -o -name '*.svg' -o -name '*.xml' -o -name '*.txt' \) \
       -exec gzip -9 -k {} +
+
+# The production image only needs the generated static files. Keep the shell and cp utilities used
+# by docker-compose, but exclude the build toolchain, npm, and development dependencies from the
+# scanned/runtime image.
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runtime
+RUN apk upgrade --no-cache \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
+WORKDIR /app
+COPY --from=build /app/dist /app/dist
