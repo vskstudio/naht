@@ -5,7 +5,7 @@
 -- `Upsert`/`Delete` and encoded into the externally-tagged shape serde expects:
 -- `{ Upsert = { path, class, content } }` / `{ Delete = { path } }`.
 
-local MessagePack = require(script.Parent.MessagePack)
+local MessagePack = require(if script ~= nil then script.Parent.MessagePack else "./MessagePack")
 
 local Protocol = {}
 
@@ -62,6 +62,20 @@ export type BlobPatchBatch = {
 -- Decode a `GET /info` body.
 function Protocol.decodeInfo(bytes: string): ServerInfo
 	return MessagePack.decode(bytes)
+end
+
+-- Reject an incompatible daemon before any sync request can interpret a changed wire shape.
+function Protocol.assertCompatible(info: ServerInfo): ServerInfo
+	if info.protocol_version ~= Protocol.PROTOCOL_VERSION then
+		error(
+			"naht: incompatible protocol version (daemon "
+				.. tostring(info.protocol_version)
+				.. ", plugin "
+				.. tostring(Protocol.PROTOCOL_VERSION)
+				.. ")"
+		)
+	end
+	return info
 end
 
 -- Decode a `GET /patches` body.

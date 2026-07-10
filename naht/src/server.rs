@@ -146,8 +146,17 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         Ok(batch) => batch,
         Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     };
-    let count = batch.changes.len();
     let mut session = state.session.lock().await;
+    for change in &batch.changes {
+        let path = match change {
+            naht_core::protocol::Change::Upsert { path, .. }
+            | naht_core::protocol::Change::Delete { path } => path,
+        };
+        if let Err(error) = session.validate_path(path) {
+            return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    }
+    let count = batch.changes.len();
     if let Err(error) = session.apply_changes(batch.changes) {
         return internal_error(&error);
     }
@@ -184,8 +193,13 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
         Ok(batch) => batch,
         Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     };
-    let count = batch.changes.len();
     let mut session = state.session.lock().await;
+    for change in &batch.changes {
+        if let Err(error) = session.validate_path(&change.path) {
+            return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    }
+    let count = batch.changes.len();
     if let Err(error) = session.apply_blob_changes(batch.changes) {
         return internal_error(&error);
     }

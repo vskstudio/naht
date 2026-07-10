@@ -10,6 +10,7 @@
 local MessagePack = require("../src/MessagePack")
 local Apply = require("../src/Apply")
 local Terrain = require("../src/Terrain")
+local Protocol = require("../src/Protocol")
 
 -- Golden MessagePack from `naht-core::protocol` (rmp_serde::to_vec_named).
 local GOLDEN = {
@@ -42,6 +43,17 @@ local info = MessagePack.decode(fromHex(GOLDEN.server_info))
 check("server_info protocol_version", info.protocol_version == 1)
 check("server_info project_name", info.project_name == "demo")
 check("server_info serve_place_id", info.serve_place_id == 123)
+check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 1)
+local mismatchOk = pcall(function()
+	Protocol.assertCompatible({
+		protocol_version = 999,
+		server_version = "future",
+		project_name = "demo",
+		session_id = "future",
+		serve_place_id = nil,
+	})
+end)
+check("mismatched protocol version is rejected", not mismatchOk)
 
 local batch = MessagePack.decode(fromHex(GOLDEN.patch_batch))
 check("patch_batch cursor", batch.cursor == 2)

@@ -40,7 +40,7 @@ function Client.info(self: Client, placeId: number): Protocol.ServerInfo
 	if not response.Success then
 		error("naht: /info returned " .. tostring(response.StatusCode))
 	end
-	return Protocol.decodeInfo(response.Body)
+	return Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
 end
 
 -- Long-poll for patches past `cursor`. Held open by the daemon until a change or its timeout.

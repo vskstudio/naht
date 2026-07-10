@@ -10,7 +10,7 @@ use naht_core::state::StateStore;
 fn session(root: &std::path::Path) -> Session {
     std::fs::create_dir_all(root.join("src")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-    Session::new(root, store, "demo", None)
+    Session::new(root, store, "demo", None, true)
 }
 
 #[test]

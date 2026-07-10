@@ -166,6 +166,7 @@ pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
         store,
         config.project_name(&root),
         config.serve.place_id,
+        config.terrain_sync(),
     );
     let state = AppState::new(session, LONG_POLL);
 

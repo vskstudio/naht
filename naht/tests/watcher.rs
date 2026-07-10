@@ -15,7 +15,7 @@ async fn a_new_file_becomes_a_queued_patch() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-    let session = Session::new(root.clone(), store, "demo", None);
+    let session = Session::new(root.clone(), store, "demo", None, true);
     let state = AppState::new(session, Duration::from_secs(1));
 
     let _watcher = naht::watcher::spawn(&root, state.clone()).unwrap();

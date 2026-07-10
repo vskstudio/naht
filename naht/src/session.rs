@@ -21,7 +21,7 @@ use naht_core::binary::{self, BlobInstance, BlobPatch};
 use naht_core::protocol::{Change, ServerInfo, PROTOCOL_VERSION};
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::{InstanceRecord, StateStore};
-use naht_core::vfs::{DiskVfs, RootedVfs};
+use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
 
 /// The directory the project's source lives in, relative to the rooted VFS — its own root.
 const PROJECT_ROOT: &str = "";
@@ -54,6 +54,7 @@ pub struct Session {
     project_name: String,
     session_id: String,
     serve_place_id: Option<u64>,
+    terrain_sync: bool,
 }
 
 impl Session {
@@ -64,6 +65,7 @@ impl Session {
         store: StateStore,
         project_name: impl Into<String>,
         serve_place_id: Option<u64>,
+        terrain_sync: bool,
     ) -> Self {
         Self {
             vfs: RootedVfs::new(root.into(), DiskVfs::new()),
@@ -78,6 +80,7 @@ impl Session {
             project_name: project_name.into(),
             session_id: new_session_id(),
             serve_place_id,
+            terrain_sync,
         }
     }
 
@@ -105,7 +108,9 @@ impl Session {
         let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
         let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
         self.absorb(patches, &pre_base)?;
-        self.reconcile_blobs()?;
+        if self.terrain_sync {
+            self.reconcile_blobs()?;
+        }
         Ok(())
     }
 
@@ -119,10 +124,12 @@ impl Session {
                     class,
                     content,
                 } => {
+                    self.vfs.validate_path(&path)?;
                     self.studio
                         .insert(path.clone(), TextInstance::new(path, class, content));
                 }
                 Change::Delete { path } => {
+                    self.vfs.validate_path(&path)?;
                     self.studio.remove(&path);
                 }
             }
@@ -134,7 +141,9 @@ impl Session {
         // Settle the blob channel too, exactly as `rescan()` does: a filesystem terrain change that
         // landed between the last rescan and this batch is otherwise not reconciled until the next
         // rescan. Idempotent when nothing changed — no spurious patch on every text edit.
-        self.reconcile_blobs()?;
+        if self.terrain_sync {
+            self.reconcile_blobs()?;
+        }
         Ok(())
     }
 
@@ -166,10 +175,24 @@ impl Session {
     /// the current filesystem. Blob deletions aren't modeled on the wire — terrain isn't removed in
     /// practice — so a batch carries only the blobs Studio currently holds.
     pub fn apply_blob_changes(&mut self, changes: Vec<BlobInstance>) -> Result<()> {
+        if !self.terrain_sync {
+            return Ok(());
+        }
         for change in changes {
+            self.vfs.validate_path(&change.path)?;
             self.studio_blobs.insert(change.path.clone(), change);
         }
         self.reconcile_blobs()
+    }
+
+    /// Whether this session is allowed to synchronize terrain blobs.
+    pub fn terrain_sync(&self) -> bool {
+        self.terrain_sync
+    }
+
+    /// Validate a Studio-originated path against the project root before mutating session state.
+    pub fn validate_path(&self, path: &str) -> Result<(), VfsError> {
+        self.vfs.validate_path(path)
     }
 
     /// Re-read the filesystem's binary blobs and reconcile them against the Studio blob mirror and the
