@@ -14,6 +14,7 @@ use naht_core::protocol::{
 };
 use naht_core::reconciler::{Direction, PatchKind};
 use naht_core::state::StateStore;
+use reqwest::StatusCode;
 
 /// A running daemon plus the fake client and the project directory it serves.
 struct Harness {
@@ -25,10 +26,14 @@ struct Harness {
 
 impl Harness {
     async fn start(serve_place_id: Option<u64>) -> Self {
+        Self::start_with_terrain(serve_place_id, true).await
+    }
+
+    async fn start_with_terrain(serve_place_id: Option<u64>, terrain_sync: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-        let session = Session::new(root.clone(), store, "demo", serve_place_id);
+        let session = Session::new(root.clone(), store, "demo", serve_place_id, terrain_sync);
         // A short long-poll keeps "no new patches" requests from hanging the test.
         let state = AppState::new(session, Duration::from_millis(300));
 
@@ -180,6 +185,91 @@ async fn post_changes_writes_the_file() {
 
     assert!(status.is_success());
     assert_eq!(h.read("New.luau"), "return 5");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_changes_rejects_paths_that_escape_the_project_root() {
+    let h = Harness::start(None).await;
+    let sentinel = format!(
+        "outside-{}.luau",
+        h.root.file_name().unwrap().to_string_lossy()
+    );
+
+    let status = h
+        .post_changes(vec![Change::Upsert {
+            path: format!("../{sentinel}"),
+            class: "ModuleScript".to_string(),
+            content: "return 5".to_string(),
+        }])
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!h.root.parent().unwrap().join(sentinel).exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_blobs_rejects_paths_that_escape_the_project_root() {
+    let h = Harness::start(None).await;
+    let sentinel = format!(
+        "outside-{}.terrain",
+        h.root.file_name().unwrap().to_string_lossy()
+    );
+
+    let status = h
+        .post_blobs(vec![BlobInstance::new(
+            format!("../{sentinel}"),
+            "Terrain",
+            vec![1, 2, 3],
+        )])
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!h.root.parent().unwrap().join(sentinel).exists());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_changes_rejects_symlink_paths_that_escape_the_project_root() {
+    use std::os::unix::fs::symlink;
+
+    let h = Harness::start(None).await;
+    let outside = h.root.parent().unwrap().join(format!(
+        "outside-link-{}",
+        h.root.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::write(&outside, "original").unwrap();
+    symlink(&outside, h.root.join("linked.luau")).unwrap();
+
+    let status = h
+        .post_changes(vec![Change::Upsert {
+            path: "linked.luau".to_string(),
+            class: "ModuleScript".to_string(),
+            content: "overwritten".to_string(),
+        }])
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), "original");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn terrain_sync_disabled_does_not_read_or_write_blobs() {
+    let h = Harness::start_with_terrain(None, false).await;
+    h.write_bytes("Terrain.terrain", b"disk-terrain");
+
+    assert!(h.info(None).await.status().is_success());
+    assert!(h.blobs(0).await.patches.is_empty());
+
+    let status = h
+        .post_blobs(vec![BlobInstance::new(
+            "Studio.terrain",
+            "Terrain",
+            b"studio-terrain".to_vec(),
+        )])
+        .await;
+    assert!(status.is_success());
+    assert!(!h.root.join("Studio.terrain").exists());
+    assert_eq!(h.read_bytes("Terrain.terrain"), b"disk-terrain");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

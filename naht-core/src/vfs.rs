@@ -5,7 +5,60 @@
 //! is the real-disk implementation used by the daemon.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// Validate a path received from the Studio protocol as project-relative.
+///
+/// The daemon joins protocol paths to a project root, so absolute paths and parent components
+/// would otherwise escape that root. Backslashes and drive prefixes are rejected explicitly so the
+/// same wire contract is safe on Unix and Windows.
+pub fn validate_project_path(path: &str) -> Result<(), ProjectPathError> {
+    if path.is_empty() {
+        return Err(ProjectPathError::Empty);
+    }
+    if path.starts_with('/') || path.starts_with('\\') {
+        return Err(ProjectPathError::Absolute);
+    }
+    if path.contains('\0') {
+        return Err(ProjectPathError::Nul);
+    }
+
+    for component in path.split(['/', '\\']) {
+        if component.is_empty() {
+            return Err(ProjectPathError::EmptyComponent);
+        }
+        if component == "." || component == ".." {
+            return Err(ProjectPathError::Traversal);
+        }
+        if component.contains(':') {
+            return Err(ProjectPathError::DrivePrefix);
+        }
+    }
+    Ok(())
+}
+
+/// Why a protocol path is not a safe project-relative path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ProjectPathError {
+    /// No path was supplied.
+    #[error("path must not be empty")]
+    Empty,
+    /// The path starts at the filesystem root.
+    #[error("absolute paths are not allowed")]
+    Absolute,
+    /// The path contains an empty component.
+    #[error("path contains an empty component")]
+    EmptyComponent,
+    /// The path contains a parent or current-directory component.
+    #[error("path traversal components are not allowed")]
+    Traversal,
+    /// The path contains a NUL byte.
+    #[error("NUL bytes are not allowed in paths")]
+    Nul,
+    /// The path contains a Windows drive prefix.
+    #[error("drive prefixes are not allowed")]
+    DrivePrefix,
+}
 
 /// Errors raised by a [`Vfs`] implementation.
 #[derive(Debug, thiserror::Error)]
@@ -19,6 +72,12 @@ pub enum VfsError {
     /// A file operation was attempted on a directory.
     #[error("not a file: {0}")]
     NotAFile(PathBuf),
+    /// A protocol path is malformed or is not safely rooted.
+    #[error("invalid project path: {0}")]
+    InvalidPath(String),
+    /// A path component is a symlink, so its destination cannot be proven to stay in the project.
+    #[error("symlink path is not allowed: {0}")]
+    Symlink(PathBuf),
     /// An underlying I/O failure on the real disk.
     #[error("I/O error at {path}: {source}")]
     Io {
@@ -328,8 +387,40 @@ impl<V: Vfs> RootedVfs<V> {
         }
     }
 
-    fn absolute(&self, path: &Path) -> PathBuf {
-        self.root.join(path)
+    fn checked_absolute(&self, path: &Path) -> Result<PathBuf, VfsError> {
+        let absolute = self.root.join(path);
+        let mut current = self.root.clone();
+        for component in path.components() {
+            match component {
+                Component::Normal(name) => current.push(name),
+                Component::CurDir => continue,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(VfsError::InvalidPath(path.display().to_string()));
+                }
+            }
+            match std::fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(VfsError::Symlink(current));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(source) => {
+                    return Err(VfsError::Io {
+                        path: current,
+                        source,
+                    });
+                }
+            }
+        }
+        Ok(absolute)
+    }
+
+    /// Validate a protocol path against this rooted filesystem, including existing symlink
+    /// components. Symlinks are rejected even when they currently point inside the root because
+    /// their target can change between validation and the subsequent filesystem operation.
+    pub fn validate_path(&self, path: &str) -> Result<(), VfsError> {
+        validate_project_path(path).map_err(|error| VfsError::InvalidPath(error.to_string()))?;
+        self.checked_absolute(Path::new(path)).map(|_| ())
     }
 
     fn relativize(&self, entry: &Path) -> PathBuf {
@@ -342,11 +433,11 @@ impl<V: Vfs> RootedVfs<V> {
 
 impl<V: Vfs> Vfs for RootedVfs<V> {
     fn read(&self, path: &Path) -> Result<Vec<u8>, VfsError> {
-        self.inner.read(&self.absolute(path))
+        self.inner.read(&self.checked_absolute(path)?)
     }
 
     fn list(&self, path: &Path) -> Result<Vec<DirEntry>, VfsError> {
-        let mut entries = self.inner.list(&self.absolute(path))?;
+        let mut entries = self.inner.list(&self.checked_absolute(path)?)?;
         for entry in &mut entries {
             entry.path = self.relativize(&entry.path);
         }
@@ -354,23 +445,25 @@ impl<V: Vfs> Vfs for RootedVfs<V> {
     }
 
     fn write(&mut self, path: &Path, contents: &[u8]) -> Result<(), VfsError> {
-        self.inner.write(&self.absolute(path), contents)
+        self.inner.write(&self.checked_absolute(path)?, contents)
     }
 
     fn create_dir(&mut self, path: &Path) -> Result<(), VfsError> {
-        self.inner.create_dir(&self.absolute(path))
+        self.inner.create_dir(&self.checked_absolute(path)?)
     }
 
     fn remove(&mut self, path: &Path) -> Result<(), VfsError> {
-        self.inner.remove(&self.absolute(path))
+        self.inner.remove(&self.checked_absolute(path)?)
     }
 
     fn exists(&self, path: &Path) -> bool {
-        self.inner.exists(&self.absolute(path))
+        self.checked_absolute(path)
+            .map(|absolute| self.inner.exists(&absolute))
+            .unwrap_or(false)
     }
 
     fn kind(&self, path: &Path) -> Result<EntryKind, VfsError> {
-        self.inner.kind(&self.absolute(path))
+        self.inner.kind(&self.checked_absolute(path)?)
     }
 }
 
