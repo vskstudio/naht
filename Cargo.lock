@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "naht"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "naht-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diffy",
  "rbx_binary",
