@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::binary::{BlobInstance, BlobPatch};
-use crate::reconciler::Patch;
+use crate::reconciler::{Direction, Patch};
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
 /// it so an incompatible plugin/daemon pair fails loudly instead of misreading each other.
@@ -89,6 +89,54 @@ pub struct BlobChangeBatch {
 pub struct Pong {
     /// The current session id, so a heartbeat also detects a restart.
     pub session_id: String,
+}
+
+/// Whether a synced instance was diffable text or an opaque binary blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EventKind {
+    /// A text patch (source that is diffed/merged).
+    Text,
+    /// A binary blob (synced opaquely — e.g. terrain).
+    Blob,
+}
+
+/// The outcome of a completed sync operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Outcome {
+    /// Applied cleanly.
+    Ok,
+    /// A conflicting change was detected; resolved without overwrite (conflict markers on disk).
+    Conflict,
+}
+
+/// One completed sync operation, retained in the daemon's bounded activity buffer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncEvent {
+    /// Monotonic per-session sequence number; the consumer's cursor. Never reused within a session.
+    pub seq: u64,
+    /// Milliseconds since the Unix epoch when the operation completed.
+    pub unix_ms: u64,
+    /// The instance's project-relative path (its stable key).
+    pub path: String,
+    /// Which way the change flowed.
+    pub direction: Direction,
+    /// Whether it was a text patch or an opaque binary blob.
+    pub kind: EventKind,
+    /// The operation's outcome.
+    pub outcome: Outcome,
+}
+
+/// The response from `GET /activity`: the current pending count plus every retained event past the
+/// caller's cursor. Read-only; polled by an external consumer to render live sync activity.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SyncActivity {
+    /// Text patches sent to Studio but not yet acked — the live in-flight FS→Studio set.
+    pub pending: u32,
+    /// The oldest `seq` still retained. If the caller's `since` is below this, events were evicted
+    /// between polls and the caller has a gap.
+    pub buffer_start_seq: u64,
+    /// Events with `seq > since`, oldest-first. Empty when nothing is new.
+    pub events: Vec<SyncEvent>,
 }
 
 /// Confirmation from the plugin that it applied the given paths' patches. Only acked paths advance
@@ -193,5 +241,24 @@ mod tests {
         };
         let bytes = to_msgpack(&batch).unwrap();
         assert_eq!(from_msgpack::<ChangeBatch>(&bytes).unwrap(), batch);
+    }
+
+    #[test]
+    fn sync_activity_round_trips_through_msgpack() {
+        let activity = SyncActivity {
+            pending: 2,
+            buffer_start_seq: 5,
+            events: vec![SyncEvent {
+                seq: 5,
+                unix_ms: 1_700_000_000_000,
+                path: "src/Foo.luau".to_string(),
+                direction: Direction::ToStudio,
+                kind: EventKind::Text,
+                outcome: Outcome::Ok,
+            }],
+        };
+        let bytes = to_msgpack(&activity).unwrap();
+        let decoded: SyncActivity = from_msgpack(&bytes).unwrap();
+        assert_eq!(activity, decoded);
     }
 }
