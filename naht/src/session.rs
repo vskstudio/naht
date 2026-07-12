@@ -12,13 +12,15 @@
 //! rather than clobbering the filesystem. Filesystem-bound effects (writes the daemon itself
 //! performed) advance the base immediately, since they are already durable.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use naht_core::binary::{self, BlobInstance, BlobPatch};
-use naht_core::protocol::{Change, ServerInfo, PROTOCOL_VERSION};
+use naht_core::protocol::{
+    Change, EventKind, Outcome, ServerInfo, SyncActivity, SyncEvent, PROTOCOL_VERSION,
+};
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::{InstanceRecord, StateStore};
 use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
@@ -30,6 +32,9 @@ const PROJECT_ROOT: &str = "";
 /// interactively confirm, but an unusually large deletion (e.g. a Studio folder cleared by mistake)
 /// should never pass silently.
 const MASS_DELETE_WARN: usize = 25;
+
+/// The most recent completed sync events retained in memory for `GET /activity`. Oldest evicted.
+const ACTIVITY_CAP: usize = 256;
 
 /// One running sync session.
 pub struct Session {
@@ -51,6 +56,10 @@ pub struct Session {
     /// channel), keyed by path so a re-diff replaces rather than appends.
     blob_queue: BTreeMap<String, (u64, BlobPatch)>,
     blob_next_seq: u64,
+    /// Recent completed sync operations, newest at the back, capped at `ACTIVITY_CAP`.
+    activity: VecDeque<SyncEvent>,
+    /// The seq to stamp on the next recorded event; monotonic within this session.
+    activity_next_seq: u64,
     project_name: String,
     session_id: String,
     serve_place_id: Option<u64>,
@@ -77,6 +86,9 @@ impl Session {
             studio_blobs: BTreeMap::new(),
             blob_queue: BTreeMap::new(),
             blob_next_seq: 0,
+            activity: VecDeque::new(),
+            // 1-based: seq 0 is reserved as the "from the start" cursor sentinel (see `activity`).
+            activity_next_seq: 1,
             project_name: project_name.into(),
             session_id: new_session_id(),
             serve_place_id,
@@ -92,6 +104,29 @@ impl Session {
             project_name: self.project_name.clone(),
             session_id: self.session_id.clone(),
             serve_place_id: self.serve_place_id,
+        }
+    }
+
+    /// The activity snapshot for `GET /activity`: the live pending count (unacked text patches) plus
+    /// every retained event past `since` (strictly newer), oldest-first. Seqs are 1-based, so the
+    /// default `since = 0` returns everything retained while a caller's cursor never re-delivers the
+    /// event it last saw.
+    pub fn activity(&self, since: u64) -> SyncActivity {
+        let buffer_start_seq = self
+            .activity
+            .front()
+            .map(|event| event.seq)
+            .unwrap_or(self.activity_next_seq);
+        let events = self
+            .activity
+            .iter()
+            .filter(|event| event.seq > since)
+            .cloned()
+            .collect();
+        SyncActivity {
+            pending: self.unacked.len() as u32,
+            buffer_start_seq,
+            events,
         }
     }
 
@@ -167,6 +202,12 @@ impl Session {
                     self.studio.remove(&patch.path);
                 }
             }
+            self.record_event(
+                patch.path.clone(),
+                Direction::ToStudio,
+                EventKind::Text,
+                Outcome::Ok,
+            );
         }
         Ok(())
     }
@@ -217,7 +258,14 @@ impl Session {
             match patch.direction {
                 // Already written to disk; the mirror already holds the Studio-side value that drove
                 // it, so the next reconcile sees the sides agree.
-                Direction::ToFs => {}
+                Direction::ToFs => {
+                    self.record_event(
+                        patch.path.clone(),
+                        Direction::ToFs,
+                        EventKind::Blob,
+                        Outcome::Ok,
+                    );
+                }
                 Direction::ToStudio => {
                     match (&patch.kind, &patch.content) {
                         (PatchKind::Delete, _) => {
@@ -247,6 +295,12 @@ impl Session {
             path = %patch.path,
             kind = ?patch.kind,
             "blob patch emitted"
+        );
+        self.record_event(
+            patch.path.clone(),
+            Direction::ToStudio,
+            EventKind::Blob,
+            Outcome::Ok,
         );
         self.blob_queue
             .insert(patch.path.clone(), (self.blob_next_seq, patch));
@@ -331,6 +385,17 @@ impl Session {
                         kind = ?patch.kind,
                         "patch applied to filesystem"
                     );
+                    let outcome = if patch.kind == PatchKind::Conflict {
+                        Outcome::Conflict
+                    } else {
+                        Outcome::Ok
+                    };
+                    self.record_event(
+                        patch.path.clone(),
+                        Direction::ToFs,
+                        EventKind::Text,
+                        outcome,
+                    );
                 }
                 // A merge also wrote the filesystem, so its base is correct and the mirror must
                 // advance to avoid a clobber on the next reconcile; treat it like a durable patch.
@@ -363,6 +428,32 @@ impl Session {
         self.queue
             .insert(patch.path.clone(), (self.next_seq, patch));
         self.next_seq += 1;
+    }
+
+    /// Append one completed sync op to the bounded activity buffer, evicting the oldest past the cap.
+    fn record_event(
+        &mut self,
+        path: String,
+        direction: Direction,
+        kind: EventKind,
+        outcome: Outcome,
+    ) {
+        let unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.activity.push_back(SyncEvent {
+            seq: self.activity_next_seq,
+            unix_ms,
+            path,
+            direction,
+            kind,
+            outcome,
+        });
+        self.activity_next_seq += 1;
+        if self.activity.len() > ACTIVITY_CAP {
+            self.activity.pop_front();
+        }
     }
 
     /// Undo the base advance the reconciler made for a held Studio-bound patch, restoring the agreed
