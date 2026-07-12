@@ -69,6 +69,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/blobs", get(blobs).post(post_blobs))
         .route("/ack", post(ack))
         .route("/heartbeat", get(heartbeat))
+        .route("/activity", get(activity))
         .with_state(state)
 }
 
@@ -225,6 +226,20 @@ async fn ack(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
 async fn heartbeat(State(state): State<Arc<AppState>>) -> Response {
     let session_id = state.session.lock().await.info().session_id;
     msgpack(&Pong { session_id })
+}
+
+#[derive(Deserialize)]
+struct ActivityQuery {
+    since: Option<u64>,
+}
+
+async fn activity(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ActivityQuery>,
+) -> Response {
+    let since = query.since.unwrap_or(0);
+    let session = state.session.lock().await;
+    msgpack(&session.activity(since))
 }
 
 fn patch_batch(session: &Session, cursor: u64) -> Response {
