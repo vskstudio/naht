@@ -32,6 +32,15 @@ file records what shipped; the per-stage detail lives in git history. Design con
 **v1 is shipped and tagged `v0.1.0`**: live bidirectional sync, conflict-safe 3-way merge, persisted
 state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release pipeline.
 
+## Shipped — v0.2.0 (merged)
+
+- **`GET /activity`** — a read-only endpoint exposing live sync activity to an external consumer: a
+  `pending` count (unacked FS→Studio text patches) plus a bounded in-memory ring buffer (256) of
+  recent *completed* sync events `{seq, unix_ms, path, direction, kind, outcome}`, with a `since`
+  cursor (1-based seqs, strictly-greater filter — a consumer never re-sees its last event, and
+  `buffer_start_seq` signals an eviction gap). Additive: no existing message shape changed,
+  `PROTOCOL_VERSION` stays `1`. The Neublox adapter that consumes it lives outside this repo.
+
 ---
 
 ## Permanently out of scope

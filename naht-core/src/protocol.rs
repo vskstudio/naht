@@ -132,8 +132,8 @@ pub struct SyncEvent {
 pub struct SyncActivity {
     /// Text patches sent to Studio but not yet acked — the live in-flight FS→Studio set.
     pub pending: u32,
-    /// The oldest `seq` still retained. If the caller's `since` is below this, events were evicted
-    /// between polls and the caller has a gap.
+    /// The oldest `seq` still retained. The caller's next expected event is `since + 1`, so it has a
+    /// gap (events evicted between polls) exactly when `since + 1 < buffer_start_seq`.
     pub buffer_start_seq: u64,
     /// Events with `seq > since`, oldest-first. Empty when nothing is new.
     pub events: Vec<SyncEvent>,

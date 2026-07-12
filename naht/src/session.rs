@@ -400,7 +400,8 @@ impl Session {
                 // A merge also wrote the filesystem, so its base is correct and the mirror must
                 // advance to avoid a clobber on the next reconcile; treat it like a durable patch.
                 // Drop any earlier hold for this path so a later ack can't revert the base to stale
-                // pre-merge content.
+                // pre-merge content. No `record_event` here: the paired `ToFs` patch for this same
+                // path already recorded the merge, so emitting again would double-count one sync.
                 Direction::ToStudio if fs_bound.contains(&patch.path) => {
                     self.unacked.remove(&patch.path);
                     self.mirror(&patch);
