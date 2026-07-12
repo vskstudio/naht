@@ -117,12 +117,10 @@ impl Session {
             .front()
             .map(|event| event.seq)
             .unwrap_or(self.activity_next_seq);
-        let events = self
-            .activity
-            .iter()
-            .filter(|event| event.seq > since)
-            .cloned()
-            .collect();
+        // The buffer is strictly ascending in `seq`, so binary-search the first event past `since`
+        // instead of scanning the already-seen prefix.
+        let start = self.activity.partition_point(|event| event.seq <= since);
+        let events = self.activity.range(start..).cloned().collect();
         SyncActivity {
             pending: self.unacked.len() as u32,
             buffer_start_seq,
