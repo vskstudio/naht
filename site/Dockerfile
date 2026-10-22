@@ -12,7 +12,7 @@
 # slip a different image underneath us.
 # ---------------------------------------------------------------------------
 
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS build
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS build
 WORKDIR /app
 
 # Install deps from the lockfile only (no implicit upgrades), then build.
@@ -32,7 +32,7 @@ RUN find dist -type f \
 # The production image only needs the generated static files. Keep the shell and cp utilities used
 # by docker-compose, but exclude the build toolchain, npm, and development dependencies from the
 # scanned/runtime image.
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runtime
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS runtime
 RUN apk upgrade --no-cache \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
 WORKDIR /app
