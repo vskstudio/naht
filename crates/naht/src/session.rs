@@ -47,6 +47,7 @@ const MASS_DELETE_WARN: usize = 25;
 const ACTIVITY_CAP: usize = 256;
 
 /// One running sync session.
+#[derive(Debug)]
 pub struct Session {
     vfs: RootedVfs<DiskVfs>,
     store: StateStore,

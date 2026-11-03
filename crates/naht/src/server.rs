@@ -50,6 +50,7 @@ const TIMEOUT_SLACK: Duration = Duration::from_secs(10);
 /// Shared server state: the session behind a mutex, plus notifiers that wake parked long-polls
 /// whenever a queue may have grown. Text patches and binary blobs ride separate channels, so each
 /// has its own notifier and parks independently.
+#[derive(Debug)]
 pub struct AppState {
     session: Mutex<Session>,
     patches_ready: Notify,

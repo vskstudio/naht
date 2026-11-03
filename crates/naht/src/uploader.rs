@@ -18,6 +18,7 @@ use crate::config::AssetsConfig;
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart::Form;
 use reqwest::blocking::multipart::Part;
+use std::fmt;
 use std::thread;
 
 const ASSETS_ENDPOINT: &str = "https://apis.roblox.com/assets/v1/assets";
@@ -42,6 +43,12 @@ pub enum UploaderError {
 /// An Open Cloud client holding the resolved API key.
 pub struct OpenCloudUploader {
     api_key: String,
+}
+
+impl fmt::Debug for OpenCloudUploader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenCloudUploader").finish_non_exhaustive()
+    }
 }
 
 impl OpenCloudUploader {

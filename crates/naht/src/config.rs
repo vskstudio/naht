@@ -17,6 +17,7 @@ use toml::de;
 
 /// The project's config file name, read from the project root.
 pub const PROJECT_FILE: &str = "naht.toml";
+/// The directory under the project root that holds the daemon state.
 pub const INTERNAL_DIR: &str = ".naht";
 
 /// The default localhost port the daemon listens on when none is configured.

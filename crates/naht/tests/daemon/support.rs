@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use std::fs;
 use tokio::net::TcpListener;
 
-pub struct Harness {
+pub(crate) struct Harness {
     pub base: String,
     pub root: PathBuf,
     pub client: reqwest::Client,
@@ -22,11 +22,14 @@ pub struct Harness {
 }
 
 impl Harness {
-    pub async fn start(serve_place_id: Option<u64>) -> Self {
+    pub(crate) async fn start(serve_place_id: Option<u64>) -> Self {
         Self::start_with_terrain(serve_place_id, true).await
     }
 
-    pub async fn start_with_terrain(serve_place_id: Option<u64>, terrain_sync: bool) -> Self {
+    pub(crate) async fn start_with_terrain(
+        serve_place_id: Option<u64>,
+        terrain_sync: bool,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
@@ -47,19 +50,19 @@ impl Harness {
         }
     }
 
-    pub fn write(&self, rel: &str, content: impl AsRef<[u8]>) {
+    pub(crate) fn write(&self, rel: &str, content: impl AsRef<[u8]>) {
         fs::write(self.root.join(rel), content).unwrap();
     }
 
-    pub fn read(&self, rel: &str) -> String {
+    pub(crate) fn read(&self, rel: &str) -> String {
         fs::read_to_string(self.root.join(rel)).unwrap()
     }
 
-    pub fn read_bytes(&self, rel: &str) -> Vec<u8> {
+    pub(crate) fn read_bytes(&self, rel: &str) -> Vec<u8> {
         fs::read(self.root.join(rel)).unwrap()
     }
 
-    pub async fn blobs(&self, cursor: u64) -> BlobPatchBatch {
+    pub(crate) async fn blobs(&self, cursor: u64) -> BlobPatchBatch {
         let resp = self
             .client
             .get(format!("{}/blobs", self.base))
@@ -70,7 +73,7 @@ impl Harness {
         decode(resp).await
     }
 
-    pub async fn post_blobs(&self, changes: Vec<BlobInstance>) -> reqwest::StatusCode {
+    pub(crate) async fn post_blobs(&self, changes: Vec<BlobInstance>) -> reqwest::StatusCode {
         let body = protocol::to_msgpack(&BlobChangeBatch { changes }).unwrap();
         self.client
             .post(format!("{}/blobs", self.base))
@@ -81,7 +84,7 @@ impl Harness {
             .status()
     }
 
-    pub async fn info(&self, place_id: Option<u64>) -> reqwest::Response {
+    pub(crate) async fn info(&self, place_id: Option<u64>) -> reqwest::Response {
         let mut req = self.client.get(format!("{}/info", self.base));
         if let Some(id) = place_id {
             req = req.query(&[("place_id", id.to_string())]);
@@ -89,7 +92,7 @@ impl Harness {
         req.send().await.unwrap()
     }
 
-    pub async fn patches(&self, cursor: u64) -> PatchBatch {
+    pub(crate) async fn patches(&self, cursor: u64) -> PatchBatch {
         let resp = self
             .client
             .get(format!("{}/patches", self.base))
@@ -100,7 +103,7 @@ impl Harness {
         decode(resp).await
     }
 
-    pub async fn post_changes(&self, changes: Vec<Change>) -> reqwest::StatusCode {
+    pub(crate) async fn post_changes(&self, changes: Vec<Change>) -> reqwest::StatusCode {
         let body = protocol::to_msgpack(&ChangeBatch { changes }).unwrap();
         self.client
             .post(format!("{}/changes", self.base))
@@ -111,7 +114,7 @@ impl Harness {
             .status()
     }
 
-    pub async fn heartbeat(&self) -> Pong {
+    pub(crate) async fn heartbeat(&self) -> Pong {
         let resp = self
             .client
             .get(format!("{}/heartbeat", self.base))
@@ -121,7 +124,7 @@ impl Harness {
         decode(resp).await
     }
 
-    pub async fn activity(&self, since: u64) -> SyncActivity {
+    pub(crate) async fn activity(&self, since: u64) -> SyncActivity {
         let resp = self
             .client
             .get(format!("{}/activity", self.base))
@@ -132,7 +135,7 @@ impl Harness {
         decode(resp).await
     }
 
-    pub async fn ack(&self, paths: Vec<String>) -> reqwest::StatusCode {
+    pub(crate) async fn ack(&self, paths: Vec<String>) -> reqwest::StatusCode {
         let body = protocol::to_msgpack(&Ack { paths }).unwrap();
         self.client
             .post(format!("{}/ack", self.base))
@@ -143,7 +146,7 @@ impl Harness {
             .status()
     }
 
-    pub async fn ack_all(&self, batch: &PatchBatch) {
+    pub(crate) async fn ack_all(&self, batch: &PatchBatch) {
         let paths = batch
             .patches
             .iter()
@@ -153,7 +156,7 @@ impl Harness {
     }
 }
 
-pub async fn decode<T: DeserializeOwned>(resp: reqwest::Response) -> T {
+pub(crate) async fn decode<T: DeserializeOwned>(resp: reqwest::Response) -> T {
     let bytes = resp.bytes().await.unwrap();
     protocol::from_msgpack(&bytes).unwrap()
 }

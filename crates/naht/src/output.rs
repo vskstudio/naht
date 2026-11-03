@@ -6,6 +6,7 @@ use naht_core::reconciler::Status;
 use crate::commands::{Built, Initialized};
 
 /// The command-line report: ordinary lines go to `stdout`, warnings and failures to `stderr`.
+#[derive(Debug)]
 pub struct Output<Stdout: Write, Stderr: Write> {
     stdout: Stdout,
     stderr: Stderr,
