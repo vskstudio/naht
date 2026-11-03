@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-
 use std::path::Path;
 
 use super::model::{Direction, TextInstance};
