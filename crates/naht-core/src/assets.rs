@@ -22,12 +22,32 @@ pub trait AssetUploader {
     fn upload(&self, name: &str, content: &[u8]) -> Result<String, AssetError>;
 }
 
+/// Why an upload to Open Cloud failed, one variant per outcome a caller may tell apart.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum UploadFailure {
+    /// The request got no answer (connection, TLS, timeout); the message is the transport's own.
+    #[error("request failed: {0}")]
+    Transport(String),
+    /// The service answered with a non-success HTTP status (auth, quota, validation).
+    #[error("Open Cloud returned HTTP {0}")]
+    Rejected(u16),
+    /// The answer was not the JSON document the upload expects; the message is the parser's own.
+    #[error("unreadable response: {0}")]
+    Unreadable(String),
+    /// The answer parsed but carried no asset id.
+    #[error("no asset id in the Open Cloud response")]
+    MissingAssetId,
+    /// The thread that performed the upload panicked before it answered.
+    #[error("upload thread panicked")]
+    WorkerPanicked,
+}
+
 /// Errors from resolving an asset.
 #[derive(Debug, thiserror::Error)]
 pub enum AssetError {
-    /// The upload itself failed (network, auth, quota …). Pauses only this asset's path.
+    /// The upload itself failed (network, auth, quota). Pauses only this asset's path.
     #[error("asset upload failed: {0}")]
-    Upload(String),
+    Upload(UploadFailure),
     /// The asset-id cache (state store) failed.
     #[error(transparent)]
     State(#[from] StateError),
@@ -163,7 +183,9 @@ mod tests {
     impl AssetUploader for FakeUploader {
         fn upload(&self, name: &str, _content: &[u8]) -> Result<String, AssetError> {
             if self.fail || self.fail_on.as_deref() == Some(name) {
-                return Err(AssetError::Upload(format!("simulated failure for {name}")));
+                return Err(AssetError::Upload(UploadFailure::Transport(format!(
+                    "simulated failure for {name}"
+                ))));
             }
             self.uploads.borrow_mut().push(name.to_owned());
             let id = self.uploads.borrow().len();

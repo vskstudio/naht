@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::mapper::{init_class, script_class};
 use crate::vfs::{EntryKind, Vfs};
@@ -49,5 +49,5 @@ fn scan_into(
 }
 
 pub(super) fn decode(path: &str, bytes: &[u8]) -> Result<String, ReconcileError> {
-    String::from_utf8(bytes.to_vec()).map_err(|_| ReconcileError::NonUtf8(path.to_owned()))
+    String::from_utf8(bytes.to_vec()).map_err(|_| ReconcileError::NonUtf8(PathBuf::from(path)))
 }

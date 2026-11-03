@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::hash::content_hash;
 use crate::merge;
@@ -26,13 +26,13 @@ pub fn status(store: &StateStore) -> Result<Status, ReconcileError> {
 pub fn resolve(vfs: &impl Vfs, store: &StateStore, path: &str) -> Result<(), ReconcileError> {
     let record = store
         .get(path)?
-        .ok_or_else(|| ReconcileError::NotConflicted(path.to_owned()))?;
+        .ok_or_else(|| ReconcileError::NotConflicted(PathBuf::from(path)))?;
     if !record.conflicted {
-        return Err(ReconcileError::NotConflicted(path.to_owned()));
+        return Err(ReconcileError::NotConflicted(PathBuf::from(path)));
     }
     let text = decode(path, &vfs.read(Path::new(&record.path))?)?;
     if merge::has_conflict_markers(&text) {
-        return Err(ReconcileError::MarkersRemain(path.to_owned()));
+        return Err(ReconcileError::MarkersRemain(PathBuf::from(path)));
     }
     advance_base(store, &record.path, &record.class, &text)?;
     Ok(())

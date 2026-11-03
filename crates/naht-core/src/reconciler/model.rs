@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use crate::state::StateError;
@@ -83,14 +85,14 @@ pub enum ReconcileError {
     #[error(transparent)]
     Vfs(#[from] VfsError),
     /// A text file holds bytes that are not valid UTF-8.
-    #[error("non-UTF-8 content at {0}")]
-    NonUtf8(String),
+    #[error("non-UTF-8 content at {}", .0.display())]
+    NonUtf8(PathBuf),
     /// `resolve` was asked about a path that is not conflicted.
-    #[error("no conflict to resolve at {0}")]
-    NotConflicted(String),
+    #[error("no conflict to resolve at {}", .0.display())]
+    NotConflicted(PathBuf),
     /// `resolve` was refused because the file still has conflict markers.
-    #[error("conflict markers remain at {0}")]
-    MarkersRemain(String),
+    #[error("conflict markers remain at {}", .0.display())]
+    MarkersRemain(PathBuf),
 }
 
 pub(super) fn patch(

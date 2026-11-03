@@ -11,7 +11,7 @@
 
 use std::env::{self, VarError};
 
-use naht_core::assets::{AssetError, AssetUploader};
+use naht_core::assets::{AssetError, AssetUploader, UploadFailure};
 use thiserror::Error;
 
 use crate::config::AssetsConfig;
@@ -77,7 +77,7 @@ fn isolated_on_scoped_thread<T: Send>(
 ) -> Result<T, AssetError> {
     thread::scope(|scope| match scope.spawn(work).join() {
         Ok(result) => result,
-        Err(_) => Err(AssetError::Upload("upload thread panicked".to_owned())),
+        Err(_) => Err(AssetError::Upload(UploadFailure::WorkerPanicked)),
     })
 }
 
@@ -97,18 +97,16 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         .header("x-api-key", api_key)
         .multipart(form)
         .send()
-        .map_err(|error| AssetError::Upload(error.to_string()))?;
+        .map_err(|error| AssetError::Upload(UploadFailure::Transport(error.to_string())))?;
     if !response.status().is_success() {
-        return Err(AssetError::Upload(format!(
-            "Open Cloud returned {}",
-            response.status()
+        return Err(AssetError::Upload(UploadFailure::Rejected(
+            response.status().as_u16(),
         )));
     }
     let body: serde_json::Value = response
         .json()
-        .map_err(|error| AssetError::Upload(error.to_string()))?;
-    extract_asset_id(&body)
-        .ok_or_else(|| AssetError::Upload("no asset id in the Open Cloud response".to_owned()))
+        .map_err(|error| AssetError::Upload(UploadFailure::Unreadable(error.to_string())))?;
+    extract_asset_id(&body).ok_or(AssetError::Upload(UploadFailure::MissingAssetId))
 }
 
 /// A coarse asset-type guess from the file extension; refined as more types are supported.
