@@ -39,7 +39,7 @@ impl From<&Failure> for Exit {
         match failure {
             Failure::Config(_) => Self::Config,
             Failure::Logging(_) => Self::Software,
-            Failure::Terminal(_) => Self::IoError,
+            Failure::Terminal(_) | Failure::SignalWait(_) => Self::IoError,
             Failure::Command(command) => Self::from(command),
         }
     }

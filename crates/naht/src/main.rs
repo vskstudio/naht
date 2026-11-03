@@ -159,7 +159,9 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
                 "watching {}, rebuilding on change",
                 path.display()
             ))?;
-            std::future::pending::<()>().await;
+            naht::shutdown::terminated()
+                .await
+                .map_err(Failure::SignalWait)?;
         }
         Command::Build {
             path,

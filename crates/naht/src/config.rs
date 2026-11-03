@@ -13,6 +13,7 @@ use thiserror::Error;
 
 /// The project's config file name, read from the project root.
 pub const PROJECT_FILE: &str = "naht.toml";
+pub const INTERNAL_DIR: &str = ".naht";
 
 /// The default localhost port the daemon listens on when none is configured.
 pub const DEFAULT_PORT: u16 = 34872;
@@ -157,8 +158,6 @@ impl Config {
         if other.assets.api_key_env.is_some() {
             self.assets.api_key_env = other.assets.api_key_env;
         }
-        // The tree is taken whole from the layer that defines one (a project's layout is not merged
-        // field-by-field with a machine layer's).
         if !other.tree.is_empty() {
             self.tree = other.tree;
         }
@@ -224,14 +223,12 @@ mod tests {
     #[test]
     fn project_layer_overrides_the_machine_layer_field_by_field() {
         let dir = tempfile::tempdir().unwrap();
-        // Per-machine layer: a name and a port.
         let home = dir.path().join("home-config.toml");
         std::fs::write(
             &home,
             "[project]\nname = \"machine\"\n[serve]\nport = 9000\n",
         )
         .unwrap();
-        // Project layer: overrides the name, leaves the port to fall through from the machine layer.
         std::fs::write(
             dir.path().join(PROJECT_FILE),
             "[project]\nname = \"project\"\n",
@@ -247,7 +244,6 @@ mod tests {
     fn name_falls_back_to_directory_when_unset() {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::load_from(None, dir.path()).unwrap();
-        // No file: the name is the directory's, and the port is the default.
         let expected = dir.path().file_name().unwrap().to_str().unwrap();
         assert_eq!(config.project_name(dir.path()), expected);
         assert_eq!(config.port(), DEFAULT_PORT);
@@ -259,11 +255,11 @@ mod tests {
         std::fs::write(dir.path().join(PROJECT_FILE), "[serve]\nport = 5000\n").unwrap();
         let config = Config::load_from(None, dir.path()).unwrap();
 
-        assert_eq!(config.resolve_port(Some(6000)).unwrap(), 6000); // CLI wins
-        assert_eq!(config.resolve_port(None).unwrap(), 5000); // then naht.toml
+        assert_eq!(config.resolve_port(Some(6000)).unwrap(), 6000);
+        assert_eq!(config.resolve_port(None).unwrap(), 5000);
 
         let bare = Config::default();
-        assert_eq!(bare.resolve_port(None).unwrap(), DEFAULT_PORT); // then the default
+        assert_eq!(bare.resolve_port(None).unwrap(), DEFAULT_PORT);
     }
 
     #[test]

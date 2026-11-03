@@ -6,22 +6,42 @@
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
 //! decisions are delegated to the [`Session`]; this layer is pure transport.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
+use axum::error_handling::HandleErrorLayer;
+use axum::extract::DefaultBodyLimit;
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use naht_core::protocol::{
-    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong,
+    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong, ProtocolError,
+    ServerInfo,
 };
+use naht_core::vfs::VfsError;
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
+use tokio::task::JoinError;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tower::limit::ConcurrencyLimitLayer;
+use tower::timeout::TimeoutLayer;
+use tower::timeout::error::Elapsed;
+use tower::{BoxError, ServiceBuilder};
+use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::session::Session;
+use crate::session::{Session, SessionError};
+
+const BODY_LIMIT: usize = 64 * 1024 * 1024;
+
+const MAX_IN_FLIGHT: usize = 64;
+
+const TIMEOUT_SLACK: Duration = Duration::from_secs(10);
 
 /// Shared server state: the session behind a mutex, plus notifiers that wake parked long-polls
 /// whenever a queue may have grown. Text patches and binary blobs ride separate channels, so each
@@ -31,6 +51,8 @@ pub struct AppState {
     patches_ready: Notify,
     blobs_ready: Notify,
     long_poll: Duration,
+    shutdown: CancellationToken,
+    tasks: TaskTracker,
 }
 
 impl AppState {
@@ -41,7 +63,30 @@ impl AppState {
             patches_ready: Notify::new(),
             blobs_ready: Notify::new(),
             long_poll,
+            shutdown: CancellationToken::new(),
+            tasks: TaskTracker::new(),
         })
+    }
+
+    /// The token that stops the server and every tracked task once cancelled.
+    pub fn shutdown(&self) -> &CancellationToken {
+        &self.shutdown
+    }
+
+    /// The tracker every background task of the daemon is spawned on, so shutdown can await them.
+    pub fn tasks(&self) -> &TaskTracker {
+        &self.tasks
+    }
+
+    /// Run `work` on a blocking thread with the session locked, so disk and database access never
+    /// stalls the runtime or holds the lock across an await.
+    pub async fn with_session<T, F>(self: &Arc<Self>, work: F) -> Result<T, JoinError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Session) -> T + Send + 'static,
+    {
+        let state = Arc::clone(self);
+        tokio::task::spawn_blocking(move || work(&mut state.session.blocking_lock())).await
     }
 
     /// Lock the session for exclusive access. Used by the watcher to reconcile on a filesystem event.
@@ -70,12 +115,32 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/ack", post(ack))
         .route("/heartbeat", get(heartbeat))
         .route("/activity", get(activity))
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::<_, ()>::new(overload))
+                .layer(TimeoutLayer::new(state.long_poll + TIMEOUT_SLACK))
+                .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
+                .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
+                .layer(DefaultBodyLimit::max(BODY_LIMIT)),
+        )
         .with_state(state)
 }
 
-/// Serve `state` on an already-bound `listener` until the process ends.
+async fn overload(error: BoxError) -> StatusCode {
+    if error.is::<Elapsed>() {
+        StatusCode::REQUEST_TIMEOUT
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+/// Serve `state` on an already-bound `listener` until the shutdown token is cancelled, then let
+/// in-flight requests finish.
 pub async fn serve(listener: tokio::net::TcpListener, state: Arc<AppState>) -> std::io::Result<()> {
-    axum::serve(listener, router(state)).await
+    let shutdown = state.shutdown.clone();
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown.cancelled_owned())
+        .await
 }
 
 #[derive(Deserialize)]
@@ -84,34 +149,37 @@ struct InfoQuery {
 }
 
 async fn info(State(state): State<Arc<AppState>>, Query(query): Query<InfoQuery>) -> Response {
-    let mut session = state.session.lock().await;
-    if let Some(expected) = session.serve_place_id()
-        && query.place_id != Some(expected)
-    {
-        tracing::warn!(
-            target: "naht::server",
-            expected,
-            reported = ?query.place_id,
-            "handshake rejected: place id mismatch"
-        );
-        return (
-            StatusCode::FORBIDDEN,
-            format!(
-                "place id mismatch: project serves {expected}, plugin reported {:?}",
-                query.place_id
-            ),
-        )
-            .into_response();
-    }
-    if let Err(error) = session.rescan() {
-        return internal_error(&error);
-    }
-    let info = session.info();
-    drop(session);
+    let outcome = state
+        .with_session(move |session| handshake(session, query.place_id))
+        .await;
+    let info = match outcome {
+        Ok(Ok(info)) => info,
+        Ok(Err(rejection)) => return rejection.into_response(),
+        Err(error) => return Rejection::Blocking(error).into_response(),
+    };
     tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
     state.patches_ready.notify_waiters();
     state.blobs_ready.notify_waiters();
     msgpack(&info)
+}
+
+fn handshake(session: &mut Session, place_id: Option<u64>) -> Result<ServerInfo, Rejection> {
+    if let Some(expected) = session.serve_place_id()
+        && place_id != Some(expected)
+    {
+        tracing::warn!(
+            target: "naht::server",
+            expected,
+            reported = ?place_id,
+            "handshake rejected: place id mismatch"
+        );
+        return Err(Rejection::PlaceMismatch {
+            expected,
+            reported: place_id,
+        });
+    }
+    session.rescan()?;
+    Ok(session.info())
 }
 
 /// The long-poll cursor query, shared by the `/patches` and `/blobs` channels.
@@ -123,13 +191,7 @@ struct CursorQuery {
 async fn patches(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
     let cursor = query.cursor.unwrap_or(0);
 
-    // Enrol as a waiter *before* checking the queue. `enable()` registers now, so a change that
-    // enqueues and notifies between our check and our await is captured, not lost — otherwise the
-    // future only registers when first polled and the wakeup would slip through, parking us for the
-    // full timeout despite a patch being ready.
-    let notified = state.patches_ready.notified();
-    tokio::pin!(notified);
-    notified.as_mut().enable();
+    let notified = enrol_waiter(&state.patches_ready);
     {
         let session = state.session.lock().await;
         if session.has_patches_after(cursor) {
@@ -145,38 +207,39 @@ async fn patches(State(state): State<Arc<AppState>>, Query(query): Query<CursorQ
 async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     let batch: ChangeBatch = match protocol::from_msgpack(&body) {
         Ok(batch) => batch,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let mut session = state.session.lock().await;
+    let outcome = state
+        .with_session(move |session| apply_text_batch(session, batch))
+        .await;
+    let count = match outcome {
+        Ok(Ok(count)) => count,
+        Ok(Err(rejection)) => return rejection.into_response(),
+        Err(error) => return Rejection::Blocking(error).into_response(),
+    };
+    tracing::info!(target: "naht::server", count, "changes applied from Studio");
+    state.patches_ready.notify_waiters();
+    state.blobs_ready.notify_waiters();
+    StatusCode::OK.into_response()
+}
+
+fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, Rejection> {
     for change in &batch.changes {
         let path = match change {
             naht_core::protocol::Change::Upsert { path, .. }
             | naht_core::protocol::Change::Delete { path } => path,
         };
-        if let Err(error) = session.validate_path(path) {
-            return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
-        }
+        session.validate_path(path)?;
     }
     let count = batch.changes.len();
-    if let Err(error) = session.apply_changes(batch.changes) {
-        return internal_error(&error);
-    }
-    drop(session);
-    tracing::info!(target: "naht::server", count, "changes applied from Studio");
-    state.patches_ready.notify_waiters();
-    // A text batch now also settles the blob channel (Stage 16), so wake parked blob long-polls.
-    state.blobs_ready.notify_waiters();
-    StatusCode::OK.into_response()
+    session.apply_changes(batch.changes)?;
+    Ok(count)
 }
 
 async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
     let cursor = query.cursor.unwrap_or(0);
 
-    // Same parked-waiter discipline as `/patches`: enrol before checking the queue so a blob that
-    // enqueues between the check and the await is captured, not lost.
-    let notified = state.blobs_ready.notified();
-    tokio::pin!(notified);
-    notified.as_mut().enable();
+    let notified = enrol_waiter(&state.blobs_ready);
     {
         let session = state.session.lock().await;
         if session.has_blobs_after(cursor) {
@@ -192,35 +255,47 @@ async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQue
 async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     let batch: BlobChangeBatch = match protocol::from_msgpack(&body) {
         Ok(batch) => batch,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let mut session = state.session.lock().await;
-    for change in &batch.changes {
-        if let Err(error) = session.validate_path(&change.path) {
-            return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
-        }
-    }
-    let count = batch.changes.len();
-    if let Err(error) = session.apply_blob_changes(batch.changes) {
-        return internal_error(&error);
-    }
-    drop(session);
+    let outcome = state
+        .with_session(move |session| apply_blob_batch(session, batch))
+        .await;
+    let count = match outcome {
+        Ok(Ok(count)) => count,
+        Ok(Err(rejection)) => return rejection.into_response(),
+        Err(error) => return Rejection::Blocking(error).into_response(),
+    };
     tracing::info!(target: "naht::server", count, "blob changes applied from Studio");
     state.blobs_ready.notify_waiters();
     StatusCode::OK.into_response()
 }
 
+fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usize, Rejection> {
+    for change in &batch.changes {
+        session.validate_path(&change.path)?;
+    }
+    let count = batch.changes.len();
+    session.apply_blob_changes(batch.changes)?;
+    Ok(count)
+}
+
 async fn ack(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     let ack: Ack = match protocol::from_msgpack(&body) {
         Ok(ack) => ack,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let mut session = state.session.lock().await;
-    if let Err(error) = session.ack(&ack.paths) {
-        return internal_error(&error);
+    let count = ack.paths.len();
+    let outcome = state
+        .with_session(move |session| session.ack(&ack.paths))
+        .await;
+    match outcome {
+        Ok(Ok(())) => {
+            tracing::debug!(target: "naht::server", count, "patches acked");
+            StatusCode::OK.into_response()
+        }
+        Ok(Err(error)) => Rejection::from(error).into_response(),
+        Err(error) => Rejection::Blocking(error).into_response(),
     }
-    tracing::debug!(target: "naht::server", count = ack.paths.len(), "patches acked");
-    StatusCode::OK.into_response()
 }
 
 async fn heartbeat(State(state): State<Arc<AppState>>) -> Response {
@@ -255,10 +330,98 @@ fn blob_batch(session: &Session, cursor: u64) -> Response {
 fn msgpack<T: serde::Serialize>(value: &T) -> Response {
     match protocol::to_msgpack(value) {
         Ok(bytes) => ([(header::CONTENT_TYPE, "application/msgpack")], bytes).into_response(),
-        Err(error) => internal_error(&error),
+        Err(error) => Rejection::Encode(error).into_response(),
     }
 }
 
-fn internal_error(error: &impl std::fmt::Display) -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+fn enrol_waiter(notify: &Notify) -> Pin<Box<impl Future<Output = ()> + '_>> {
+    let mut notified = Box::pin(notify.notified());
+    notified.as_mut().enable();
+    notified
+}
+
+#[derive(Debug, thiserror::Error)]
+enum Rejection {
+    #[error("malformed message: {0}")]
+    Malformed(#[source] ProtocolError),
+    #[error(transparent)]
+    InvalidPath(#[from] VfsError),
+    #[error("place id mismatch: project serves {expected}, plugin reported {reported:?}")]
+    PlaceMismatch {
+        expected: u64,
+        reported: Option<u64>,
+    },
+    #[error("cannot encode the response")]
+    Encode(#[source] ProtocolError),
+    #[error("session operation failed")]
+    Session(#[from] SessionError),
+    #[error("blocking task failed")]
+    Blocking(#[source] JoinError),
+}
+
+impl Rejection {
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::Malformed(_) | Self::InvalidPath(_) => StatusCode::BAD_REQUEST,
+            Self::PlaceMismatch { .. } => StatusCode::FORBIDDEN,
+            Self::Encode(_) | Self::Session(_) | Self::Blocking(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        }
+    }
+}
+
+impl IntoResponse for Rejection {
+    fn into_response(self) -> Response {
+        let status = self.status();
+        if status.is_server_error() {
+            tracing::error!(target: "naht::server", status = status.as_u16(), error = ?self, "request failed");
+            return (status, "internal server error").into_response();
+        }
+        (status, self.to_string()).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use axum::body::Body;
+    use axum::http::Request;
+    use naht_core::state::StateStore;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    fn test_state() -> Arc<AppState> {
+        let store = StateStore::open_in_memory().unwrap();
+        let session = Session::new(PathBuf::from("."), store, "demo", None, false);
+        AppState::new(session, Duration::from_secs(1))
+    }
+
+    async fn post_blobs_status(len: usize) -> StatusCode {
+        let body = Body::from(vec![0xc1_u8; len]);
+        let request = Request::post("/blobs").body(body).unwrap();
+        router(test_state())
+            .oneshot(request)
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn blob_bodies_past_the_extractor_default_are_read() {
+        assert_eq!(
+            post_blobs_status(3 * 1024 * 1024).await,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn blob_bodies_over_the_limit_are_refused() {
+        assert_eq!(
+            post_blobs_status(BODY_LIMIT + 1).await,
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
 }
