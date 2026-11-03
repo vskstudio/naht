@@ -4,6 +4,7 @@ use naht::commands;
 use naht::config::Config;
 use naht_core::reconciler;
 use naht_core::vfs::{DiskVfs, RootedVfs};
+use std::fs;
 
 #[test]
 fn init_scaffolds_a_working_project() {
@@ -13,7 +14,7 @@ fn init_scaffolds_a_working_project() {
 
     assert!(root.join("naht.toml").exists());
     assert!(root.join("src").join("Hello.luau").exists());
-    let gitignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+    let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
     assert!(gitignore.lines().any(|line| line.trim() == "/.naht"));
 
     let config = Config::load(&root).unwrap();
@@ -35,8 +36,8 @@ fn init_refuses_to_overwrite_an_existing_project() {
 fn init_from_rojo_converts_name_and_place_id() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("game");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
         root.join("default.project.json"),
         r#"{ "name": "MyGame", "servePlaceIds": [123456], "tree": { "$className": "DataModel" } }"#,
     )

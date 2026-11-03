@@ -2,6 +2,7 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use naht::server;
 use naht::server::AppState;
 use naht::session::Session;
 use naht_core::binary::BlobInstance;
@@ -9,6 +10,9 @@ use naht_core::protocol::{
     self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, SyncActivity,
 };
 use naht_core::state::StateStore;
+use serde::de::DeserializeOwned;
+use std::fs;
+use tokio::net::TcpListener;
 
 pub struct Harness {
     pub base: String,
@@ -29,12 +33,10 @@ impl Harness {
         let session = Session::new(root.clone(), store, "demo", serve_place_id, terrain_sync);
         let state = AppState::new(session, Duration::from_millis(300));
 
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .unwrap();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let _ = naht::server::serve(listener, state).await;
+            let _ = server::serve(listener, state).await;
         });
 
         Self {
@@ -46,15 +48,15 @@ impl Harness {
     }
 
     pub fn write(&self, rel: &str, content: impl AsRef<[u8]>) {
-        std::fs::write(self.root.join(rel), content).unwrap();
+        fs::write(self.root.join(rel), content).unwrap();
     }
 
     pub fn read(&self, rel: &str) -> String {
-        std::fs::read_to_string(self.root.join(rel)).unwrap()
+        fs::read_to_string(self.root.join(rel)).unwrap()
     }
 
     pub fn read_bytes(&self, rel: &str) -> Vec<u8> {
-        std::fs::read(self.root.join(rel)).unwrap()
+        fs::read(self.root.join(rel)).unwrap()
     }
 
     pub async fn blobs(&self, cursor: u64) -> BlobPatchBatch {
@@ -147,7 +149,7 @@ impl Harness {
     }
 }
 
-pub async fn decode<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> T {
+pub async fn decode<T: DeserializeOwned>(resp: reqwest::Response) -> T {
     let bytes = resp.bytes().await.unwrap();
     protocol::from_msgpack(&bytes).unwrap()
 }

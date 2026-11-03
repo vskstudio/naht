@@ -2,6 +2,8 @@ use std::path::{Component, Path, PathBuf};
 
 use super::project_path::validate_project_path;
 use super::{DirEntry, EntryKind, Vfs, VfsError};
+use std::fs;
+use std::io::ErrorKind;
 
 /// A [`Vfs`] adapter that presents `inner` in coordinates relative to a fixed `root`.
 ///
@@ -35,12 +37,12 @@ impl<V: Vfs> RootedVfs<V> {
                     return Err(VfsError::InvalidPath(path.display().to_string()));
                 }
             }
-            match std::fs::symlink_metadata(&current) {
+            match fs::symlink_metadata(&current) {
                 Ok(metadata) if metadata.file_type().is_symlink() => {
                     return Err(VfsError::Symlink(current));
                 }
                 Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) if error.kind() == ErrorKind::NotFound => break,
                 Err(source) => {
                     return Err(VfsError::Io {
                         path: current,

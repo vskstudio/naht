@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::binary::{BlobInstance, BlobPatch};
 use crate::reconciler::{Direction, Patch};
+use rmp_serde::decode;
+use rmp_serde::encode;
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
 /// it so an incompatible plugin/daemon pair fails loudly instead of misreading each other.
@@ -152,10 +154,10 @@ pub struct Ack {
 pub enum ProtocolError {
     /// The value could not be encoded to MessagePack.
     #[error("protocol encode failed: {0}")]
-    Encode(#[from] rmp_serde::encode::Error),
+    Encode(#[from] encode::Error),
     /// The bytes could not be decoded from MessagePack.
     #[error("protocol decode failed: {0}")]
-    Decode(#[from] rmp_serde::decode::Error),
+    Decode(#[from] decode::Error),
 }
 
 /// Encode a protocol message to MessagePack, with field names preserved.

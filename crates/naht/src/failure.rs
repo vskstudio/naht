@@ -7,6 +7,7 @@ use naht::commands::CommandError;
 use naht::config::ConfigError;
 use naht::output::Output;
 use thiserror::Error;
+use tracing::subscriber::SetGlobalDefaultError;
 
 #[derive(Debug, Error)]
 pub(crate) enum Failure {
@@ -15,7 +16,7 @@ pub(crate) enum Failure {
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error("cannot start logging")]
-    Logging(#[source] tracing::subscriber::SetGlobalDefaultError),
+    Logging(#[source] SetGlobalDefaultError),
     #[error("cannot write to the terminal")]
     Terminal(#[from] io::Error),
     #[error("cannot wait for a termination signal")]

@@ -32,6 +32,8 @@ use naht::output::Output;
 
 use crate::exit::Exit;
 use crate::failure::Failure;
+use naht::logging;
+use naht::shutdown;
 
 /// Bidirectional, conflict-safe filesystem sync for Roblox Studio.
 #[derive(Parser)]
@@ -116,7 +118,7 @@ enum Command {
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     let mut out = Output::terminal();
-    let exit = match naht::logging::init(cli.verbose) {
+    let exit = match logging::init(cli.verbose) {
         Ok(()) => match dispatch(cli.command, &mut out).await {
             Ok(()) => Exit::Success,
             Err(failure) => {
@@ -159,9 +161,7 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
                 "watching {}, rebuilding on change",
                 path.display()
             ))?;
-            naht::shutdown::terminated()
-                .await
-                .map_err(Failure::SignalWait)?;
+            shutdown::terminated().await.map_err(Failure::SignalWait)?;
         }
         Command::Build {
             path,

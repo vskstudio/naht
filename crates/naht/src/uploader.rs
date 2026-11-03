@@ -15,6 +15,10 @@ use naht_core::assets::{AssetError, AssetUploader};
 use thiserror::Error;
 
 use crate::config::AssetsConfig;
+use reqwest::blocking::Client;
+use reqwest::blocking::multipart::Form;
+use reqwest::blocking::multipart::Part;
+use std::thread;
 
 const ASSETS_ENDPOINT: &str = "https://apis.roblox.com/assets/v1/assets";
 
@@ -64,7 +68,7 @@ impl AssetUploader for OpenCloudUploader {
 fn isolated_on_scoped_thread<T: Send>(
     work: impl FnOnce() -> Result<T, AssetError> + Send,
 ) -> Result<T, AssetError> {
-    std::thread::scope(|scope| match scope.spawn(work).join() {
+    thread::scope(|scope| match scope.spawn(work).join() {
         Ok(result) => result,
         Err(_) => Err(AssetError::Upload("upload thread panicked".to_owned())),
     })
@@ -76,14 +80,12 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         "displayName": name,
         "description": "Uploaded by Naht",
     });
-    let form = reqwest::blocking::multipart::Form::new()
-        .text("request", request.to_string())
-        .part(
-            "fileContent",
-            reqwest::blocking::multipart::Part::bytes(content.to_vec()).file_name(name.to_owned()),
-        );
+    let form = Form::new().text("request", request.to_string()).part(
+        "fileContent",
+        Part::bytes(content.to_vec()).file_name(name.to_owned()),
+    );
 
-    let response = reqwest::blocking::Client::new()
+    let response = Client::new()
         .post(ASSETS_ENDPOINT)
         .header("x-api-key", api_key)
         .multipart(form)

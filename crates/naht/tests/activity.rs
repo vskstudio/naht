@@ -4,9 +4,12 @@ use naht::session::Session;
 use naht_core::protocol::{Change, EventKind, Outcome};
 use naht_core::reconciler::Direction;
 use naht_core::state::StateStore;
+use std::fs;
+use std::path::Path;
+use std::slice;
 
-fn session_at(root: &std::path::Path) -> Session {
-    std::fs::create_dir_all(root.join("src")).unwrap();
+fn session_at(root: &Path) -> Session {
+    fs::create_dir_all(root.join("src")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     Session::new(root, store, "demo", None, true)
 }
@@ -15,7 +18,7 @@ fn session_at(root: &std::path::Path) -> Session {
 fn ack_records_a_push_event_and_clears_pending() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = session_at(dir.path());
-    std::fs::write(dir.path().join("src").join("A.luau"), "return 1").unwrap();
+    fs::write(dir.path().join("src").join("A.luau"), "return 1").unwrap();
     s.rescan().unwrap();
 
     let before = s.activity(0);
@@ -24,7 +27,7 @@ fn ack_records_a_push_event_and_clears_pending() {
 
     let (_, patches) = s.take_patches(0);
     let path = patches[0].path.clone();
-    s.ack(std::slice::from_ref(&path)).unwrap();
+    s.ack(slice::from_ref(&path)).unwrap();
 
     let after = s.activity(0);
     assert_eq!(after.pending, 0);

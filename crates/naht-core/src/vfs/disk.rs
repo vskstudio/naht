@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use super::{DirEntry, EntryKind, Vfs, VfsError};
+use std::fs;
 
 /// The real-disk [`Vfs`] used by the daemon.
 #[derive(Debug, Clone)]
@@ -23,14 +24,14 @@ impl Default for DiskVfs {
 
 impl Vfs for DiskVfs {
     fn read(&self, path: &Path) -> Result<Vec<u8>, VfsError> {
-        std::fs::read(path).map_err(|source| VfsError::Io {
+        fs::read(path).map_err(|source| VfsError::Io {
             path: path.to_path_buf(),
             source,
         })
     }
 
     fn list(&self, path: &Path) -> Result<Vec<DirEntry>, VfsError> {
-        let read_dir = std::fs::read_dir(path).map_err(|source| VfsError::Io {
+        let read_dir = fs::read_dir(path).map_err(|source| VfsError::Io {
             path: path.to_path_buf(),
             source,
         })?;
@@ -60,33 +61,33 @@ impl Vfs for DiskVfs {
 
     fn write(&mut self, path: &Path, contents: &[u8]) -> Result<(), VfsError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| VfsError::Io {
+            fs::create_dir_all(parent).map_err(|source| VfsError::Io {
                 path: parent.to_path_buf(),
                 source,
             })?;
         }
-        std::fs::write(path, contents).map_err(|source| VfsError::Io {
+        fs::write(path, contents).map_err(|source| VfsError::Io {
             path: path.to_path_buf(),
             source,
         })
     }
 
     fn create_dir(&mut self, path: &Path) -> Result<(), VfsError> {
-        std::fs::create_dir_all(path).map_err(|source| VfsError::Io {
+        fs::create_dir_all(path).map_err(|source| VfsError::Io {
             path: path.to_path_buf(),
             source,
         })
     }
 
     fn remove(&mut self, path: &Path) -> Result<(), VfsError> {
-        let metadata = std::fs::symlink_metadata(path).map_err(|source| VfsError::Io {
+        let metadata = fs::symlink_metadata(path).map_err(|source| VfsError::Io {
             path: path.to_path_buf(),
             source,
         })?;
         let result = if metadata.is_dir() {
-            std::fs::remove_dir_all(path)
+            fs::remove_dir_all(path)
         } else {
-            std::fs::remove_file(path)
+            fs::remove_file(path)
         };
         result.map_err(|source| VfsError::Io {
             path: path.to_path_buf(),
@@ -99,7 +100,7 @@ impl Vfs for DiskVfs {
     }
 
     fn kind(&self, path: &Path) -> Result<EntryKind, VfsError> {
-        let metadata = std::fs::symlink_metadata(path).map_err(|source| VfsError::Io {
+        let metadata = fs::symlink_metadata(path).map_err(|source| VfsError::Io {
             path: path.to_path_buf(),
             source,
         })?;

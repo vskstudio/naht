@@ -7,8 +7,11 @@ use std::sync::{Arc, Mutex};
 
 use naht::session::Session;
 use naht_core::state::StateStore;
+use std::fmt::Debug;
+use std::fs;
 use tracing::Level;
 use tracing::field::{Field, Visit};
+use tracing::subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 
@@ -18,7 +21,7 @@ struct Capture(Arc<Mutex<Vec<(Level, String)>>>);
 struct MessageVisitor(Option<String>);
 
 impl Visit for MessageVisitor {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+    fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
         if field.name() == "message" {
             self.0 = Some(format!("{value:?}"));
         }
@@ -42,8 +45,8 @@ impl<S: tracing::Subscriber> Layer<S> for Capture {
 fn a_sync_emits_exactly_one_info_patch_event() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("src").join("A.luau"), "return 1").unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("A.luau"), "return 1").unwrap();
 
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     let mut session = Session::new(root, store, "demo", None, true);
@@ -51,7 +54,7 @@ fn a_sync_emits_exactly_one_info_patch_event() {
     let capture = Capture::default();
     let events = Arc::clone(&capture.0);
     let subscriber = tracing_subscriber::registry().with(capture);
-    tracing::subscriber::with_default(subscriber, || {
+    subscriber::with_default(subscriber, || {
         session.rescan().unwrap();
     });
 

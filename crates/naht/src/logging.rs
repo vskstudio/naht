@@ -4,6 +4,9 @@
 //! surface it. Verbosity comes from `-v` flags, but an explicit `NAHT_LOG`/`RUST_LOG` env filter
 //! always wins, so an operator can dial in per-target levels without touching flags.
 
+use std::env;
+use std::io;
+use tracing::subscriber;
 use tracing::subscriber::SetGlobalDefaultError;
 use tracing_subscriber::EnvFilter;
 
@@ -29,16 +32,16 @@ fn resolve_directive(verbose: u8, naht_log: Option<String>, rust_log: Option<Str
 pub fn init(verbose: u8) -> Result<(), SetGlobalDefaultError> {
     let directive = resolve_directive(
         verbose,
-        std::env::var("NAHT_LOG").ok(),
-        std::env::var("RUST_LOG").ok(),
+        env::var("NAHT_LOG").ok(),
+        env::var("RUST_LOG").ok(),
     );
     let filter = EnvFilter::try_new(&directive)
         .unwrap_or_else(|_| EnvFilter::new(resolve_directive(verbose, None, None)));
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+        .with_writer(io::stderr)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)
+    subscriber::set_global_default(subscriber)
 }
 
 #[cfg(test)]

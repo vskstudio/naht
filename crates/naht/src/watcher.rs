@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::config::INTERNAL_DIR;
 use crate::server::AppState;
+use tokio::runtime::Handle;
 
 /// Why the filesystem watcher could not start watching the project.
 #[derive(Debug, Error)]
@@ -25,7 +26,7 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 /// Start watching `root` recursively, reconciling into `state` on each debounced batch. The caller
 /// must hold onto the returned guard for as long as watching should continue.
 pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, WatchError> {
-    let runtime = tokio::runtime::Handle::current();
+    let runtime = Handle::current();
     let watched_root = root.to_path_buf();
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         match result {
@@ -74,6 +75,7 @@ fn is_project_event(root: &Path, event: &DebouncedEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
     use std::time::Instant;
 
@@ -82,8 +84,10 @@ mod tests {
     use notify_debouncer_full::notify::event::{AccessKind, AccessMode};
 
     use super::*;
+    use crate::commands;
     use crate::config::Config;
     use crate::session::Session;
+    use tokio::time;
 
     fn event_at(path: &str) -> DebouncedEvent {
         event_of(EventKind::Any, path)
@@ -107,7 +111,7 @@ mod tests {
     async fn an_idle_daemon_emits_no_batch() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        crate::commands::init(&root, false).unwrap();
+        commands::init(&root, false).unwrap();
         let config = Config::load(&root).unwrap();
         let store = StateStore::open(&root.join(INTERNAL_DIR).join("state.db")).unwrap();
         let session = Session::new(
@@ -122,17 +126,17 @@ mod tests {
         let _watch = spawn(&root, Arc::clone(&state)).unwrap();
         state.session_lock().await.rescan().unwrap();
         let (before_write, _) = state.session_lock().await.take_patches(0);
-        std::fs::write(root.join("src").join("Added.luau"), "return {}").unwrap();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        fs::write(root.join("src").join("Added.luau"), "return {}").unwrap();
+        let deadline = time::Instant::now() + Duration::from_secs(5);
         while state.session_lock().await.take_patches(0).0 == before_write {
             assert!(
-                tokio::time::Instant::now() < deadline,
+                time::Instant::now() < deadline,
                 "watcher never reacted to a write"
             );
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            time::sleep(Duration::from_millis(50)).await;
         }
         let (cursor, _) = state.session_lock().await.take_patches(0);
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        time::sleep(Duration::from_secs(1)).await;
         let (after, _) = state.session_lock().await.take_patches(0);
         assert_eq!(cursor, after);
     }

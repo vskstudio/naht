@@ -10,6 +10,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use thiserror::Error;
+use toml::ser;
 
 /// Why a CLI or daemon command failed, one variant per failure a caller may tell apart. The
 /// message names the layer's failure; the binary joins the chain of causes when it reports it.
@@ -86,7 +87,7 @@ pub enum CommandError {
     },
     /// The migrated `naht.toml` could not be rendered.
     #[error("cannot render naht.toml")]
-    RenderConfig(#[source] toml::ser::Error),
+    RenderConfig(#[source] ser::Error),
     /// The state database could not be opened at its path.
     #[error("cannot open the state database `{}`", path.display())]
     StateOpen {

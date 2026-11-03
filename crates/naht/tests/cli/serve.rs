@@ -2,6 +2,7 @@ use naht::commands;
 use naht::config::Config;
 use naht_core::Snapshot;
 use naht_core::limits::Reason;
+use std::fs;
 
 #[test]
 fn serve_warning_honors_the_terrain_sync_config_flag() {
@@ -10,7 +11,7 @@ fn serve_warning_honors_the_terrain_sync_config_flag() {
         .with_child(Snapshot::new("MeshPart", "Rock"));
 
     let enabled_dir = tempfile::tempdir().unwrap();
-    std::fs::write(
+    fs::write(
         enabled_dir.path().join("naht.toml"),
         "[serve]\nterrain_sync = true\n",
     )
@@ -35,7 +36,7 @@ fn serve_warning_honors_the_terrain_sync_config_flag() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pull_fails_clearly_when_no_daemon_is_running() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("naht.toml"), "[serve]\nport = 1\n").unwrap();
+    fs::write(dir.path().join("naht.toml"), "[serve]\nport = 1\n").unwrap();
     let config = Config::load(dir.path()).unwrap();
     assert!(commands::pull(&config).await.is_err());
 }

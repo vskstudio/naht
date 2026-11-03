@@ -9,7 +9,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::env;
+use std::fs;
 use thiserror::Error;
+use toml::de;
 
 /// The project's config file name, read from the project root.
 pub const PROJECT_FILE: &str = "naht.toml";
@@ -37,7 +41,7 @@ pub enum ConfigError {
         path: PathBuf,
         /// The TOML error, with its position.
         #[source]
-        source: toml::de::Error,
+        source: de::Error,
     },
     /// Port 0 asks the OS for an arbitrary port, which a daemon cannot advertise.
     #[error("port must be between 1 and 65535, got 0")]
@@ -77,7 +81,7 @@ pub struct TreeNode {
     pub class: Option<String>,
     /// Property overrides, as TOML primitives (bool, integer, float, string).
     #[serde(default)]
-    pub properties: std::collections::BTreeMap<String, toml::Value>,
+    pub properties: BTreeMap<String, toml::Value>,
 }
 
 /// `[project]`, identity that cannot be inferred from the directory alone.
@@ -196,7 +200,7 @@ impl Config {
 
 /// Parse one config file; an absent file is an empty layer, not an error.
 fn read_layer(path: &Path) -> Result<Config, ConfigError> {
-    match std::fs::read_to_string(path) {
+    match fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text).map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
             source,
@@ -211,8 +215,8 @@ fn read_layer(path: &Path) -> Result<Config, ConfigError> {
 
 /// The per-machine config path, `~/.naht/config.toml`, if a home directory is known.
 fn home_config_path() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
         .map(|home| PathBuf::from(home).join(".naht").join("config.toml"))
 }
 
@@ -224,12 +228,12 @@ mod tests {
     fn project_layer_overrides_the_machine_layer_field_by_field() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home-config.toml");
-        std::fs::write(
+        fs::write(
             &home,
             "[project]\nname = \"machine\"\n[serve]\nport = 9000\n",
         )
         .unwrap();
-        std::fs::write(
+        fs::write(
             dir.path().join(PROJECT_FILE),
             "[project]\nname = \"project\"\n",
         )
@@ -252,7 +256,7 @@ mod tests {
     #[test]
     fn resolve_port_prefers_cli_then_config_then_default() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(PROJECT_FILE), "[serve]\nport = 5000\n").unwrap();
+        fs::write(dir.path().join(PROJECT_FILE), "[serve]\nport = 5000\n").unwrap();
         let config = Config::load_from(None, dir.path()).unwrap();
 
         assert_eq!(config.resolve_port(Some(6000)).unwrap(), 6000);
@@ -273,7 +277,7 @@ mod tests {
         assert!(!bare.assets.is_enabled());
 
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
+        fs::write(
             dir.path().join(PROJECT_FILE),
             "[assets]\nenabled = true\napi_key_env = \"NAHT_OPENCLOUD_KEY\"\n",
         )
@@ -289,7 +293,7 @@ mod tests {
     #[test]
     fn unknown_keys_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(PROJECT_FILE), "[project]\nbogus = 1\n").unwrap();
+        fs::write(dir.path().join(PROJECT_FILE), "[project]\nbogus = 1\n").unwrap();
         assert!(Config::load_from(None, dir.path()).is_err());
     }
 }
