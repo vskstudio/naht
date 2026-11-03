@@ -97,15 +97,21 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         .header("x-api-key", api_key)
         .multipart(form)
         .send()
-        .map_err(|error| AssetError::Upload(UploadFailure::Transport(error.to_string())))?;
+        .map_err(|error| {
+            AssetError::Upload(UploadFailure::Transport {
+                source: Box::new(error),
+            })
+        })?;
     if !response.status().is_success() {
         return Err(AssetError::Upload(UploadFailure::Rejected(
             response.status().as_u16(),
         )));
     }
-    let body: serde_json::Value = response
-        .json()
-        .map_err(|error| AssetError::Upload(UploadFailure::Unreadable(error.to_string())))?;
+    let body: serde_json::Value = response.json().map_err(|error| {
+        AssetError::Upload(UploadFailure::Unreadable {
+            source: Box::new(error),
+        })
+    })?;
     extract_asset_id(&body).ok_or(AssetError::Upload(UploadFailure::MissingAssetId))
 }
 

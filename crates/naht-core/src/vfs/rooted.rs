@@ -58,7 +58,10 @@ impl<V: Vfs> RootedVfs<V> {
     /// components. Symlinks are rejected even when they currently point inside the root because
     /// their target can change between validation and the subsequent filesystem operation.
     pub fn validate_path(&self, path: &str) -> Result<(), VfsError> {
-        validate_project_path(path).map_err(|error| VfsError::InvalidPath(error.to_string()))?;
+        validate_project_path(path).map_err(|source| VfsError::Malformed {
+            path: path.to_owned(),
+            source,
+        })?;
         self.checked_absolute(Path::new(path)).map(|_| ())
     }
 

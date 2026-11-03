@@ -34,6 +34,15 @@ pub enum VfsError {
     /// A protocol path is malformed or is not safely rooted.
     #[error("invalid project path: {0}")]
     InvalidPath(String),
+    /// A protocol path failed the project path rules.
+    #[error("invalid project path: {path}")]
+    Malformed {
+        /// The path as it was supplied.
+        path: String,
+        /// The rule the path broke.
+        #[source]
+        source: ProjectPathError,
+    },
     /// A path component is a symlink, so its destination cannot be proven to stay in the project.
     #[error("symlink path is not allowed: {0}")]
     Symlink(PathBuf),
