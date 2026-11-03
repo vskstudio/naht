@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::reconciler::{Direction, PatchKind};
+use crate::reconciler::{Classed, Direction, PatchKind};
 
 /// The filesystem extension a binary blob lives behind. A `*.terrain` file is the opaque voxel blob
 /// the daemon syncs (architecture §9); the convention mirrors the script-suffix conventions in the
@@ -20,6 +20,12 @@ pub struct BlobInstance {
     /// The raw bytes (encoded as a MessagePack binary blob, not an integer array).
     #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
+}
+
+impl Classed for BlobInstance {
+    fn class_name(&self) -> &str {
+        &self.class
+    }
 }
 
 impl BlobInstance {
