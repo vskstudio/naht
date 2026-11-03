@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::hash::content_hash;
-use crate::reconciler::{Direction, PatchKind, ReconcileError, Side, class_of, union_keys};
+use crate::reconciler::{
+    Direction, PatchKind, ReconcileError, Side, class_of, remove_fs_copy, union_keys, write_toward,
+};
 use crate::state::{InstanceRecord, StateStore};
 use crate::vfs::Vfs;
 
@@ -125,21 +127,16 @@ impl<V: Vfs> Pass<'_, V> {
         base_hash: Option<&str>,
         present: Side,
     ) -> Result<(), ReconcileError> {
-        let (toward_missing, toward_present) = match present {
-            Side::Fs => (Direction::ToStudio, Direction::ToFs),
-            Side::Studio => (Direction::ToFs, Direction::ToStudio),
-        };
+        let (toward_missing, toward_present) = present.directions();
         match base_hash {
             Some(base_hash) if content_hash(content) == base_hash => {
-                if matches!(present, Side::Fs) {
-                    self.vfs.remove(Path::new(path))?;
-                }
+                remove_fs_copy(self.vfs, path, present)?;
                 self.patches
                     .push(patch(path, class, toward_present, PatchKind::Delete, None));
                 self.store.remove(path)?;
             }
             None | Some(_) => {
-                self.materialize(path, content, toward_missing)?;
+                write_toward(self.vfs, path, content, toward_missing)?;
                 self.patches.push(patch(
                     path,
                     class,
@@ -149,18 +146,6 @@ impl<V: Vfs> Pass<'_, V> {
                 ));
                 advance(self.store, path, class, content)?;
             }
-        }
-        Ok(())
-    }
-
-    fn materialize(
-        &mut self,
-        path: &str,
-        content: &[u8],
-        toward: Direction,
-    ) -> Result<(), ReconcileError> {
-        if toward == Direction::ToFs {
-            self.vfs.write(Path::new(path), content)?;
         }
         Ok(())
     }

@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::model::TextInstance;
+use std::path::Path;
+
+use super::model::{Direction, TextInstance};
 use crate::state::InstanceRecord;
+use crate::vfs::{Vfs, VfsError};
 
 pub(crate) trait Classed {
     fn class_name(&self) -> &str;
@@ -17,6 +20,38 @@ impl Classed for TextInstance {
 pub(crate) enum Side {
     Fs,
     Studio,
+}
+
+impl Side {
+    pub(crate) fn directions(self) -> (Direction, Direction) {
+        match self {
+            Self::Fs => (Direction::ToStudio, Direction::ToFs),
+            Self::Studio => (Direction::ToFs, Direction::ToStudio),
+        }
+    }
+}
+
+pub(crate) fn write_toward<V: Vfs>(
+    vfs: &mut V,
+    path: &str,
+    content: &[u8],
+    toward: Direction,
+) -> Result<(), VfsError> {
+    if toward == Direction::ToFs {
+        vfs.write(Path::new(path), content)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_fs_copy<V: Vfs>(
+    vfs: &mut V,
+    path: &str,
+    present: Side,
+) -> Result<(), VfsError> {
+    if matches!(present, Side::Fs) {
+        vfs.remove(Path::new(path))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn class_of<Instance: Classed>(

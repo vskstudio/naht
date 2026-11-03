@@ -3,12 +3,12 @@ use std::path::Path;
 
 use crate::merge::{self, Merge};
 use crate::state::{InstanceRecord, StateStore};
-use crate::vfs::{Vfs, VfsError};
+use crate::vfs::Vfs;
 
 use super::model::{Direction, Patch, PatchKind, ReconcileError, TextInstance, patch};
 use super::persist::{advance_base, freeze};
 use super::scan::decode;
-use super::shared::{Side, class_of, union_keys};
+use super::shared::{Side, class_of, remove_fs_copy, union_keys, write_toward};
 
 /// Reconcile the filesystem and Studio sides against the persisted base.
 ///
@@ -195,22 +195,16 @@ impl<V: Vfs> Pass<'_, V> {
         base: Option<&str>,
         present: Side,
     ) -> Result<(), ReconcileError> {
-        let (toward_missing, toward_present) = match present {
-            Side::Fs => (Direction::ToStudio, Direction::ToFs),
-            Side::Studio => (Direction::ToFs, Direction::ToStudio),
-        };
-
+        let (toward_missing, toward_present) = present.directions();
         match base {
             Some(base) if content == base => {
-                if matches!(present, Side::Fs) {
-                    self.vfs.remove(Path::new(path))?;
-                }
+                remove_fs_copy(self.vfs, path, present)?;
                 self.patches
                     .push(patch(path, class, toward_present, PatchKind::Delete, None));
                 self.store.remove(path)?;
             }
             None | Some(_) => {
-                self.materialize(path, content, toward_missing)?;
+                write_toward(self.vfs, path, content.as_bytes(), toward_missing)?;
                 self.patches.push(patch(
                     path,
                     class,
@@ -220,18 +214,6 @@ impl<V: Vfs> Pass<'_, V> {
                 ));
                 advance_base(self.store, path, class, content)?;
             }
-        }
-        Ok(())
-    }
-
-    fn materialize(
-        &mut self,
-        path: &str,
-        content: &str,
-        toward: Direction,
-    ) -> Result<(), VfsError> {
-        if toward == Direction::ToFs {
-            self.vfs.write(Path::new(path), content.as_bytes())?;
         }
         Ok(())
     }
