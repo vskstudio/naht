@@ -101,7 +101,6 @@ impl Session {
             blob_queue: BTreeMap::new(),
             blob_next_seq: 0,
             activity: VecDeque::new(),
-            // 1-based: seq 0 is reserved as the "from the start" cursor sentinel (see `activity`).
             activity_next_seq: 1,
             project_name: project_name.into(),
             session_id: new_session_id(),
@@ -131,8 +130,6 @@ impl Session {
             .front()
             .map(|event| event.seq)
             .unwrap_or(self.activity_next_seq);
-        // The buffer is strictly ascending in `seq`, so binary-search the first event past `since`
-        // instead of scanning the already-seen prefix.
         let start = self.activity.partition_point(|event| event.seq <= since);
         let events = self.activity.range(start..).cloned().collect();
         SyncActivity {
@@ -185,9 +182,6 @@ impl Session {
         let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
         let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
         self.absorb(patches, &pre_base)?;
-        // Settle the blob channel too, exactly as `rescan()` does: a filesystem terrain change that
-        // landed between the last rescan and this batch is otherwise not reconciled until the next
-        // rescan. Idempotent when nothing changed, no spurious patch on every text edit.
         if self.terrain_sync {
             self.reconcile_blobs()?;
         }
@@ -268,8 +262,6 @@ impl Session {
                 continue;
             }
             match patch.direction {
-                // Already written to disk; the mirror already holds the Studio-side value that drove
-                // it, so the next reconcile sees the sides agree.
                 Direction::ToFs => {
                     self.record_event(
                         patch.path.clone(),
@@ -409,18 +401,11 @@ impl Session {
                         outcome,
                     );
                 }
-                // A merge also wrote the filesystem, so its base is correct and the mirror must
-                // advance to avoid a clobber on the next reconcile; treat it like a durable patch.
-                // Drop any earlier hold for this path so a later ack can't revert the base to stale
-                // pre-merge content. No `record_event` here: the paired `ToFs` patch for this same
-                // path already recorded the merge, so emitting again would double-count one sync.
                 Direction::ToStudio if fs_bound.contains(&patch.path) => {
                     self.unacked.remove(&patch.path);
                     self.mirror(&patch);
                     self.enqueue(patch);
                 }
-                // A pure Studio-bound patch is ack-gated: hold the base at the agreed content and do
-                // not touch the mirror, so it re-diffs until the plugin confirms it.
                 Direction::ToStudio => {
                     self.revert_base(&patch.path, pre_base)?;
                     self.unacked.insert(patch.path.clone(), patch.clone());

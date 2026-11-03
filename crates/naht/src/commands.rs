@@ -182,8 +182,6 @@ pub fn init(path: &Path, from_rojo: bool) -> Result<(), CommandError> {
         path: path.to_path_buf(),
         source,
     })?;
-    // Resolve the real directory so a default `.` names the project after the actual folder, not
-    // the literal ".".
     let root = canonical(path)?;
     let project_file = root.join(PROJECT_FILE);
     if project_file.exists() {
@@ -299,8 +297,6 @@ pub async fn pull(config: &Config) -> Result<(), CommandError> {
 /// place guard.
 pub async fn serve(config: Config, root: &Path, port: u16) -> Result<(), CommandError> {
     let root = canonical(root)?;
-    // Surface anything that can't round-trip live before the session starts (architecture §9). With
-    // terrain sync enabled the daemon drives the blob channel, so terrain is no longer flagged.
     if let Ok(snapshot) = mapper::snapshot_dir(&DiskVfs::new(), &root) {
         report_unsyncable(&serve_warnings(&config, &snapshot));
     }
@@ -339,8 +335,6 @@ pub fn package_plugin(src: &Path, output: &Path) -> Result<(), CommandError> {
             source,
         })?;
     tree.name = "Naht".to_string();
-    // Wrap so the `Naht` folder is the single top-level instance: `write_model` drops the wrapper and
-    // writes its children, so without the wrapper the modules would become separate top-level roots.
     let root = Snapshot::new("Folder", "plugin").with_child(tree);
 
     create_parent_dirs(output)?;
@@ -365,8 +359,6 @@ pub fn check_release_version(tag: &str) -> Result<(), CommandError> {
     Ok(())
 }
 
-// --- helpers -------------------------------------------------------------------------------------
-
 /// When `[assets]` is enabled, upload local asset files referenced by properties and rewrite them to
 /// `rbxassetid://…`. Disabled by default, so the common case does no network I/O and leaves every
 /// property untouched. Public so the disabled-path no-op is testable at the snapshot level.
@@ -378,8 +370,6 @@ pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<(), Comman
     let store = open_store(root)?;
     let uploader = OpenCloudUploader::from_config(&config.assets)?;
     let vfs = RootedVfs::new(root.to_path_buf(), DiskVfs::new());
-    // A failed upload pauses only that asset's path (architecture §8); the rest still resolve, so we
-    // report each failure rather than abort the whole build on the first bad asset.
     let failures = naht_core::assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot);
     if !failures.is_empty() {
         eprintln!("naht: {} asset(s) could not be uploaded:", failures.len());
@@ -499,8 +489,6 @@ fn collect_tree_nodes(
             .and_then(|v| v.as_str())
             .map(String::from);
         let leaf = instance.rsplit('/').next().unwrap_or(&instance);
-        // Skip a `$className` the convention already infers: a service named after itself, or a plain
-        // directory's `Folder`. Anything else is a genuine override Naht must record.
         let class = match object.get("$className").and_then(|v| v.as_str()) {
             Some(class) if class == leaf || class == "Folder" => None,
             Some(class) => Some(class.to_string()),
@@ -635,7 +623,6 @@ fn assemble_project_snapshot(
             path: root.to_path_buf(),
             source,
         })?;
-    // `.naht` holds internal state, not Roblox source, so keep it out of the artifact.
     snapshot.children.retain(|child| child.name != INTERNAL_DIR);
     let mut warnings = Vec::new();
 
@@ -835,10 +822,11 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop, Comm
         if changed.is_empty() {
             return;
         }
-        if let Some(out) = output_abs.as_deref()
-            && changed.iter().all(|path| path == out)
-        {
-            return; // our own write, don't rebuild ourselves into a loop
+        let only_own_output = output_abs
+            .as_deref()
+            .is_some_and(|out| changed.iter().all(|path| path == out));
+        if only_own_output {
+            return;
         }
         if let Err(error) = build_once(&root, &output) {
             tracing::warn!(target: "naht::build", %error, "rebuild failed");
