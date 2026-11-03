@@ -2,7 +2,7 @@
 title: Concepts fondamentaux
 icon: waypoints
 accent: studio
-desc: "Les cinq idées — les pairs, la base persistée, les snapshots, la convention et le jamais-destructeur — qui expliquent tout le reste."
+desc: "Les cinq idées (les pairs, la base persistée, les snapshots, la convention et le jamais-destructeur) qui expliquent tout le reste."
 ---
 
 <script>
@@ -33,25 +33,25 @@ Chaque décision de synchronisation est une comparaison *par rapport à la base*
 
 Parce que la base est persistée, redémarrer le démon ou reconnecter Studio ne **perd pas** le
 contexte. Naht re-diffe par rapport à l'état réel au lieu de supposer que tout est neuf. C'est la
-chose que Rojo et Argon ne gardent qu'en mémoire — et la raison pour laquelle ils réécrasent au
+chose que Rojo et Argon ne gardent qu'en mémoire, et la raison pour laquelle ils réécrasent au
 redémarrage.
 
 <Callout type="tip">
 
 « 3 voies » signifie trois entrées : la **base** (ce sur quoi on était d'accord en dernier), la
 version **FS**, et la version **Studio**. Avec les trois, Naht peut déterminer *qui a réellement
-changé quoi* — impossible avec seulement les deux versions actuelles.
+changé quoi*. Impossible avec seulement les deux versions actuelles.
 
 </Callout>
 
 ## 3. Snapshots et réconciliation
 
-Un **snapshot** est la représentation neutre d'une instance dans Naht — classe, propriétés et contenu
-— dérivée d'un fichier (via le middleware qui enveloppe l'écosystème
+Un **snapshot** est la représentation neutre d'une instance dans Naht : classe, propriétés et contenu,
+le tout dérivé d'un fichier (via le middleware qui enveloppe l'écosystème
 [`rbx-dom`](https://github.com/rojo-rbx/rbx-dom)) ou d'une instance du DataModel. Le **réconciliateur**
 diffe un snapshot par rapport à la base et émet des **patches** dans la bonne direction. Tout cela vit
 dans la bibliothèque `naht-core` et est testé unitairement sur un système de fichiers virtuel en
-mémoire — pas de disque, pas de réseau.
+mémoire : pas de disque, pas de réseau.
 
 ## 4. Convention plutôt que configuration
 
@@ -63,7 +63,7 @@ exceptions. Voir [Correspondance des fichiers](#/docs/file-mapping).
 ## 5. Jamais destructeur
 
 Naht traite ton travail comme sacré. Il n'y a aucun `unwrap()`/`expect()` sur les opérations de
-système de fichiers ou de réseau dans la boucle de synchronisation — le plantage littéral qui cause la
+système de fichiers ou de réseau dans la boucle de synchronisation : le plantage littéral qui cause la
 perte de données de Rojo. Une écriture échouée **met en pause ce seul chemin** et fait remonter
 l'erreur ; la session continue de tourner et le changement en attente est conservé. Un conflit qu'il
 ne peut pas fusionner **gèle** le chemin au lieu de deviner. Rien n'est jamais écrasé silencieusement.

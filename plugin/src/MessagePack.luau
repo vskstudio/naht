@@ -1,5 +1,5 @@
 --!strict
--- A small, hand-written MessagePack codec — only the subset Naht's wire protocol uses.
+-- A small, hand-written MessagePack codec: only the subset Naht's wire protocol uses.
 --
 -- It must match `rmp_serde::to_vec_named` on the daemon side exactly, so the encoding decisions
 -- here mirror serde's: structs are string-keyed maps, an `Option::None` is `nil`, a unit enum
@@ -214,7 +214,7 @@ function decodeValue(bytes: string, pos: number): (any, number)
 		return (if value >= 0x80000000 then value - 0x100000000 else value), next
 	elseif byte == 0xc4 then
 		local len, next = readBytesUint(bytes, pos, 1)
-		return decodeStr(bytes, next, len) -- bin 8 — raw bytes, returned as a Luau string
+		return decodeStr(bytes, next, len) -- bin 8: raw bytes, returned as a Luau string
 	elseif byte == 0xc5 then
 		local len, next = readBytesUint(bytes, pos, 2)
 		return decodeStr(bytes, next, len) -- bin 16

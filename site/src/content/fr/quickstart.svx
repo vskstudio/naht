@@ -39,7 +39,7 @@ avec `naht package-plugin --src plugin/src --output naht-plugin.rbxmx`.)
 
 1. Dans Studio, clique droit dans l'Explorer et **Insert from File…**, ou dépose le `.rbxmx` dans ton
    dossier Plugins local, pour l'installer comme plugin local.
-2. Active **Game Settings → Security → Allow HTTP Requests** — le plugin parle au démon via
+2. Active **Game Settings → Security → Allow HTTP Requests** : le plugin parle au démon via
    `localhost` HTTP.
 
 ## 3. Créer un projet
@@ -51,7 +51,7 @@ cd demo
 
 Cela génère `src/Hello.luau`, un `naht.toml` minimal, et un `.gitignore` qui exclut le répertoire
 d'état interne `.naht/` de Naht. Tu migres depuis Rojo plutôt ? `naht init --from-rojo` lit un
-`default.project.json` existant et convertit le nom, le place id, et l'arbre d'instances — voir
+`default.project.json` existant et convertit le nom, le place id, et l'arbre d'instances : voir
 [Migrer depuis Rojo](#/docs/migrating).
 
 ## 4. Démarrer le démon
@@ -70,7 +70,7 @@ Connected`, et le source de ton projet apparaît sous `ServerStorage/Naht`.
 <Callout type="note">
 
 Si tu définis `[serve] place_id` dans `naht.toml`, le démon ne se connecte qu'à la session Studio dont
-le place id correspond — un garde-fou contre la synchronisation du source dans le mauvais jeu. Une
+le place id correspond. Un garde-fou contre la synchronisation du source dans le mauvais jeu. Une
 non-correspondance est rejetée lors du handshake.
 
 </Callout>
@@ -83,7 +83,7 @@ le `ModuleScript` correspondant dans Studio en un instant.
 **Studio → disque.** Modifie le source de ce `ModuleScript` dans Studio. Le fichier sur le disque se
 met à jour pour correspondre.
 
-C'est la couture qui fonctionne dans les deux sens à la fois — aucun push ou pull manuel.
+C'est la couture qui fonctionne dans les deux sens à la fois, sans push ni pull manuel.
 
 ## 7. Lire et résoudre un conflit
 

@@ -1,7 +1,7 @@
 {
   "name": "Naht",
   "short_name": "Naht",
-  "description": "The seam between your filesystem and Roblox Studio — bidirectional, conflict-safe, never-destructive sync.",
+  "description": "The seam between your filesystem and Roblox Studio: bidirectional, conflict-safe, never-destructive sync.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#070809",

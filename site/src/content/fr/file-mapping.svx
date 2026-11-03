@@ -2,11 +2,11 @@
 title: Mapping des fichiers
 icon: folderTree
 accent: fs
-desc: "Comment la structure du système de fichiers se mappe à l'arbre d'instances Roblox par convention — et les deux échappatoires pour les exceptions."
+desc: "Comment la structure du système de fichiers se mappe à l'arbre d'instances Roblox par convention, et les deux échappatoires pour les exceptions."
 ---
 
 Naht mappe ton système de fichiers à l'arbre d'instances Roblox **d'abord par convention**. Pour le cas
-courant, tu n'écris *aucune* config — la structure *est* le mapping. Les exceptions vivent dans
+courant, tu n'écris *aucune* config. La structure *est* le mapping. Les exceptions vivent dans
 `naht.toml` (voir [Configuration](#/docs/configuration)).
 
 ## Les conventions
@@ -37,7 +37,7 @@ src/
 
 ## Frontmatter de propriétés
 
-Les propriétés non par défaut vivent **avec la source**, sous forme de commentaire directive en tête —
+Les propriétés non par défaut vivent **avec la source**, sous forme de commentaire directive en tête :
 pas dans un fichier sidecar séparé. C'est le contre-pied délibéré aux fichiers `.meta.json` éparpillés
 de Rojo :
 
@@ -53,9 +53,9 @@ jamais sa configuration.
 
 Deux échappatoires, toutes deux dans `naht.toml` :
 
-- **Entrées `[[tree]]`** — déclare une instance explicitement avec un `path`, une `class`, et/ou des
+- **Entrées `[[tree]]`** : déclare une instance explicitement avec un `path`, une `class`, et/ou des
   `properties` quand la convention ne peut pas exprimer ce dont tu as besoin.
-- **Frontmatter** — pour des exceptions de propriété ponctuelles sur un seul fichier (ci-dessus).
+- **Frontmatter** : pour des exceptions de propriété ponctuelles sur un seul fichier (ci-dessus).
 
 Le mapping de build est gardé **séparé du mapping de sync** à dessein : un changement dans la façon dont
 les fichiers se synchronisent ne doit jamais casser un [build](#/docs/cli) reproductible. Voir

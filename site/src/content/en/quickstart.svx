@@ -38,7 +38,7 @@ Each release also ships `naht-plugin.rbxmx`. (From a source checkout, produce it
 
 1. In Studio, right-click in the Explorer and **Insert from File…**, or drop the `.rbxmx` into your
    local Plugins folder, to install it as a local plugin.
-2. Enable **Game Settings → Security → Allow HTTP Requests** — the plugin talks to the daemon over
+2. Enable **Game Settings → Security → Allow HTTP Requests**: the plugin talks to the daemon over
    `localhost` HTTP.
 
 ## 3. Create a project
@@ -50,7 +50,7 @@ cd demo
 
 This scaffolds `src/Hello.luau`, a minimal `naht.toml`, and a `.gitignore` that excludes Naht's
 internal `.naht/` state directory. Migrating from Rojo instead? `naht init --from-rojo` reads an
-existing `default.project.json` and converts the name, place id, and the instance tree — see
+existing `default.project.json` and converts the name, place id, and the instance tree: see
 [Migrating from Rojo](#/docs/migrating).
 
 ## 4. Start the daemon
@@ -69,7 +69,7 @@ project's source appears under `ServerStorage/Naht`.
 <Callout type="note">
 
 If you set `[serve] place_id` in `naht.toml`, the daemon only connects to the Studio session whose
-place id matches — a guard against syncing source into the wrong game. A mismatch is rejected at the
+place id matches: a guard against syncing source into the wrong game. A mismatch is rejected at the
 handshake.
 
 </Callout>
@@ -81,7 +81,7 @@ handshake.
 
 **Studio → disk.** Edit that `ModuleScript`'s source in Studio. The file on disk updates to match.
 
-That is the seam working in both directions at once — no manual push or pull.
+That is the seam working in both directions at once, with no manual push or pull.
 
 ## 7. Read and resolve a conflict
 

@@ -21,8 +21,8 @@ a daemon crash on a permission error, Naht exists to make that impossible.
 
 ## The seam
 
-Picture two living surfaces: your **filesystem** — where your editor, your git history, and your CI
-live — and the **Studio DataModel** — where the engine, the physics, and your collaborators live. Most
+Picture two living surfaces: your **filesystem** (where your editor, your git history, and your CI
+live) and the **Studio DataModel** (where the engine, the physics, and your collaborators live). Most
 tools pick one as the source of truth and push at the other. Naht treats them as **symmetric peers**
 stitched along a seam: edits flow whichever way they were made, and the seam holds even when both
 sides move at once.
@@ -30,7 +30,7 @@ sides move at once.
 <Callout type="note">
 
 The seam is not a pipe. A pipe forgets everything the moment data passes through. Naht **remembers**
-the last state both sides agreed on — the *persisted base* — and every decision is made against it.
+the last state both sides agreed on (the *persisted base*) and every decision is made against it.
 
 </Callout>
 
@@ -38,12 +38,12 @@ the last state both sides agreed on — the *persisted base* — and every decis
 
 | Guarantee | How Naht delivers it |
 |---|---|
-| **Never destructive** | No `unwrap()`/`expect()` on filesystem or network in the sync loop. A failed write pauses *one path* and surfaces the error — it never kills the session or discards your change. |
+| **Never destructive** | No `unwrap()`/`expect()` on filesystem or network in the sync loop. A failed write pauses *one path* and surfaces the error. It never kills the session or discards your change. |
 | **Truly bidirectional** | FS ↔ Studio are peers, not a primary and a mirror. Two-way is the core engine, not an experimental toggle. |
-| **Conflict-safe** | A persisted last-sync base enables a real 3-way text merge. Unmergeable edits get git-style markers and the path *freezes* until you resolve it — neither side is auto-picked. |
-| **Survives restarts** | The base lives in SQLite (`.naht/state.db`). Restart the daemon, reconnect Studio — Naht re-diffs against real state instead of re-clobbering. |
+| **Conflict-safe** | A persisted last-sync base enables a real 3-way text merge. Unmergeable edits get git-style markers and the path *freezes* until you resolve it; neither side is auto-picked. |
+| **Survives restarts** | The base lives in SQLite (`.naht/state.db`). Restart the daemon, reconnect Studio. Naht re-diffs against real state instead of re-clobbering. |
 | **Convention over config** | Zero config for the common case. An optional `naht.toml` carries only the exceptions, layered over a per-machine config. |
-| **Honest about limits** | Terrain, CSG, asset references, and security-locked properties are **detected and reported** with guidance — never dropped silently. |
+| **Honest about limits** | Terrain, CSG, asset references, and security-locked properties are **detected and reported** with guidance, never dropped silently. |
 
 ## When to use Naht
 
@@ -54,11 +54,11 @@ the last state both sides agreed on — the *persisted base* — and every decis
 
 ## How the docs are organized
 
-- **Getting Started** — install Naht and get a confirmed round-trip sync running.
-- **Core Concepts** — the mental model: the seam, the persisted base, the sync engine, conflicts.
-- **Configuration** — file→instance mapping, `naht.toml`, and migrating from Rojo.
-- **Reference** — exhaustive CLI, the localhost protocol, and the limits of the Studio API.
-- **Project** — troubleshooting the seam when something goes wrong.
+- **Getting Started**: install Naht and get a confirmed round-trip sync running.
+- **Core Concepts**: the mental model: the seam, the persisted base, the sync engine, conflicts.
+- **Configuration**: file→instance mapping, `naht.toml`, and migrating from Rojo.
+- **Reference**: exhaustive CLI, the localhost protocol, and the limits of the Studio API.
+- **Project**: troubleshooting the seam when something goes wrong.
 
-New here? Jump straight to the [Quickstart](#/docs/quickstart) — zero to a confirmed bidirectional
+New here? Jump straight to the [Quickstart](#/docs/quickstart) to go from zero to a confirmed bidirectional
 sync in five minutes.

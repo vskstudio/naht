@@ -1,7 +1,7 @@
 # Naht Studio plugin
 
 The thin Luau plugin that closes the live loop: it long-polls the daemon, applies patches to the
-DataModel, pushes Studio-side edits back, and shows connection state. **No sync logic lives here** —
+DataModel, pushes Studio-side edits back, and shows connection state. **No sync logic lives here**:
 mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core). This is transport + apply
 + report (architecture §3).
 
@@ -9,7 +9,7 @@ mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core)
 
 | File | Role |
 |---|---|
-| `src/MessagePack.luau` | Hand-written MessagePack codec — the exact subset the wire uses |
+| `src/MessagePack.luau` | Hand-written MessagePack codec for the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
 | `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/blobs`, `/ack`, `/heartbeat`) |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
@@ -50,7 +50,7 @@ format rather than only against itself.
 
 ## Studio validation checklist
 
-The live loop — HttpService, DataModel change signals, the toolbar UI — cannot run headless, so it is
+The live loop (HttpService, DataModel change signals, the toolbar UI) cannot run headless, so it is
 validated manually. Run each scenario in order against a real Studio session; each lists its expected
 observable result, so any tester (or a future automated harness) can follow it deterministically.
 
@@ -75,4 +75,4 @@ Setup: `naht init demo`, `naht serve` in the project, install the plugin, enable
 6. **Reconnect re-diff.** Kill `naht serve` (the widget shows `Reconnecting`), edit a file on disk
    while it is down, then restart `naht serve`.
    - *Expected:* the plugin reconnects with backoff and the daemon re-diffs against its persisted
-     state — the offline edit syncs, and nothing already in sync is re-clobbered.
+     state: the offline edit syncs, and nothing already in sync is re-clobbered.

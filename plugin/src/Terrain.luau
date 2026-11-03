@@ -1,6 +1,6 @@
 --!strict
 -- Terrain voxel sync: read the region via `ReadVoxels`, ship it as an opaque binary blob, and write
--- it back via `WriteVoxels` (architecture §9, Stage 11). There is **no diff/merge** of voxels — the
+-- it back via `WriteVoxels` (architecture §9, Stage 11). There is **no diff/merge** of voxels, the
 -- blob is synced whole and conflicts freeze, exactly like the daemon's binary path.
 --
 -- The (de)serialization is pure and works on plain numbers, so it round-trips headless in the test

@@ -73,7 +73,7 @@ Finally, enable HTTP so the plugin can reach the daemon:
 
 **Game Settings → Security → Allow HTTP Requests** must be on. The plugin talks to the daemon over
 `http://localhost`, and Studio blocks all HTTP until you enable it. `HttpService.HttpEnabled` is
-security-locked and *cannot* be flipped by a plugin — only you can, here.
+security-locked and *cannot* be flipped by a plugin: only you can, here.
 
 </Callout>
 
@@ -85,5 +85,5 @@ incompatible peer. See the [Protocol reference](#/docs/protocol) for how the han
 
 ## Next
 
-You are ready for the [Quickstart](#/docs/quickstart) — `init`, `serve`, connect Studio, and your
+You are ready for the [Quickstart](#/docs/quickstart): `init`, `serve`, connect Studio, and your
 first round-trip edit.

@@ -28,13 +28,13 @@ export function setLocale(code) {
 // the correct og:locale even though both languages share one SPA URL.
 const META = {
   en: {
-    title: 'Naht — bidirectional, conflict-safe Roblox ⇄ filesystem sync',
+    title: 'Naht: bidirectional, conflict-safe Roblox ⇄ filesystem sync',
     description:
       'Naht is the seam between your filesystem and Roblox Studio: bidirectional, conflict-safe, never-destructive sync with a real 3-way merge and persisted state.',
     ogLocale: 'en_US',
   },
   fr: {
-    title: 'Naht — synchronisation Roblox ⇄ système de fichiers, bidirectionnelle et sans conflit',
+    title: 'Naht : synchronisation Roblox ⇄ système de fichiers, bidirectionnelle et sans conflit',
     description:
       'Naht est la couture entre votre système de fichiers et Roblox Studio : une synchronisation bidirectionnelle, sans conflit et non destructive, avec une vraie fusion à 3 voies et un état persistant.',
     ogLocale: 'fr_FR',

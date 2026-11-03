@@ -2,7 +2,7 @@
 -- The connection loop: handshake, long-poll + apply, Studio → filesystem change push, and
 -- reconnect-with-backoff. State changes are reported through `onState` so the UI stays a dumb view.
 --
--- No sync logic lives here — the daemon decides everything. The plugin only carries patches in,
+-- No sync logic lives here: the daemon decides everything. The plugin only carries patches in,
 -- carries edits out, and reports connection state. On every (re)connect it resets its cursor to 0 so
 -- the daemon's reconnect re-diff drives a clean catch-up rather than a blind replay.
 
@@ -182,7 +182,7 @@ function Connection._serveBlobs(self, epoch: number)
 	end
 end
 
--- The Region3 covering the whole terrain, at voxel resolution — used for both read and write so the
+-- The Region3 covering the whole terrain, at voxel resolution, used for both read and write so the
 -- blob round-trips against a stable region.
 function Connection._terrainRegion(self): any
 	local extents = (workspace :: any).Terrain.MaxExtents

@@ -3,7 +3,7 @@
 --
 -- This is transport-and-apply, not sync logic: the daemon already decided what each patch does and
 -- in which direction (only `ToStudio` patches reach here). The one mapping the plugin owns is
--- *where* a path lives in the tree — folders mirror the path's directories, and the leaf is a script
+-- *where* a path lives in the tree: folders mirror the path's directories, and the leaf is a script
 -- named after the file. All DataModel mutation goes through an injected `Tree` interface so the apply
 -- logic is unit-testable without Studio; `Apply.studioTree` is the real binding.
 

@@ -2,7 +2,7 @@
 title: Référence CLI
 icon: terminal
 accent: fs
-desc: "Chaque commande et flag de naht — init, serve, pull, build, status, resolve et package-plugin."
+desc: "Chaque commande et flag de naht : init, serve, pull, build, status, resolve et package-plugin."
 ---
 
 <script>
@@ -72,7 +72,7 @@ naht build -o game.rbxm --watch  # rebuild on every change
 
 <Callout type="note">
 
-La config de build est **séparée du mapping de synchro** — un changement dans la façon dont les fichiers se synchronisent ne cassera jamais un
+La config de build est **séparée du mapping de synchro**. Un changement dans la façon dont les fichiers se synchronisent ne cassera jamais un
 build reproductible.
 
 </Callout>
@@ -112,7 +112,7 @@ naht package-plugin --src plugin/src -o naht-plugin.rbxmx
 | Flag | Défaut | Rôle |
 |---|---|---|
 | `--src <DIR>` | `plugin/src` | Le répertoire source du plugin. |
-| `-o`, `--output <FILE>` | — | Le fichier de sortie `.rbxmx`. |
+| `-o`, `--output <FILE>` | n/a | Le fichier de sortie `.rbxmx`. |
 
 ## Flags globaux
 

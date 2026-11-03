@@ -3,7 +3,7 @@
 </script>
 
 <div class="vsc">
-  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="title">naht — merge editor</span></div>
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="title">naht · merge editor</span></div>
   <div class="tabrow"><span class="tab"><span class="fi"></span> {$t.merge.tab}</span></div>
 
   <div class="inputs">

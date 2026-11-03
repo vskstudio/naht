@@ -224,7 +224,7 @@ check("apply strips .client.luau suffix", main ~= nil and main.Name == "main")
 check("apply maps LocalScript class", main ~= nil and main.ClassName == "LocalScript")
 
 -- === transport modules compile ===============================================================
--- These talk to HttpService / the DataModel, so they can't run headless — but they must at least
+-- These talk to HttpService / the DataModel, so they can't run headless, but they must at least
 -- compile. Catches syntax regressions in the modules the cases above don't load.
 
 local luau = require("@lune/luau")

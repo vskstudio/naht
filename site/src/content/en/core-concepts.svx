@@ -2,7 +2,7 @@
 title: Core Concepts
 icon: waypoints
 accent: studio
-desc: "The five ideas — peers, the persisted base, snapshots, convention, and never-destructive — that explain everything else."
+desc: "The five ideas (peers, the persisted base, snapshots, convention, and never-destructive) that explain everything else."
 ---
 
 <script>
@@ -30,23 +30,23 @@ Every sync decision is a comparison *against the base*, not peer-against-peer:
 
 Because the base is persisted, restarting the daemon or reconnecting Studio does **not** lose context.
 Naht re-diffs against real state instead of assuming everything is fresh. This is the thing Rojo and
-Argon keep only in memory — and the reason they re-clobber on restart.
+Argon keep only in memory, and the reason they re-clobber on restart.
 
 <Callout type="tip">
 
 "3-way" means three inputs: the **base** (what we last agreed on), the **FS** version, and the
-**Studio** version. With all three, Naht can tell *who actually changed what* — impossible with only
+**Studio** version. With all three, Naht can tell *who actually changed what*. Impossible with only
 the two current versions.
 
 </Callout>
 
 ## 3. Snapshots and reconciliation
 
-A **snapshot** is Naht's neutral representation of an instance — class, properties, and content —
+A **snapshot** is Naht's neutral representation of an instance: class, properties, and content,
 derived from a file (via the middleware that wraps the [`rbx-dom`](https://github.com/rojo-rbx/rbx-dom)
 ecosystem) or from a DataModel instance. The **reconciler** diffs a snapshot against the base and
 emits **patches** in the appropriate direction. All of this lives in the `naht-core` library and is
-unit-tested over an in-memory virtual filesystem — no disk, no network.
+unit-tested over an in-memory virtual filesystem: no disk, no network.
 
 ## 4. Convention over configuration
 
@@ -58,7 +58,7 @@ its directory *become* an instance. You only write config for the exceptions. Se
 ## 5. Never destructive
 
 Naht treats your work as sacred. There is no `unwrap()`/`expect()` on filesystem or network operations
-in the sync loop — the literal crash that causes Rojo's data loss. A failed write **pauses that one
+in the sync loop: the literal crash that causes Rojo's data loss. A failed write **pauses that one
 path** and surfaces the error; the session keeps running and the pending change is kept. A conflict it
 cannot merge **freezes** the path rather than guessing. Nothing is silently overwritten, ever.
 

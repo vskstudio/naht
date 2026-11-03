@@ -10,7 +10,7 @@ desc: "Ce qu'est un conflit, comment fonctionne le merge texte 3 voies, et le wo
 </script>
 
 Un conflit, c'est quand **les deux pairs changent la même instance** depuis la dernière base convenue.
-Deux éditeurs en direct rendent les conflits inévitables — c'est pourquoi Naht traite une politique de
+Deux éditeurs en direct rendent les conflits inévitables. C'est pourquoi Naht traite une politique de
 merge/conflit comme obligatoire, pas optionnelle. La règle au-dessus de toutes les autres : **Naht
 n'écrase jamais silencieusement l'un ou l'autre côté.**
 
@@ -25,9 +25,9 @@ contenu.
 Pour les scripts, Naht exécute un **merge texte 3 voies** en utilisant le dernier contenu synchronisé
 comme base :
 
-- **Merge propre** — les deux côtés ont changé des régions différentes. Naht les fusionne, écrit le
+- **Merge propre** : les deux côtés ont changé des régions différentes. Naht les fusionne, écrit le
   résultat, et fait avancer la base. Tu ne vois jamais rien.
-- **Non fusionnable** — les deux côtés ont changé des lignes qui se chevauchent. Naht ne désigne **pas**
+- **Non fusionnable** : les deux côtés ont changé des lignes qui se chevauchent. Naht ne désigne **pas**
   de gagnant. À la place, il :
   1. écrit des marqueurs façon git dans le fichier sur le disque :
      ```
@@ -37,13 +37,13 @@ comme base :
      the Studio version
      >>>>>>> Studio
      ```
-  2. **gèle** ce chemin — plus aucune sync jusqu'à ce que tu le résolves ;
+  2. **gèle** ce chemin (plus aucune sync jusqu'à ce que tu le résolves) ;
   3. affiche `Conflict` avec le chemin dans le widget de statut du plugin.
 
 ## Binaire : conflit au niveau fichier
 
 Les instances binaires (par ex. géométrie CSG, blobs de terrain) ne peuvent pas être mergées ligne par
-ligne. Un changement des deux côtés est un **conflit au niveau fichier** — jamais auto-mergé. Le
+ligne. Un changement des deux côtés est un **conflit au niveau fichier** : jamais auto-mergé. Le
 terrain en particulier **gèle** sur un changement des deux côtés ; voir [Terrain & assets](#/docs/terrain-assets).
 
 ## Résoudre un conflit
@@ -51,7 +51,7 @@ terrain en particulier **gèle** sur un changement des deux côtés ; voir [Terr
 ```sh
 naht status                 # lists every frozen path
 # open the file, delete the conflict markers, keep the content you want
-naht resolve src/Hello.luau # clears the freeze — refuses while markers remain
+naht resolve src/Hello.luau # clears the freeze ; refuses while markers remain
 ```
 
 `naht resolve` est volontairement strict : il **refuse tant qu'il reste des marqueurs**, donc tu ne
@@ -60,7 +60,7 @@ chemin libéré, la sync reprend automatiquement pour ce chemin.
 
 <Callout type="warning">
 
-Ne supprime pas le fichier pour « régler » un conflit — c'est une vraie suppression qui sera
+Ne supprime pas le fichier pour « régler » un conflit. C'est une vraie suppression qui sera
 synchronisée. Édite le fichier, retire les marqueurs, garde ce que tu veux, puis `naht resolve`.
 
 </Callout>

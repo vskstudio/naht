@@ -1,7 +1,7 @@
-# Build definition for naht.dev — a static site served straight from disk by the
+# Build definition for naht.dev: a static site served straight from disk by the
 # shared `edge` nginx reverse proxy (separate repo, EDGE_SITE=white). There is
 # NO runtime server here: this stack builds the site, copies the artifacts onto
-# the host, and exits. Nothing stays resident — zero idle RAM, no host port, no
+# the host, and exits. Nothing stays resident: zero idle RAM, no host port, no
 # `web` network membership.
 #
 # Deploy by hand on the host:
