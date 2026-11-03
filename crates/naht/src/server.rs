@@ -6,7 +6,6 @@
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
 //! decisions are delegated to the [`Session`]; this layer is pure transport.
 
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
