@@ -12,6 +12,7 @@
 mod model;
 mod persist;
 mod scan;
+mod shared;
 mod sync;
 #[cfg(test)]
 mod tests;
@@ -19,4 +20,5 @@ mod tests;
 pub use model::{Direction, Patch, PatchKind, ReconcileError, Status, TextInstance};
 pub use persist::{resolve, set_base, status};
 pub use scan::scan_text;
+pub(crate) use shared::{Classed, Side, class_of, union_keys};
 pub use sync::reconcile;

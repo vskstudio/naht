@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::hash::content_hash;
-use crate::reconciler::{Direction, PatchKind, ReconcileError};
+use crate::reconciler::{Direction, PatchKind, ReconcileError, Side, class_of, union_keys};
 use crate::state::{InstanceRecord, StateStore};
 use crate::vfs::Vfs;
 
@@ -25,10 +25,7 @@ pub fn reconcile_blobs(
         .map(|record| (record.path.clone(), record))
         .collect();
 
-    let mut keys: BTreeSet<&String> = BTreeSet::new();
-    keys.extend(fs.keys());
-    keys.extend(studio.keys());
-    keys.extend(base.keys());
+    let keys = union_keys(fs, studio, &base);
 
     let mut pass = Pass {
         vfs,
@@ -188,12 +185,6 @@ impl<V: Vfs> Pass<'_, V> {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Side {
-    Fs,
-    Studio,
-}
-
 fn advance(
     store: &StateStore,
     path: &str,
@@ -214,17 +205,6 @@ fn record(path: &str, class: &str, hash: &str, conflicted: bool) -> InstanceReco
         mtime: 0,
         conflicted,
     }
-}
-
-fn class_of(
-    fs: Option<&BlobInstance>,
-    studio: Option<&BlobInstance>,
-    base: Option<&InstanceRecord>,
-) -> String {
-    fs.or(studio)
-        .map(|current| current.class.clone())
-        .or_else(|| base.map(|base_entry| base_entry.class.clone()))
-        .unwrap_or_default()
 }
 
 fn is_frozen(base: Option<&InstanceRecord>) -> bool {

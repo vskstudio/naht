@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::merge::{self, Merge};
@@ -8,6 +8,7 @@ use crate::vfs::{Vfs, VfsError};
 use super::model::{Direction, Patch, PatchKind, ReconcileError, TextInstance, patch};
 use super::persist::{advance_base, freeze};
 use super::scan::decode;
+use super::shared::{Side, class_of, union_keys};
 
 /// Reconcile the filesystem and Studio sides against the persisted base.
 ///
@@ -26,10 +27,7 @@ pub fn reconcile(
         .map(|record| (record.path.clone(), record))
         .collect();
 
-    let mut keys: BTreeSet<&String> = BTreeSet::new();
-    keys.extend(fs.keys());
-    keys.extend(studio.keys());
-    keys.extend(base.keys());
+    let keys = union_keys(fs, studio, &base);
 
     let mut pass = Pass {
         vfs,
@@ -244,21 +242,4 @@ impl<V: Vfs> Pass<'_, V> {
         }
         Ok(())
     }
-}
-
-#[derive(Clone, Copy)]
-enum Side {
-    Fs,
-    Studio,
-}
-
-fn class_of(
-    fs: Option<&TextInstance>,
-    studio: Option<&TextInstance>,
-    base: Option<&InstanceRecord>,
-) -> String {
-    fs.or(studio)
-        .map(|current| current.class.clone())
-        .or_else(|| base.map(|base_entry| base_entry.class.clone()))
-        .unwrap_or_default()
 }
