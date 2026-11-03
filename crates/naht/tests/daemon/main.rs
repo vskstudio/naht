@@ -6,4 +6,5 @@ mod activity;
 mod blobs;
 mod changes;
 mod handshake;
+#[cfg(test)]
 mod support;

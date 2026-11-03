@@ -79,16 +79,15 @@ fn parse_table(body: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError
         if pair.is_empty() {
             continue;
         }
-        let mut sides = split_top_level(pair, '=');
-        if sides.len() != 2 {
+        let sides = split_top_level(pair, '=');
+        let [key, value] = sides.as_slice() else {
             return Err(FrontmatterError::MalformedEntry(pair.to_owned()));
-        }
-        let value = sides.pop().expect("two sides").trim().to_owned();
-        let key = sides.pop().expect("two sides").trim().to_owned();
+        };
+        let key = key.trim();
         if key.is_empty() {
             return Err(FrontmatterError::MalformedEntry(pair.to_owned()));
         }
-        props.insert(key, parse_value(&value)?);
+        props.insert(key.to_owned(), parse_value(value.trim())?);
     }
     Ok(props)
 }
@@ -112,7 +111,7 @@ fn split_top_level(input: &str, delim: char) -> Vec<String> {
                 }
             }
             '(' | '{' if !in_quotes => {
-                depth += 1;
+                depth = depth.saturating_add(1);
                 current.push(character);
             }
             ')' | '}' if !in_quotes => {

@@ -275,37 +275,27 @@ pub(super) fn assemble_project_snapshot(
     Ok((snapshot, warnings))
 }
 
-fn graft(root: &mut Snapshot, parents: &[&str], leaf: Snapshot) {
-    let mut current = root;
-    for segment in parents {
-        let index = match current
+fn graft(parent: &mut Snapshot, parents: &[&str], leaf: Snapshot) {
+    match parents.split_first() {
+        Some((segment, rest)) => match parent
             .children
-            .iter()
-            .position(|child| child.name == *segment)
+            .iter_mut()
+            .find(|child| child.name == *segment)
         {
-            Some(index) => index,
+            Some(folder) => graft(folder, rest, leaf),
             None => {
-                current.push_child(Snapshot::new("Folder", *segment));
-                current
-                    .children
-                    .iter()
-                    .position(|child| child.name == *segment)
-                    .expect("child just inserted")
+                parent.push_child(Snapshot::new("Folder", *segment));
+                graft(parent, parents, leaf);
             }
-        };
-        current = &mut current.children[index];
-    }
-    if let Some(index) = current
-        .children
-        .iter()
-        .position(|child| child.name == leaf.name)
-    {
-        current.children[index] = leaf;
-        current
+        },
+        None => match parent
             .children
-            .sort_by(|left, right| left.name.cmp(&right.name));
-    } else {
-        current.push_child(leaf);
+            .iter_mut()
+            .find(|child| child.name == leaf.name)
+        {
+            Some(existing) => *existing = leaf,
+            None => parent.push_child(leaf),
+        },
     }
 }
 

@@ -7,4 +7,5 @@ mod init;
 mod release;
 mod rojo;
 mod serve;
+#[cfg(test)]
 mod support;
