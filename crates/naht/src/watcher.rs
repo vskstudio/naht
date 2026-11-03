@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::config::INTERNAL_DIR;
 use crate::server::AppState;
+use tokio::runtime::Handle;
 
 /// Why the filesystem watcher could not start watching the project.
 #[derive(Debug, Error)]
@@ -25,7 +26,7 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 /// Start watching `root` recursively, reconciling into `state` on each debounced batch. The caller
 /// must hold onto the returned guard for as long as watching should continue.
 pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, WatchError> {
-    let runtime = tokio::runtime::Handle::current();
+    let runtime = Handle::current();
     let watched_root = root.to_path_buf();
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         match result {

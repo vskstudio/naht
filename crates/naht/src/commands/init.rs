@@ -2,6 +2,7 @@ use super::error::CommandError;
 use super::files::{canonical, dir_name, read_optional, write_file};
 use super::rojo::{migrate_from_rojo, render_rojo_config};
 use crate::config::PROJECT_FILE;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// What `init` created, or what it converted, for the caller to report.
@@ -25,7 +26,7 @@ pub enum Initialized {
 
 /// Scaffold a new project at `path`, or convert an existing Rojo project there when `from_rojo`.
 pub fn init(path: &Path, from_rojo: bool) -> Result<Initialized, CommandError> {
-    std::fs::create_dir_all(path).map_err(|source| CommandError::CreateDir {
+    fs::create_dir_all(path).map_err(|source| CommandError::CreateDir {
         path: path.to_path_buf(),
         source,
     })?;
@@ -52,7 +53,7 @@ pub fn init(path: &Path, from_rojo: bool) -> Result<Initialized, CommandError> {
 
 fn scaffold_source(path: &Path) -> Result<(), CommandError> {
     let src = path.join("src");
-    std::fs::create_dir_all(&src).map_err(|source| CommandError::CreateDir {
+    fs::create_dir_all(&src).map_err(|source| CommandError::CreateDir {
         path: src.clone(),
         source,
     })?;

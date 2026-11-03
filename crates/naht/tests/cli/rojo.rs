@@ -1,24 +1,26 @@
 use naht::commands;
 
 use super::support::{child, property, read_place, service};
+use rbx_dom_weak::types::Variant;
+use std::fs;
 
 #[test]
 fn from_rojo_migrates_the_tree_so_the_build_matches_rojo() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("game");
-    std::fs::create_dir_all(root.join("src").join("common")).unwrap();
-    std::fs::write(root.join("src").join("common").join("Mod.luau"), "return 1").unwrap();
-    std::fs::write(
+    fs::create_dir_all(root.join("src").join("common")).unwrap();
+    fs::write(root.join("src").join("common").join("Mod.luau"), "return 1").unwrap();
+    fs::write(
         root.join("src").join("common").join("Boot.server.luau"),
         "print(1)",
     )
     .unwrap();
-    std::fs::write(
+    fs::write(
         root.join("src").join("common").join("Ui.client.luau"),
         "print(2)",
     )
     .unwrap();
-    std::fs::write(
+    fs::write(
         root.join("default.project.json"),
         r#"{
             "name": "Game",
@@ -62,8 +64,8 @@ fn from_rojo_migrates_the_tree_so_the_build_matches_rojo() {
 fn from_rojo_carries_classname_and_properties_with_a_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("game");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
         root.join("default.project.json"),
         r#"{
             "name": "Game",
@@ -86,18 +88,15 @@ fn from_rojo_carries_classname_and_properties_with_a_round_trip() {
     let storage = service(&dom, "ServerStorage").expect("ServerStorage service");
     let settings = child(&dom, storage, "Settings").expect("Settings under ServerStorage");
     assert_eq!(settings.class, "BoolValue");
-    assert_eq!(
-        property(settings, "Value"),
-        Some(&rbx_dom_weak::types::Variant::Bool(true))
-    );
+    assert_eq!(property(settings, "Value"), Some(&Variant::Bool(true)));
 }
 
 #[test]
 fn from_rojo_reports_what_it_cannot_represent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("game");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
         root.join("default.project.json"),
         r#"{
             "name": "Game",

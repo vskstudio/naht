@@ -6,9 +6,12 @@ use naht::session::Session;
 use naht_core::protocol::Change;
 use naht_core::reconciler::PatchKind;
 use naht_core::state::StateStore;
+use std::fs;
+use std::path::Path;
+use std::slice;
 
-fn session(root: &std::path::Path) -> Session {
-    std::fs::create_dir_all(root.join("src")).unwrap();
+fn session(root: &Path) -> Session {
+    fs::create_dir_all(root.join("src")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     Session::new(root, store, "demo", None, true)
 }
@@ -19,14 +22,14 @@ fn an_atomic_save_yields_one_update_with_the_final_content() {
     let root = dir.path();
     let mut session = session(root);
 
-    std::fs::write(root.join("src").join("A.luau"), "return 1").unwrap();
+    fs::write(root.join("src").join("A.luau"), "return 1").unwrap();
     session.rescan().unwrap();
     let (cursor, first) = session.take_patches(0);
     assert_eq!(first.len(), 1);
     session.ack(&[first[0].path.clone()]).unwrap();
 
-    std::fs::write(root.join("src").join("A.luau.tmp"), "return 2").unwrap();
-    std::fs::rename(
+    fs::write(root.join("src").join("A.luau.tmp"), "return 2").unwrap();
+    fs::rename(
         root.join("src").join("A.luau.tmp"),
         root.join("src").join("A.luau"),
     )
@@ -45,8 +48,8 @@ fn a_create_then_delete_before_reconcile_produces_no_patch() {
     let root = dir.path();
     let mut session = session(root);
 
-    std::fs::write(root.join("src").join("Temp.luau"), "return 0").unwrap();
-    std::fs::remove_file(root.join("src").join("Temp.luau")).unwrap();
+    fs::write(root.join("src").join("Temp.luau"), "return 0").unwrap();
+    fs::remove_file(root.join("src").join("Temp.luau")).unwrap();
     session.rescan().unwrap();
 
     let (_, patches) = session.take_patches(0);
@@ -63,13 +66,13 @@ fn an_unacked_patch_holds_the_base_so_a_racing_studio_edit_merges_not_clobbers()
     let mut session = session(root);
     let file = root.join("src").join("A.luau");
 
-    std::fs::write(&file, "a\nb\nc\n").unwrap();
+    fs::write(&file, "a\nb\nc\n").unwrap();
     session.rescan().unwrap();
     let (_, first) = session.take_patches(0);
     let path = first[0].path.clone();
-    session.ack(std::slice::from_ref(&path)).unwrap();
+    session.ack(slice::from_ref(&path)).unwrap();
 
-    std::fs::write(&file, "A\nb\nc\n").unwrap();
+    fs::write(&file, "A\nb\nc\n").unwrap();
     session.rescan().unwrap();
 
     session
@@ -80,5 +83,5 @@ fn an_unacked_patch_holds_the_base_so_a_racing_studio_edit_merges_not_clobbers()
         }])
         .unwrap();
 
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "A\nb\nC\n");
+    assert_eq!(fs::read_to_string(&file).unwrap(), "A\nb\nC\n");
 }

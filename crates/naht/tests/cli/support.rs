@@ -4,9 +4,10 @@ use std::path::Path;
 use naht_core::reconciler::TextInstance;
 use rbx_dom_weak::types::Variant;
 use rbx_dom_weak::{Instance, WeakDom};
+use std::fs;
 
 pub fn read_place(path: &Path) -> WeakDom {
-    rbx_binary::from_reader(std::fs::read(path).unwrap().as_slice()).unwrap()
+    rbx_binary::from_reader(fs::read(path).unwrap().as_slice()).unwrap()
 }
 
 pub fn root_classes(dom: &WeakDom) -> Vec<String> {

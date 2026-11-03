@@ -1,20 +1,21 @@
 use naht::commands;
 
 use super::support::child;
+use std::fs;
 
 #[test]
 fn package_plugin_produces_a_loadable_rbxmx_with_the_entry_script() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("Plugin.server.luau"), "-- entry point\nreturn nil").unwrap();
-    std::fs::write(src.join("Apply.luau"), "return {}").unwrap();
-    std::fs::write(src.join("Client.luau"), "return {}").unwrap();
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("Plugin.server.luau"), "-- entry point\nreturn nil").unwrap();
+    fs::write(src.join("Apply.luau"), "return {}").unwrap();
+    fs::write(src.join("Client.luau"), "return {}").unwrap();
 
     let out = dir.path().join("naht-plugin.rbxmx");
     commands::package_plugin(&src, &out).unwrap();
 
-    let dom = rbx_xml::from_reader_default(std::fs::read(&out).unwrap().as_slice()).unwrap();
+    let dom = rbx_xml::from_reader_default(fs::read(&out).unwrap().as_slice()).unwrap();
     let naht = dom
         .root()
         .children()

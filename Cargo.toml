@@ -72,6 +72,7 @@ str_to_string = "warn"
 deref_by_slicing = "warn"
 clone_on_ref_ptr = "warn"
 semicolon_outside_block = "warn"
+absolute_paths = "warn"
 
 [profile.release]
 lto = "thin"

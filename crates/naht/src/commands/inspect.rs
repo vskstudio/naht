@@ -2,6 +2,7 @@ use super::error::CommandError;
 use super::files::{open_store, rooted};
 use crate::config::Config;
 use crate::uploader::OpenCloudUploader;
+use naht_core::assets;
 use naht_core::snapshot::Snapshot;
 use naht_core::vfs::{DiskVfs, RootedVfs};
 use naht_core::{limits, reconciler};
@@ -33,7 +34,7 @@ pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<Vec<String
     let store = open_store(root)?;
     let uploader = OpenCloudUploader::from_config(&config.assets)?;
     let vfs = RootedVfs::new(root.to_path_buf(), DiskVfs::new());
-    let failures = naht_core::assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot);
+    let failures = assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot);
     if failures.is_empty() {
         return Ok(Vec::new());
     }

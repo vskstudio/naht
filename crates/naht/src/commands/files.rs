@@ -2,11 +2,13 @@ use super::error::CommandError;
 use crate::config::INTERNAL_DIR;
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
+use std::fs;
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
 pub(super) fn read_optional(path: &Path) -> Result<String, CommandError> {
-    match std::fs::read_to_string(path) {
+    match fs::read_to_string(path) {
         Ok(text) => Ok(text),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
         Err(source) => Err(CommandError::Read {
@@ -17,14 +19,14 @@ pub(super) fn read_optional(path: &Path) -> Result<String, CommandError> {
 }
 
 pub(super) fn write_file(path: &Path, contents: &str) -> Result<(), CommandError> {
-    std::fs::write(path, contents).map_err(|source| CommandError::Write {
+    fs::write(path, contents).map_err(|source| CommandError::Write {
         path: path.to_path_buf(),
         source,
     })
 }
 
-pub(super) fn create_file(path: &Path) -> Result<std::fs::File, CommandError> {
-    std::fs::File::create(path).map_err(|source| CommandError::Create {
+pub(super) fn create_file(path: &Path) -> Result<File, CommandError> {
+    File::create(path).map_err(|source| CommandError::Create {
         path: path.to_path_buf(),
         source,
     })
@@ -33,7 +35,7 @@ pub(super) fn create_file(path: &Path) -> Result<std::fs::File, CommandError> {
 pub(super) fn create_parent_dirs(output: &Path) -> Result<(), CommandError> {
     match output.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => {
-            std::fs::create_dir_all(parent).map_err(|source| CommandError::CreateDir {
+            fs::create_dir_all(parent).map_err(|source| CommandError::CreateDir {
                 path: parent.to_path_buf(),
                 source,
             })

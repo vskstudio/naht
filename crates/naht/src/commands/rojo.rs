@@ -6,6 +6,9 @@ use naht_core::snapshot::Snapshot;
 use naht_core::vfs::DiskVfs;
 use rbx_dom_weak::types::Variant;
 use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +33,7 @@ impl RojoProject {
 
 fn read_rojo_project(path: &Path) -> Result<RojoProject, CommandError> {
     let file = path.join("default.project.json");
-    let text = std::fs::read_to_string(&file).map_err(|source| CommandError::Read {
+    let text = fs::read_to_string(&file).map_err(|source| CommandError::Read {
         path: file.clone(),
         source,
     })?;
@@ -41,7 +44,7 @@ pub(super) struct MigratedNode {
     instance: String,
     path: Option<String>,
     class: Option<String>,
-    properties: std::collections::BTreeMap<String, toml::Value>,
+    properties: BTreeMap<String, toml::Value>,
 }
 
 /// Migrate the Rojo `default.project.json` at `root` into a `naht.toml`: the project name, the place
@@ -84,7 +87,7 @@ fn collect_tree_nodes(
             Some(class) => Some(class.to_owned()),
             None => None,
         };
-        let mut properties = std::collections::BTreeMap::new();
+        let mut properties = BTreeMap::new();
         if let Some(props) = object.get("$properties").and_then(|v| v.as_object()) {
             for (key, value) in props {
                 match rojo_property_to_toml(value) {
@@ -210,7 +213,7 @@ pub(super) fn assemble_project_snapshot(
         return Ok((snapshot, warnings));
     }
 
-    let source_roots: std::collections::BTreeSet<&str> = config
+    let source_roots: BTreeSet<&str> = config
         .tree
         .iter()
         .filter_map(|node| node.path.as_deref())

@@ -4,6 +4,7 @@
 //! is unit-testable against an in-memory tree ([`MemoryVfs`]) with no disk dependency. [`DiskVfs`]
 //! is the real-disk implementation used by the daemon.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 mod disk;
@@ -38,10 +39,7 @@ pub enum VfsError {
     Symlink(PathBuf),
     /// An underlying I/O failure on the real disk.
     #[error("I/O error at {path}: {source}")]
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
+    Io { path: PathBuf, source: io::Error },
 }
 
 /// Whether a directory entry is a file or a subdirectory.
