@@ -1,6 +1,6 @@
 //! The localhost HTTP server the Studio plugin talks to (architecture §7).
 //!
-//! All endpoints speak MessagePack: `GET /info` (handshake + `servePlaceId` guard + reconnect
+//! All endpoints speak `MessagePack`: `GET /info` (handshake + `servePlaceId` guard + reconnect
 //! re-diff), `GET /patches` (text long-poll held open until a change or timeout), `POST /changes`
 //! (Studio → filesystem), `GET /blobs` + `POST /blobs` (the separate terrain blob channel),
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
@@ -47,9 +47,10 @@ const MAX_IN_FLIGHT: usize = 64;
 
 const TIMEOUT_SLACK: Duration = Duration::from_secs(10);
 
-/// Shared server state: the session behind a mutex, plus notifiers that wake parked long-polls
-/// whenever a queue may have grown. Text patches and binary blobs ride separate channels, so each
-/// has its own notifier and parks independently.
+/// Shared server state: the session behind a mutex and notifiers that wake parked long-polls.
+///
+/// Notifiers fire whenever a queue may have grown. Text patches and binary blobs ride separate
+/// channels, so each has its own notifier and parks independently.
 #[derive(Debug)]
 pub struct AppState {
     session: Mutex<Session>,
@@ -90,6 +91,10 @@ impl AppState {
 
     /// Run `work` on a blocking thread with the session locked, so disk and database access never
     /// stalls the runtime or holds the lock across an await.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JoinError`] when the blocking task panics or is cancelled.
     pub async fn with_session<T, F>(self: &Arc<Self>, work: F) -> Result<T, JoinError>
     where
         T: Send + 'static,
@@ -148,6 +153,10 @@ async fn overload(error: BoxError) -> StatusCode {
 
 /// Serve `state` on an already-bound `listener` until the shutdown token is cancelled, then let
 /// in-flight requests finish.
+///
+/// # Errors
+///
+/// Returns an error when the listener fails.
 pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()> {
     let shutdown = state.shutdown.clone();
     axum::serve(listener, router(state))
@@ -209,7 +218,7 @@ async fn patches(State(state): State<Arc<AppState>>, Query(query): Query<CursorQ
             return patch_batch(&session, cursor);
         }
     }
-    let _ = time::timeout(state.long_poll, notified).await;
+    let _parked = time::timeout(state.long_poll, notified).await;
 
     let session = state.session.lock().await;
     patch_batch(&session, cursor)
@@ -255,7 +264,7 @@ async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQue
             return blob_batch(&session, cursor);
         }
     }
-    let _ = time::timeout(state.long_poll, notified).await;
+    let _parked = time::timeout(state.long_poll, notified).await;
 
     let session = state.session.lock().await;
     blob_batch(&session, cursor)

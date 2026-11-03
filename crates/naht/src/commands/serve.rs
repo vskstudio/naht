@@ -22,6 +22,10 @@ const LONG_POLL: Duration = Duration::from_secs(25);
 
 /// Run the sync daemon for the project at `root` on `port`, using `config` for the project name and
 /// place guard. Warnings and the serving line go to `out` before the session starts.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the server cannot bind or fails while running.
 pub async fn serve<Stdout: Write, Stderr: Write>(
     config: Config,
     root: &Path,

@@ -13,6 +13,10 @@ use super::model::{ReconcileError, TextInstance};
 /// `*.client.luau` → `LocalScript`, `*.luau`/`init.luau` → `ModuleScript`); non-source files are
 /// skipped, not lost. The daemon calls this each reconcile so the filesystem side is always read
 /// fresh from disk rather than cached.
+///
+/// # Errors
+///
+/// Returns an error when `dir` cannot be read or a text file is not valid UTF-8.
 pub fn scan_text(
     vfs: &impl Vfs,
     dir: &Path,
@@ -49,5 +53,8 @@ fn scan_into(
 }
 
 pub(super) fn decode(path: &str, bytes: &[u8]) -> Result<String, ReconcileError> {
-    String::from_utf8(bytes.to_vec()).map_err(|_| ReconcileError::NonUtf8(PathBuf::from(path)))
+    String::from_utf8(bytes.to_vec()).map_err(|source| ReconcileError::NonUtf8 {
+        path: PathBuf::from(path),
+        source,
+    })
 }

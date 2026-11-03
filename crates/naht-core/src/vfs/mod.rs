@@ -80,17 +80,41 @@ pub struct DirEntry {
 /// mutability; the daemon owns its [`Vfs`] exclusively.
 pub trait Vfs {
     /// Returns the whole contents of the file at `path`, failing when it is absent or is a directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the file cannot be read.
     fn read(&self, path: &Path) -> Result<Vec<u8>, VfsError>;
     /// Lists the direct children of the directory at `path`, not its subtree; fails when `path` is absent or is a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the directory cannot be listed.
     fn list(&self, path: &Path) -> Result<Vec<DirEntry>, VfsError>;
     /// Creates or overwrites the file at `path`, creating its missing parent directories; fails when `path` names a directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the file cannot be written.
     fn write(&mut self, path: &Path, contents: &[u8]) -> Result<(), VfsError>;
     /// Creates `path` and its missing parents, and succeeds when it already exists; fails when a file is at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the directory cannot be created.
     fn create_dir(&mut self, path: &Path) -> Result<(), VfsError>;
     /// Deletes a file, or a directory together with its whole subtree; fails when nothing is at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the path cannot be removed.
     fn remove(&mut self, path: &Path) -> Result<(), VfsError>;
     /// Reports whether a file or a directory is present at `path`; a path that cannot be checked, or that the project boundary refuses, counts as absent.
     fn exists(&self, path: &Path) -> bool;
     /// Reports whether the entry at `path` is a file or a directory; fails when nothing is at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the path cannot be inspected.
     fn kind(&self, path: &Path) -> Result<EntryKind, VfsError>;
 }

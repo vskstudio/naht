@@ -14,12 +14,11 @@ impl Session {
         let buffer_start_seq = self
             .activity
             .front()
-            .map(|event| event.seq)
-            .unwrap_or(self.activity_next_seq);
+            .map_or(self.activity_next_seq, |event| event.seq);
         let start = self.activity.partition_point(|event| event.seq <= since);
         let events = self.activity.range(start..).cloned().collect();
         SyncActivity {
-            pending: self.unacked.len() as u32,
+            pending: u32::try_from(self.unacked.len()).unwrap_or(u32::MAX),
             buffer_start_seq,
             events,
         }
@@ -27,23 +26,24 @@ impl Session {
 
     /// Confirm that the plugin applied the patches for `paths`: advance the base and the mirror for
     /// each, so they stop re-diffing. Paths not in `paths` stay pending and re-emit next cycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] when the acknowledged paths are unknown.
     pub fn ack(&mut self, paths: &[String]) -> Result<(), SessionError> {
         for path in paths {
             let Some(patch) = self.unacked.remove(path) else {
                 continue;
             };
-            match &patch.content {
-                Some(content) => {
-                    reconciler::set_base(&self.store, &patch.path, &patch.class, content)?;
-                    self.studio.insert(
-                        patch.path.clone(),
-                        TextInstance::new(patch.path.clone(), patch.class.clone(), content.clone()),
-                    );
-                }
-                None => {
-                    self.store.remove(&patch.path)?;
-                    self.studio.remove(&patch.path);
-                }
+            if let Some(content) = &patch.content {
+                reconciler::set_base(&self.store, &patch.path, &patch.class, content)?;
+                self.studio.insert(
+                    patch.path.clone(),
+                    TextInstance::new(patch.path.clone(), patch.class.clone(), content.clone()),
+                );
+            } else {
+                self.store.remove(&patch.path)?;
+                self.studio.remove(&patch.path);
             }
             self.record_event(
                 patch.path.clone(),
@@ -134,8 +134,9 @@ impl Session {
     ) {
         let unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |elapsed| {
+                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+            });
         self.activity.push_back(SyncEvent {
             seq: self.activity_next_seq,
             unix_ms,

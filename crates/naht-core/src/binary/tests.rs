@@ -29,7 +29,7 @@ fn base_with(store: &StateStore, path: &str, content: &[u8]) {
 
 #[test]
 fn scan_blobs_collects_only_terrain_files_with_exact_bytes() {
-    let blob: Vec<u8> = (0u16..300).map(|index| (index % 256) as u8).collect();
+    let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(300).collect();
     let vfs = MemoryVfs::new()
         .with_file("Workspace/Terrain.terrain", blob.clone())
         .with_file("Workspace/Main.luau", b"return 1".to_vec())
@@ -46,7 +46,7 @@ fn scan_blobs_collects_only_terrain_files_with_exact_bytes() {
 
 #[test]
 fn a_blob_round_trips_each_way_without_byte_loss() {
-    let blob: Vec<u8> = (0u16..512).map(|index| (index % 256) as u8).collect();
+    let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(512).collect();
 
     let mut vfs = MemoryVfs::new();
     let store = StateStore::open_in_memory().unwrap();
@@ -126,7 +126,7 @@ fn a_change_on_both_sides_freezes_a_binary_conflict_without_overwriting() {
         &blobs(&[("t.terrain", b"studio-2")]),
     )
     .unwrap();
-    assert!(again.is_empty());
+    assert_eq!(again.len(), 0);
 }
 
 #[test]

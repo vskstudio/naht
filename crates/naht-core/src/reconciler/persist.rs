@@ -9,6 +9,10 @@ use super::model::{ReconcileError, Status};
 use super::scan::decode;
 
 /// List the frozen (conflicted) paths.
+///
+/// # Errors
+///
+/// Returns an error when the state store cannot be read.
 pub fn status(store: &StateStore) -> Result<Status, ReconcileError> {
     Ok(Status {
         conflicted: store
@@ -23,6 +27,10 @@ pub fn status(store: &StateStore) -> Result<Status, ReconcileError> {
 ///
 /// Refuses while any marker remains; on success the resolved file content becomes the new base and
 /// the path unfreezes.
+///
+/// # Errors
+///
+/// Returns an error when `path` has no conflict to resolve, markers remain or the state store fails.
 pub fn resolve(vfs: &impl Vfs, store: &StateStore, path: &str) -> Result<(), ReconcileError> {
     let record = store
         .get(path)?
@@ -43,6 +51,10 @@ pub fn resolve(vfs: &impl Vfs, store: &StateStore, path: &str) -> Result<(), Rec
 /// The daemon calls this when the plugin **acks** a Studio-bound patch: the base is held at the last
 /// agreed content until then, so a patch the plugin never applied keeps re-diffing instead of being
 /// silently considered synced.
+///
+/// # Errors
+///
+/// Returns an error when the base text cannot be stored in the state store.
 pub fn set_base(
     store: &StateStore,
     path: &str,

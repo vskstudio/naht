@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::config::INTERNAL_DIR;
 use crate::server::AppState;
+use crate::session::Session;
 use tokio::runtime::Handle;
 
 /// Why the filesystem watcher could not start watching the project.
@@ -25,6 +26,10 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// Start watching `root` recursively, reconciling into `state` on each debounced batch. The caller
 /// must hold onto the returned guard for as long as watching should continue.
+///
+/// # Errors
+///
+/// Returns [`WatchError`] when the watcher cannot be started.
 pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, WatchError> {
     let runtime = Handle::current();
     let watched_root = root.to_path_buf();
@@ -43,7 +48,7 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, Wat
                 let tasks = state.tasks().clone();
                 tasks.spawn_on(
                     async move {
-                        match state.with_session(|session| session.rescan()).await {
+                        match state.with_session(Session::rescan).await {
                             Ok(Ok(())) => {}
                             Ok(Err(error)) => {
                                 tracing::warn!(target: "naht::watcher", %error, "rescan failed");
@@ -86,7 +91,6 @@ mod tests {
     use super::*;
     use crate::commands;
     use crate::config::Config;
-    use crate::session::Session;
     use tokio::time;
 
     fn event_at(path: &str) -> DebouncedEvent {

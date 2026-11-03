@@ -15,6 +15,10 @@ use super::shared::{Side, class_of, union_keys};
 /// Filesystem-bound effects (writing files, markers, deletions) are applied to `vfs`; Studio-bound
 /// patches are returned for the daemon to forward. Both directions appear in the returned list so a
 /// caller can see exactly what changed and where.
+///
+/// # Errors
+///
+/// Returns an error when scanning, reconciling or the state store fails.
 pub fn reconcile(
     vfs: &mut impl Vfs,
     store: &StateStore,
@@ -81,7 +85,7 @@ impl<V: Vfs> Pass<'_, V> {
                 base_text.as_deref(),
             )?,
             (Some(fs), None) => {
-                self.reconcile_one_side(path, &class, &fs.content, base_text.as_deref(), Side::Fs)?
+                self.reconcile_one_side(path, &class, &fs.content, base_text.as_deref(), Side::Fs)?;
             }
             (None, Some(studio)) => self.reconcile_one_side(
                 path,
@@ -197,17 +201,6 @@ impl<V: Vfs> Pass<'_, V> {
         };
 
         match base {
-            None => {
-                self.materialize(path, content, toward_missing)?;
-                self.patches.push(patch(
-                    path,
-                    class,
-                    toward_missing,
-                    PatchKind::Create,
-                    Some(content),
-                ));
-                advance_base(self.store, path, class, content)?;
-            }
             Some(base) if content == base => {
                 if matches!(present, Side::Fs) {
                     self.vfs.remove(Path::new(path))?;
@@ -216,7 +209,7 @@ impl<V: Vfs> Pass<'_, V> {
                     .push(patch(path, class, toward_present, PatchKind::Delete, None));
                 self.store.remove(path)?;
             }
-            Some(_) => {
+            None | Some(_) => {
                 self.materialize(path, content, toward_missing)?;
                 self.patches.push(patch(
                     path,

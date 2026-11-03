@@ -82,11 +82,11 @@ pub fn scan(root: &Snapshot) -> Vec<Warning> {
 #[must_use]
 pub fn scan_with(root: &Snapshot, options: Options) -> Vec<Warning> {
     let mut warnings = Vec::new();
-    scan_into(root, root.name.clone(), options, &mut warnings);
+    scan_into(root, &root.name, options, &mut warnings);
     warnings
 }
 
-fn scan_into(node: &Snapshot, path: String, options: Options, warnings: &mut Vec<Warning>) {
+fn scan_into(node: &Snapshot, path: &str, options: Options, warnings: &mut Vec<Warning>) {
     let class_reason = if BINARY_GEOMETRY_CLASSES.contains(&node.class.as_str()) {
         Some(Reason::BinaryGeometry)
     } else if node.class == "MeshPart" {
@@ -98,7 +98,7 @@ fn scan_into(node: &Snapshot, path: String, options: Options, warnings: &mut Vec
     };
     if let Some(reason) = class_reason {
         warnings.push(Warning {
-            path: path.clone(),
+            path: path.to_owned(),
             class: node.class.clone(),
             reason,
         });
@@ -107,7 +107,7 @@ fn scan_into(node: &Snapshot, path: String, options: Options, warnings: &mut Vec
     for property in node.properties.keys() {
         if LOCKED_PROPERTIES.contains(&property.as_str()) {
             warnings.push(Warning {
-                path: path.clone(),
+                path: path.to_owned(),
                 class: node.class.clone(),
                 reason: Reason::LockedProperty(property.clone()),
             });
@@ -115,7 +115,7 @@ fn scan_into(node: &Snapshot, path: String, options: Options, warnings: &mut Vec
     }
 
     for child in &node.children {
-        scan_into(child, format!("{path}/{}", child.name), options, warnings);
+        scan_into(child, &format!("{path}/{}", child.name), options, warnings);
     }
 }
 
@@ -182,6 +182,6 @@ mod tests {
         let tree = Snapshot::new("Folder", "proj")
             .with_child(Snapshot::new("ModuleScript", "Greeter"))
             .with_child(Snapshot::new("Script", "Main"));
-        assert!(scan(&tree).is_empty());
+        assert_eq!(scan(&tree).len(), 0);
     }
 }

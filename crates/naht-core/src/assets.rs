@@ -20,6 +20,10 @@ use crate::vfs::{Vfs, VfsError};
 /// Network-bound, so it is a trait: the binary supplies the real Open Cloud client, tests a fake.
 pub trait AssetUploader {
     /// Upload `content` (named `name` for diagnostics) and return its asset id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError::Upload`] when the upload request fails.
     fn upload(&self, name: &str, content: &[u8]) -> Result<String, AssetError>;
 }
 
@@ -65,9 +69,14 @@ pub enum AssetError {
     Vfs(#[from] VfsError),
 }
 
-/// Resolve a local asset blob to an asset id, uploading it **once** and caching the result by content
-/// hash. An unchanged blob (same hash) is served from the cache without re-uploading. An upload
+/// Resolve a local asset blob to an asset id, uploading it once per content hash.
+///
+/// An unchanged blob (same hash) is served from the cache without re-uploading. An upload
 /// failure surfaces here and pauses only this asset, so the caller keeps syncing everything else.
+///
+/// # Errors
+///
+/// Returns an error when the blob cannot be read, the cache fails or the upload fails.
 pub fn resolve_asset(
     uploader: &dyn AssetUploader,
     store: &StateStore,
@@ -88,6 +97,10 @@ pub fn resolve_asset(
 /// Returns `Some(asset_id)` when `value` points to an existing file in `vfs` (so the caller rewrites
 /// the property), or `None` when it is already an asset id or not a local file (left unchanged). This
 /// is the rewrite hook the build/sync pipeline calls when `[assets]` is enabled.
+///
+/// # Errors
+///
+/// Returns an error when the blob cannot be read, the cache fails or the upload fails.
 pub fn resolve_asset_ref(
     uploader: &dyn AssetUploader,
     store: &StateStore,
@@ -127,9 +140,10 @@ pub struct AssetFailure {
     pub error: AssetError,
 }
 
-/// Walk a snapshot and rewrite every string property that references a local asset file to its
-/// uploaded asset id (uploading once, cached). Properties that are already asset ids, or are not
-/// local files, are left untouched. The build/sync pipeline calls this when `[assets]` is enabled.
+/// Rewrite every local asset reference in a snapshot to its uploaded asset id.
+///
+/// Uploads once and caches each file. Properties that are already asset ids, or are not local
+/// files, are left untouched. The build/sync pipeline calls this when `[assets]` is enabled.
 ///
 /// A single asset that fails to resolve does **not** abort the walk (architecture §8): that property
 /// is left at its original reference and recorded in the returned failures, while every other asset
@@ -143,7 +157,7 @@ pub fn rewrite_snapshot_assets(
 ) -> Vec<AssetFailure> {
     let mut failures = Vec::new();
     let path = snapshot.name.clone();
-    rewrite_into(uploader, store, vfs, snapshot, path, &mut failures);
+    rewrite_into(uploader, store, vfs, snapshot, &path, &mut failures);
     failures
 }
 
@@ -152,10 +166,10 @@ fn rewrite_into(
     store: &StateStore,
     vfs: &impl Vfs,
     snapshot: &mut Snapshot,
-    path: String,
+    path: &str,
     failures: &mut Vec<AssetFailure>,
 ) {
-    for (key, value) in snapshot.properties.iter_mut() {
+    for (key, value) in &mut snapshot.properties {
         if key == SOURCE_PROPERTY {
             continue;
         }
@@ -164,7 +178,7 @@ fn rewrite_into(
                 Ok(Some(asset_id)) => *value = Variant::String(asset_id),
                 Ok(None) => {}
                 Err(error) => failures.push(AssetFailure {
-                    path: path.clone(),
+                    path: path.to_owned(),
                     property: key.clone(),
                     error,
                 }),
@@ -173,7 +187,7 @@ fn rewrite_into(
     }
     for child in &mut snapshot.children {
         let child_path = format!("{path}/{}", child.name);
-        rewrite_into(uploader, store, vfs, child, child_path, failures);
+        rewrite_into(uploader, store, vfs, child, &child_path, failures);
     }
 }
 

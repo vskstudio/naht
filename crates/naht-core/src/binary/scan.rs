@@ -6,9 +6,14 @@ use crate::vfs::{EntryKind, Vfs};
 
 use super::model::{BLOB_EXTENSION, BlobInstance, TERRAIN_CLASS};
 
-/// Walk `dir` in `vfs` and collect every binary blob file (`*.terrain`) into the flat, path-keyed
-/// map the blob reconciler consumes: the binary counterpart of [`crate::reconciler::scan_text`].
-/// Non-blob files are skipped, not lost; the text scan picks them up instead.
+/// Collect every binary blob file (`*.terrain`) under `dir` into a flat, path-keyed map.
+///
+/// This is the binary counterpart of [`crate::reconciler::scan_text`], consumed by the blob
+/// reconciler. Non-blob files are skipped, not lost; the text scan picks them up instead.
+///
+/// # Errors
+///
+/// Returns an error when `dir` cannot be listed or a blob cannot be read.
 pub fn scan_blobs(
     vfs: &impl Vfs,
     dir: &Path,

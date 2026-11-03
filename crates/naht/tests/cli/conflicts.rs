@@ -42,10 +42,11 @@ fn status_and_resolve_reflect_the_conflict_state() {
     commands::resolve(&root, rel).unwrap();
 
     let resolved_store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-    assert!(
+    assert_eq!(
         reconciler::status(&resolved_store)
             .unwrap()
             .conflicted
-            .is_empty()
+            .len(),
+        0
     );
 }

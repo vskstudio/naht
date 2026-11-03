@@ -30,7 +30,7 @@ async fn a_new_file_becomes_a_queued_patch() {
     tokio::spawn({
         let state = Arc::clone(&state);
         async move {
-            let _ = server::serve(listener, state).await;
+            let _served = server::serve(listener, state).await;
         }
     });
 

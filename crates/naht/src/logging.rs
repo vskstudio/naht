@@ -29,6 +29,10 @@ fn resolve_directive(verbose: u8, naht_log: Option<String>, rust_log: Option<Str
 
 /// Install the global tracing subscriber, writing to stderr. Idempotent in practice, called once
 /// from `main`.
+///
+/// # Errors
+///
+/// Returns an error when a global subscriber is already installed.
 pub fn init(verbose: u8) -> Result<(), SetGlobalDefaultError> {
     let directive = resolve_directive(
         verbose,

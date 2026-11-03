@@ -29,7 +29,7 @@ impl Session {
             activity: VecDeque::new(),
             activity_next_seq: 1,
             project_name: project_name.into(),
-            session_id: new_session_id(),
+            id: new_session_id(),
             serve_place_id,
             terrain_sync,
         }
@@ -41,7 +41,7 @@ impl Session {
             protocol_version: PROTOCOL_VERSION,
             server_version: naht_core::version().to_owned(),
             project_name: self.project_name.clone(),
-            session_id: self.session_id.clone(),
+            session_id: self.id.clone(),
             serve_place_id: self.serve_place_id,
         }
     }
@@ -57,6 +57,10 @@ impl Session {
     }
 
     /// Validate a Studio-originated path against the project root before mutating session state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when `path` escapes the root or cannot be checked.
     pub fn validate_path(&self, path: &str) -> Result<(), VfsError> {
         self.vfs.validate_path(path)
     }

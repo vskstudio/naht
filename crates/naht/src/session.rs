@@ -3,7 +3,7 @@
 //!
 //! The filesystem is read fresh from disk on every reconcile (so a concurrent FS edit always merges
 //! against the latest content); only the Studio side is mirrored in memory, because the daemon
-//! cannot read the live DataModel.
+//! cannot read the live `DataModel`.
 //!
 //! **Filesystem → Studio patches are ack-gated.** The base (and the mirror) advance for a
 //! Studio-bound patch only once the plugin confirms it applied (`ack`). Until then the base is held
@@ -72,7 +72,7 @@ pub struct Session {
     /// The seq to stamp on the next recorded event; monotonic within this session.
     activity_next_seq: u64,
     project_name: String,
-    session_id: String,
+    id: String,
     serve_place_id: Option<u64>,
     terrain_sync: bool,
 }
@@ -80,7 +80,6 @@ pub struct Session {
 fn new_session_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |elapsed| elapsed.as_nanos());
     format!("{nanos:x}")
 }

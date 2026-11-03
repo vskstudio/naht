@@ -3,6 +3,10 @@
 /// The daemon joins protocol paths to a project root, so absolute paths and parent components
 /// would otherwise escape that root. Backslashes and drive prefixes are rejected explicitly so the
 /// same wire contract is safe on Unix and Windows.
+///
+/// # Errors
+///
+/// Returns [`ProjectPathError`] when `path` is not a valid project-relative path.
 pub fn validate_project_path(path: &str) -> Result<(), ProjectPathError> {
     if path.is_empty() {
         return Err(ProjectPathError::Empty);

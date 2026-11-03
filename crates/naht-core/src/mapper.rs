@@ -9,6 +9,7 @@
 //! are not Roblox instances and are skipped, not lost.
 
 use std::path::{Path, PathBuf};
+use std::string::FromUtf8Error;
 
 use rbx_dom_weak::types::Variant;
 
@@ -31,14 +32,24 @@ pub enum MapError {
     #[error(transparent)]
     Frontmatter(#[from] FrontmatterError),
     /// A script body was not valid UTF-8.
-    #[error("non-UTF-8 script source: {0}")]
-    NonUtf8(PathBuf),
+    #[error("non-UTF-8 script source: {}", .path.display())]
+    NonUtf8 {
+        /// The script whose body could not be decoded.
+        path: PathBuf,
+        /// The decoding failure.
+        #[source]
+        source: FromUtf8Error,
+    },
     /// A path had no final component to name an instance after.
     #[error("path has no file name: {0}")]
     NoFileName(PathBuf),
 }
 
 /// Map a directory (and everything under it) into a [`Snapshot`] tree.
+///
+/// # Errors
+///
+/// Returns an error when `dir` cannot be read or a file is not valid UTF-8.
 pub fn snapshot_dir(vfs: &impl Vfs, dir: &Path) -> Result<Snapshot, MapError> {
     let name = file_name(dir)?;
     let entries = vfs.list(dir)?;
@@ -78,6 +89,10 @@ pub fn snapshot_dir(vfs: &impl Vfs, dir: &Path) -> Result<Snapshot, MapError> {
 }
 
 /// Write a [`Snapshot`] tree into `parent`, the inverse of [`snapshot_dir`].
+///
+/// # Errors
+///
+/// Returns an error when a directory or file cannot be written.
 pub fn write_tree(vfs: &mut impl Vfs, parent: &Path, snapshot: &Snapshot) -> Result<(), MapError> {
     if is_script(&snapshot.class) {
         let content = script_content(snapshot);
@@ -115,7 +130,10 @@ fn script_snapshot(
     name: &str,
 ) -> Result<Snapshot, MapError> {
     let bytes = vfs.read(path)?;
-    let body = String::from_utf8(bytes).map_err(|_| MapError::NonUtf8(path.to_path_buf()))?;
+    let body = String::from_utf8(bytes).map_err(|source| MapError::NonUtf8 {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let (mut properties, source) = frontmatter::split(&body)?;
     properties.insert(SOURCE_PROPERTY.to_owned(), Variant::String(source));
     Ok(Snapshot {
@@ -265,7 +283,7 @@ mod tests {
         let tree = snapshot_dir(&vfs, Path::new("proj")).unwrap();
         let empty = child(&tree, "empty");
         assert_eq!(empty.class, "Folder");
-        assert!(empty.children.is_empty());
+        assert_eq!(empty.children.len(), 0);
     }
 
     #[test]
