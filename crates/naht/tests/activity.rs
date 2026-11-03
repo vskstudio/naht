@@ -1,5 +1,7 @@
 //! Activity buffer + pending count, driven directly against `Session`.
 
+#![cfg(test)]
+
 use naht::session::Session;
 use naht_core::protocol::{Change, EventKind, Outcome};
 use naht_core::reconciler::Direction;

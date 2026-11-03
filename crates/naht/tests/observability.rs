@@ -3,6 +3,8 @@
 //! Captures events with a minimal layer (no env filter) so the assertion is deterministic and not
 //! at the mercy of an ambient log level.
 
+#![cfg(test)]
+
 use std::sync::{Arc, Mutex};
 
 use naht::session::Session;

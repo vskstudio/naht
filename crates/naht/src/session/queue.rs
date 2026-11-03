@@ -70,7 +70,7 @@ impl Session {
         );
         self.blob_queue
             .insert(patch.path.clone(), (self.blob_next_seq, patch));
-        self.blob_next_seq += 1;
+        self.blob_next_seq = self.blob_next_seq.saturating_add(1);
     }
 
     /// Whether any queued blob patch has a sequence at or beyond `cursor`.
@@ -122,7 +122,7 @@ impl Session {
         );
         self.queue
             .insert(patch.path.clone(), (self.next_seq, patch));
-        self.next_seq += 1;
+        self.next_seq = self.next_seq.saturating_add(1);
     }
 
     pub(super) fn record_event(
@@ -144,7 +144,7 @@ impl Session {
             kind,
             outcome,
         });
-        self.activity_next_seq += 1;
+        self.activity_next_seq = self.activity_next_seq.saturating_add(1);
         if self.activity.len() > ACTIVITY_CAP {
             self.activity.pop_front();
         }

@@ -2,6 +2,8 @@
 //! state, so an atomic save (write-temp-then-rename) and a rapid create→delete coalesce correctly
 //! rather than flapping into spurious delete+create patches.
 
+#![cfg(test)]
+
 use naht::session::Session;
 use naht_core::protocol::Change;
 use naht_core::reconciler::PatchKind;

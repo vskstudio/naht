@@ -64,6 +64,16 @@ unescaped_backticks = "warn"
 
 [workspace.lints.clippy]
 dbg_macro = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+get_unwrap = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+arithmetic_side_effects = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
 complexity = { level = "warn", priority = -1 }

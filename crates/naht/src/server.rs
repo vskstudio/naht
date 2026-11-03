@@ -128,7 +128,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::<_, ()>::new(overload))
-                .layer(TimeoutLayer::new(state.long_poll + TIMEOUT_SLACK))
+                .layer(TimeoutLayer::new(
+                    state.long_poll.saturating_add(TIMEOUT_SLACK),
+                ))
                 .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
                 .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
                 .layer(DefaultBodyLimit::max(BODY_LIMIT)),
