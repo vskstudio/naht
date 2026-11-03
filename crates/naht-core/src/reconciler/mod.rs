@@ -20,5 +20,5 @@ mod tests;
 pub use model::{Direction, Patch, PatchKind, ReconcileError, Status, TextInstance};
 pub use persist::{resolve, set_base, status};
 pub use scan::scan_text;
-pub(crate) use shared::{Classed, Side, class_of, union_keys};
+pub(crate) use shared::{Classed, Side, class_of, remove_fs_copy, union_keys, write_toward};
 pub use sync::reconcile;
