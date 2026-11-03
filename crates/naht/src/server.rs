@@ -9,12 +9,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Router;
 use naht_core::protocol::{
     self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong,
 };
@@ -85,23 +85,23 @@ struct InfoQuery {
 
 async fn info(State(state): State<Arc<AppState>>, Query(query): Query<InfoQuery>) -> Response {
     let mut session = state.session.lock().await;
-    if let Some(expected) = session.serve_place_id() {
-        if query.place_id != Some(expected) {
-            tracing::warn!(
-                target: "naht::server",
-                expected,
-                reported = ?query.place_id,
-                "handshake rejected: place id mismatch"
-            );
-            return (
-                StatusCode::FORBIDDEN,
-                format!(
-                    "place id mismatch: project serves {expected}, plugin reported {:?}",
-                    query.place_id
-                ),
-            )
-                .into_response();
-        }
+    if let Some(expected) = session.serve_place_id()
+        && query.place_id != Some(expected)
+    {
+        tracing::warn!(
+            target: "naht::server",
+            expected,
+            reported = ?query.place_id,
+            "handshake rejected: place id mismatch"
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            format!(
+                "place id mismatch: project serves {expected}, plugin reported {:?}",
+                query.place_id
+            ),
+        )
+            .into_response();
     }
     if let Err(error) = session.rescan() {
         return internal_error(&error);

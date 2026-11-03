@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use naht_core::binary::{self, BlobInstance, BlobPatch};
 use naht_core::protocol::{
-    Change, EventKind, Outcome, ServerInfo, SyncActivity, SyncEvent, PROTOCOL_VERSION,
+    Change, EventKind, Outcome, PROTOCOL_VERSION, ServerInfo, SyncActivity, SyncEvent,
 };
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::{InstanceRecord, StateStore};

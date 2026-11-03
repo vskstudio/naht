@@ -2,7 +2,7 @@
 
 The thin Luau plugin that closes the live loop: it long-polls the daemon, applies patches to the
 DataModel, pushes Studio-side edits back, and shows connection state. **No sync logic lives here** —
-mapping, reconciliation, and merge are all in [`naht-core`](../naht-core). This is transport + apply
+mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core). This is transport + apply
 + report (architecture §3).
 
 ## Layout

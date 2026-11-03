@@ -10,7 +10,7 @@ use std::path::Path;
 use rbx_dom_weak::types::Variant;
 
 use crate::hash::content_hash;
-use crate::snapshot::{Snapshot, SOURCE_PROPERTY};
+use crate::snapshot::{SOURCE_PROPERTY, Snapshot};
 use crate::state::{StateError, StateStore};
 use crate::vfs::{Vfs, VfsError};
 

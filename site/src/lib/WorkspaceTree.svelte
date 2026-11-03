@@ -8,11 +8,11 @@
     <div class="wtree">
       <div class="row"><span class="ico dir"></span><span class="nm">naht/</span></div>
       <div class="row l2"><span class="ico file"></span> Cargo.toml <span class="tag d">{$t.architecture.tomlTag}</span></div>
-      <div class="row l2"><span class="ico crate-core"></span><span class="nm">naht-core/</span> <span class="tag core">{$t.architecture.badgeCore}</span></div>
+      <div class="row l2"><span class="ico crate-core"></span><span class="nm">crates/naht-core/</span> <span class="tag core">{$t.architecture.badgeCore}</span></div>
       <div class="row l3"><span class="ico file"></span> reconcile.rs</div>
       <div class="row l3"><span class="ico file"></span> merge.rs</div>
       <div class="row l3"><span class="ico file"></span> diff.rs</div>
-      <div class="row l2"><span class="ico crate-d"></span><span class="nm">naht/</span> <span class="tag d">{$t.architecture.badgeDaemon}</span></div>
+      <div class="row l2"><span class="ico crate-d"></span><span class="nm">crates/naht/</span> <span class="tag d">{$t.architecture.badgeDaemon}</span></div>
       <div class="row l3"><span class="ico file"></span> serve.rs</div>
       <div class="row l3"><span class="ico file"></span> watch.rs</div>
       <div class="row l3"><span class="ico file"></span> transport.rs</div>
@@ -22,7 +22,7 @@
     <div>
       <div class="wcode">
         <div class="cl"><span class="g">1</span><span><span class="s-sec">[workspace]</span></span></div>
-        <div class="cl"><span class="g">2</span><span><span class="s-key">members</span> = [<span class="s-str">"naht-core"</span>, <span class="s-str">"naht"</span>]</span></div>
+        <div class="cl"><span class="g">2</span><span><span class="s-key">members</span> = [<span class="s-str">"crates/*"</span>]</span></div>
         <div class="cl"><span class="g">3</span><span></span></div>
         {#each $t.architecture.tomlComment as c, i (i)}
           <div class="cl"><span class="g">{i + 4}</span><span><span class="s-cm">{c}</span></span></div>

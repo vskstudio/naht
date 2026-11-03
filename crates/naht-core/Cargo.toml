@@ -1,0 +1,29 @@
+[package]
+name = "naht-core"
+description = "The brain of Naht: VFS, path mapping, reconciliation, 3-way merge and state store. Zero network I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+diffy.workspace = true
+rbx_binary.workspace = true
+rbx_dom_weak.workspace = true
+rbx_reflection.workspace = true
+rbx_reflection_database.workspace = true
+rbx_xml.workspace = true
+rmp-serde.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_bytes.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

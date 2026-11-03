@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use rbx_dom_weak::types::Variant;
 
 use crate::frontmatter::{self, FrontmatterError};
-use crate::snapshot::{Snapshot, SOURCE_PROPERTY};
+use crate::snapshot::{SOURCE_PROPERTY, Snapshot};
 use crate::vfs::{EntryKind, Vfs, VfsError};
 
 const SCRIPT: &str = "Script";
@@ -146,10 +146,10 @@ pub(crate) fn script_class(file_name: &str) -> Option<(&'static str, String)> {
         (".client.luau", LOCAL_SCRIPT),
         (".luau", MODULE_SCRIPT),
     ] {
-        if let Some(stem) = file_name.strip_suffix(suffix) {
-            if !stem.is_empty() {
-                return Some((class, stem.to_string()));
-            }
+        if let Some(stem) = file_name.strip_suffix(suffix)
+            && !stem.is_empty()
+        {
+            return Some((class, stem.to_string()));
         }
     }
     None

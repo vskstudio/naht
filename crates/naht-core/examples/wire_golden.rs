@@ -6,7 +6,7 @@
 
 use naht_core::binary::BlobPatch;
 use naht_core::protocol::{
-    self, BlobPatchBatch, Change, ChangeBatch, PatchBatch, ServerInfo, PROTOCOL_VERSION,
+    self, BlobPatchBatch, Change, ChangeBatch, PROTOCOL_VERSION, PatchBatch, ServerInfo,
 };
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 

@@ -73,10 +73,10 @@ impl StateStore {
     /// Open (creating if absent) the state database at `path`, running migrations and verifying the
     /// schema version.
     pub fn open(path: &Path) -> Result<Self, StateError> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
         Self::init(Connection::open(path)?)
     }
@@ -248,7 +248,7 @@ impl StateStore {
     }
 }
 
-fn row_to_record(row: &rusqlite::Row) -> rusqlite::Result<InstanceRecord> {
+fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstanceRecord> {
     Ok(InstanceRecord {
         guid: row.get(0)?,
         path: row.get(1)?,

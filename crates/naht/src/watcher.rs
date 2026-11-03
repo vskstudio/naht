@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use notify_debouncer_full::notify::RecursiveMode;
-use notify_debouncer_full::{new_debouncer, DebounceEventResult};
+use notify_debouncer_full::{DebounceEventResult, new_debouncer};
 
 use crate::server::AppState;
 
@@ -19,7 +19,7 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// Start watching `root` recursively, reconciling into `state` on each debounced batch. The caller
 /// must hold onto the returned guard for as long as watching should continue.
-pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop> {
+pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>> {
     let runtime = tokio::runtime::Handle::current();
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         // A failed batch (e.g. a transient watch error) is skipped; the next event re-syncs, and a
