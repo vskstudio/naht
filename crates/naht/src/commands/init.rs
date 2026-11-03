@@ -25,6 +25,10 @@ pub enum Initialized {
 }
 
 /// Scaffold a new project at `path`, or convert an existing Rojo project there when `from_rojo`.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the project files cannot be written.
 pub fn init(path: &Path, from_rojo: bool) -> Result<Initialized, CommandError> {
     fs::create_dir_all(path).map_err(|source| CommandError::CreateDir {
         path: path.to_path_buf(),

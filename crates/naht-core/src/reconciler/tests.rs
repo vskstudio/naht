@@ -78,7 +78,7 @@ fn no_change_produces_no_patches() {
         &sides(&[("m", "v1")]),
     )
     .unwrap();
-    assert!(patches.is_empty());
+    assert_eq!(patches.len(), 0);
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn a_frozen_path_is_skipped_on_the_next_reconcile() {
         &sides(&[("m", "local a = 44\n")]),
     )
     .unwrap();
-    assert!(patches.is_empty());
+    assert_eq!(patches.len(), 0);
     assert_eq!(status(&store).unwrap().conflicted, vec!["m".to_owned()]);
 }
 
@@ -190,7 +190,7 @@ fn resolve_refuses_while_markers_remain_then_succeeds() {
 
     vfs.write(Path::new("m"), b"local a = 99\n").unwrap();
     resolve(&vfs, &store, "m").unwrap();
-    assert!(status(&store).unwrap().conflicted.is_empty());
+    assert_eq!(status(&store).unwrap().conflicted.len(), 0);
     assert_eq!(
         store.get("m").unwrap().unwrap().base_content,
         Some(b"local a = 99\n".to_vec())
@@ -242,7 +242,7 @@ fn reconcile_scales_to_a_large_tree_without_quadratic_blowup() {
 
     let steady_start = Instant::now();
     let steady_patches = reconcile(&mut vfs, &store, &fs, &fs).unwrap();
-    assert!(steady_patches.is_empty());
+    assert_eq!(steady_patches.len(), 0);
     assert!(
         steady_start.elapsed() < Duration::from_secs(10),
         "steady-state reconcile too slow: {:?}",
@@ -271,7 +271,7 @@ fn scan_collects_source_files_as_text_instances_and_skips_the_rest() {
             )
         })
         .collect();
-    got.sort();
+    got.sort_unstable();
     assert_eq!(
         got,
         vec![

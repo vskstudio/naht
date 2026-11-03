@@ -36,7 +36,7 @@ fn package_plugin_produces_a_loadable_rbxmx_with_the_entry_script() {
 #[test]
 fn check_release_version_guards_the_tag_against_the_workspace_version() {
     let version = naht_core::version();
-    assert!(commands::check_release_version(&format!("v{version}")).is_ok());
-    assert!(commands::check_release_version(version).is_ok());
+    commands::check_release_version(&format!("v{version}")).expect("release version is valid");
+    commands::check_release_version(version).expect("release version is valid");
     assert!(commands::check_release_version("v0.0.0-not-the-version").is_err());
 }

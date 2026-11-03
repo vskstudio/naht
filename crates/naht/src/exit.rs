@@ -53,11 +53,13 @@ impl From<&CommandError> for Exit {
             CommandError::Tree { .. }
             | CommandError::RojoParse { .. }
             | CommandError::Build(_)
-            | CommandError::ReleaseMismatch { .. } => Self::DataError,
+            | CommandError::ReleaseMismatch { .. }
+            | CommandError::Reconcile(
+                ReconcileError::NonUtf8 { .. }
+                | ReconcileError::NotConflicted(_)
+                | ReconcileError::MarkersRemain(_),
+            ) => Self::DataError,
             CommandError::RenderConfig(_) => Self::Software,
-            CommandError::Reconcile(ReconcileError::NonUtf8(_))
-            | CommandError::Reconcile(ReconcileError::NotConflicted(_))
-            | CommandError::Reconcile(ReconcileError::MarkersRemain(_)) => Self::DataError,
             CommandError::Reconcile(ReconcileError::State(_) | ReconcileError::Vfs(_))
             | CommandError::CreateDir { .. }
             | CommandError::Write { .. }

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::string::FromUtf8Error;
 
 use serde::{Deserialize, Serialize};
 
@@ -85,8 +86,14 @@ pub enum ReconcileError {
     #[error(transparent)]
     Vfs(#[from] VfsError),
     /// A text file holds bytes that are not valid UTF-8.
-    #[error("non-UTF-8 content at {}", .0.display())]
-    NonUtf8(PathBuf),
+    #[error("non-UTF-8 content at {}", .path.display())]
+    NonUtf8 {
+        /// The file whose content could not be decoded.
+        path: PathBuf,
+        /// The decoding failure.
+        #[source]
+        source: FromUtf8Error,
+    },
     /// `resolve` was asked about a path that is not conflicted.
     #[error("no conflict to resolve at {}", .0.display())]
     NotConflicted(PathBuf),

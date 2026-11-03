@@ -23,14 +23,24 @@ pub struct Built {
     pub warnings: Vec<String>,
 }
 
-/// Build the project at `root` into `output` once. The output extension picks the artifact:
-/// `.rbxl`/`.rbxlx` build a **place** (a `DataModel` with convention-mapped services), anything else
-/// a **model**; `.rbxmx`/`.rbxlx` are XML, the rest binary.
+/// Build the project at `root` into `output` once.
+///
+/// The output extension picks the artifact: `.rbxl`/`.rbxlx` build a **place** (a `DataModel` with
+/// convention-mapped services), anything else a **model**; `.rbxmx`/`.rbxlx` are XML, the rest
+/// binary.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the project cannot be read or the output cannot be written.
 pub fn build(root: &Path, output: &Path) -> Result<Built, CommandError> {
     build_once(&canonical(root)?, output)
 }
 
 /// Build once, then rebuild on every debounced change for as long as the returned guard is held.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the project cannot be built or the watcher cannot start.
 pub fn build_watch(root: &Path, output: &Path) -> Result<(Built, impl Drop + use<>), CommandError> {
     let root = canonical(root)?;
     let built = build_once(&root, output)?;
@@ -77,9 +87,14 @@ fn is_place_output(output: &Path) -> bool {
     )
 }
 
-/// Watch `root` and rebuild `output` on each debounced change. The caller holds the returned guard
-/// for as long as watching should continue. Our own output writes are ignored, so the rebuild does
-/// not trigger itself.
+/// Watch `root` and rebuild `output` on each debounced change.
+///
+/// The caller holds the returned guard for as long as watching should continue. Our own output
+/// writes are ignored, so the rebuild does not trigger itself.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the watcher cannot be started.
 pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use<>, CommandError> {
     let root = canonical(root)?;
     let watch_root = root.clone();

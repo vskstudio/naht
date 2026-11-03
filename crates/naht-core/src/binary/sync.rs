@@ -12,6 +12,10 @@ use super::model::{BlobInstance, BlobPatch, patch};
 ///
 /// Filesystem writes and deletions are applied to `vfs`; Studio-bound patches are returned. A blob
 /// changed on both sides freezes that path as a binary conflict: nothing is overwritten.
+///
+/// # Errors
+///
+/// Returns an error when scanning, the state store or a write fails.
 pub fn reconcile_blobs(
     vfs: &mut impl Vfs,
     store: &StateStore,
@@ -126,17 +130,6 @@ impl<V: Vfs> Pass<'_, V> {
             Side::Studio => (Direction::ToFs, Direction::ToStudio),
         };
         match base_hash {
-            None => {
-                self.materialize(path, content, toward_missing)?;
-                self.patches.push(patch(
-                    path,
-                    class,
-                    toward_missing,
-                    PatchKind::Create,
-                    Some(content),
-                ));
-                advance(self.store, path, class, content)?;
-            }
             Some(base_hash) if content_hash(content) == base_hash => {
                 if matches!(present, Side::Fs) {
                     self.vfs.remove(Path::new(path))?;
@@ -145,7 +138,7 @@ impl<V: Vfs> Pass<'_, V> {
                     .push(patch(path, class, toward_present, PatchKind::Delete, None));
                 self.store.remove(path)?;
             }
-            Some(_) => {
+            None | Some(_) => {
                 self.materialize(path, content, toward_missing)?;
                 self.patches.push(patch(
                     path,

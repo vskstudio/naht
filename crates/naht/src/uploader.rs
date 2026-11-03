@@ -1,6 +1,7 @@
-//! The real Open Cloud asset uploader (Stage 12). `naht-core` defines the [`AssetUploader`] interface
-//! and the upload-once/cache policy with no network I/O; this is the binary-side client that actually
-//! talks to Roblox Open Cloud.
+//! The real Open Cloud asset uploader (Stage 12).
+//!
+//! `naht-core` defines the [`AssetUploader`] interface and the upload-once/cache policy with no
+//! network I/O; this is the binary-side client that actually talks to Roblox Open Cloud.
 //!
 //! The API key never appears in config or code, only the *name* of an environment variable holding
 //! it. The blocking HTTP runs on a dedicated thread so it doesn't panic inside the async runtime.
@@ -53,6 +54,10 @@ impl fmt::Debug for OpenCloudUploader {
 
 impl OpenCloudUploader {
     /// Build the uploader from config, reading the API key from the named environment variable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UploaderError`] when the API key variable is missing or the client cannot be built.
     pub fn from_config(assets: &AssetsConfig) -> Result<Self, UploaderError> {
         let env_name = assets
             .api_key_env

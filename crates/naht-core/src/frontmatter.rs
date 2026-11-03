@@ -5,6 +5,7 @@
 //! it back, so the body and its properties round-trip exactly.
 
 use std::collections::BTreeMap;
+use std::num::{ParseFloatError, ParseIntError};
 
 use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Variant, Vector3};
 
@@ -22,12 +23,34 @@ pub enum FrontmatterError {
     /// A value could not be parsed as a bool, number, or quoted string.
     #[error("unparseable frontmatter value: {0:?}")]
     BadValue(String),
+    /// An enum value was not an unsigned integer.
+    #[error("frontmatter enum value {raw:?} is not an unsigned integer")]
+    BadEnum {
+        /// The raw value as written in the directive.
+        raw: String,
+        /// The integer parse failure.
+        #[source]
+        source: ParseIntError,
+    },
+    /// A vector or color component was not a float.
+    #[error("frontmatter component {raw:?} is not a float")]
+    BadComponent {
+        /// The raw component as written in the directive.
+        raw: String,
+        /// The float parse failure.
+        #[source]
+        source: ParseFloatError,
+    },
 }
 
 /// Split a leading frontmatter directive off a script body.
 ///
 /// Returns the parsed properties (empty if there is no directive) and the remaining body with the
 /// directive line and its trailing newline removed.
+///
+/// # Errors
+///
+/// Returns an error when the frontmatter block or one of its entries is malformed.
 pub fn split(body: &str) -> Result<(BTreeMap<String, Variant>, String), FrontmatterError> {
     let Some(rest) = directive_rest(body) else {
         return Ok((BTreeMap::new(), body.to_owned()));
@@ -157,7 +180,10 @@ fn parse_value(raw: &str) -> Result<Variant, FrontmatterError> {
         let value = args
             .trim()
             .parse::<u32>()
-            .map_err(|_| FrontmatterError::BadValue(raw.to_owned()))?;
+            .map_err(|source| FrontmatterError::BadEnum {
+                raw: raw.to_owned(),
+                source,
+            })?;
         return Ok(Variant::Enum(Enum::from_u32(value)));
     }
     if let Some(args) = call_args(raw, "Tags") {
@@ -197,7 +223,10 @@ fn floats<const N: usize>(whole: &str, args: &str) -> Result<[f32; N], Frontmatt
         *slot = part
             .trim()
             .parse::<f32>()
-            .map_err(|_| FrontmatterError::BadValue(whole.to_owned()))?;
+            .map_err(|source| FrontmatterError::BadComponent {
+                raw: whole.to_owned(),
+                source,
+            })?;
     }
     Ok(out)
 }
@@ -219,32 +248,62 @@ fn parse_tags(args: &str) -> Result<Tags, FrontmatterError> {
 }
 
 fn render_value(value: &Variant) -> String {
-    match value {
-        Variant::Bool(flag) => flag.to_string(),
-        Variant::Int64(number) => number.to_string(),
-        Variant::Float64(f) => format!("{f:?}"),
-        Variant::String(text) => format!("\"{}\"", escape(text)),
-        Variant::Color3(color) => format!("Color3({:?}, {:?}, {:?})", color.r, color.g, color.b),
-        Variant::Vector3(vector) => {
-            format!("Vector3({:?}, {:?}, {:?})", vector.x, vector.y, vector.z)
-        }
-        Variant::Enum(enum_value) => format!("Enum({})", enum_value.to_u32()),
-        Variant::Tags(tags) => {
-            let items: Vec<String> = tags
-                .iter()
-                .map(|tag| format!("\"{}\"", escape(tag)))
-                .collect();
-            format!("Tags({})", items.join(", "))
-        }
-        Variant::Attributes(attributes) => {
-            let items: Vec<String> = attributes
-                .iter()
-                .map(|(key, variant)| format!("{key} = {}", render_value(variant)))
-                .collect();
-            format!("Attributes({{ {} }})", items.join(", "))
-        }
-        other => format!("{other:?}"),
+    if let Some(rendered) = render_scalar(value) {
+        return rendered;
     }
+    if let Some(rendered) = render_collection(value) {
+        return rendered;
+    }
+    format!("{value:?}")
+}
+
+fn render_scalar(value: &Variant) -> Option<String> {
+    if let Variant::Bool(flag) = value {
+        return Some(flag.to_string());
+    }
+    if let Variant::Int64(number) = value {
+        return Some(number.to_string());
+    }
+    if let Variant::Float64(f) = value {
+        return Some(format!("{f:?}"));
+    }
+    if let Variant::String(text) = value {
+        return Some(format!("\"{}\"", escape(text)));
+    }
+    if let Variant::Color3(color) = value {
+        return Some(format!(
+            "Color3({:?}, {:?}, {:?})",
+            color.r, color.g, color.b
+        ));
+    }
+    if let Variant::Vector3(vector) = value {
+        return Some(format!(
+            "Vector3({:?}, {:?}, {:?})",
+            vector.x, vector.y, vector.z
+        ));
+    }
+    if let Variant::Enum(enum_value) = value {
+        return Some(format!("Enum({})", enum_value.to_u32()));
+    }
+    None
+}
+
+fn render_collection(value: &Variant) -> Option<String> {
+    if let Variant::Tags(tags) = value {
+        let items: Vec<String> = tags
+            .iter()
+            .map(|tag| format!("\"{}\"", escape(tag)))
+            .collect();
+        return Some(format!("Tags({})", items.join(", ")));
+    }
+    if let Variant::Attributes(attributes) = value {
+        let items: Vec<String> = attributes
+            .iter()
+            .map(|(key, variant)| format!("{key} = {}", render_value(variant)))
+            .collect();
+        return Some(format!("Attributes({{ {} }})", items.join(", ")));
+    }
+    None
 }
 
 fn escape(text: &str) -> String {
@@ -258,12 +317,11 @@ fn unescape(text: &str) -> String {
         if character == '\\' {
             match chars.next() {
                 Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
+                Some('\\') | None => out.push('\\'),
                 Some(other) => {
                     out.push('\\');
                     out.push(other);
                 }
-                None => out.push('\\'),
             }
         } else {
             out.push(character);

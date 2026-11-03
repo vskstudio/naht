@@ -9,12 +9,20 @@ use naht_core::{limits, reconciler};
 use std::path::Path;
 
 /// The project's conflict state: the paths frozen pending `resolve`.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the project cannot be read.
 pub fn status(root: &Path) -> Result<reconciler::Status, CommandError> {
     let store = open_store(root)?;
     Ok(reconciler::status(&store)?)
 }
 
 /// Clear a conflict at `path` once its markers have been removed by hand.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when `path` cannot be resolved.
 pub fn resolve(root: &Path, path: &str) -> Result<(), CommandError> {
     let store = open_store(root)?;
     let vfs = rooted(root)?;
@@ -22,10 +30,15 @@ pub fn resolve(root: &Path, path: &str) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// When `[assets]` is enabled, upload local asset files referenced by properties and rewrite them to
-/// `rbxassetid://…`. Disabled by default, so the common case does no network I/O and leaves every
-/// property untouched. Returns one warning per asset that stayed at its original reference, so a
-/// single bad asset never aborts the whole build.
+/// Upload local asset files referenced by properties and rewrite them to `rbxassetid://…`.
+///
+/// Runs only when `[assets]` is enabled. Disabled by default, so the common case does no network
+/// I/O and leaves every property untouched. Returns one warning per asset that stayed at its
+/// original reference, so a single bad asset never aborts the whole build.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when an asset cannot be uploaded or the state store fails.
 pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<Vec<String>, CommandError> {
     let config = Config::load(root)?;
     if !config.assets.is_enabled() {
@@ -51,10 +64,11 @@ pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<Vec<String
     Ok(warnings)
 }
 
-/// The instances that can't round-trip live in a `serve` session, honoring the project's enabled
-/// capabilities, notably `[serve] terrain_sync`, which drives the daemon's blob channel and so stops
-/// terrain from being flagged. The same options the running session uses, so the warning matches what
-/// actually syncs.
+/// The instances that cannot round-trip, reported as warnings for a `serve` session.
+///
+/// Honors the project's enabled capabilities, notably `[serve] terrain_sync`, which drives the
+/// daemon's blob channel and so stops terrain from being flagged. Uses the same options the running
+/// session uses, so the warning matches what actually syncs.
 #[must_use]
 pub fn serve_warnings(config: &Config, snapshot: &Snapshot) -> Vec<limits::Warning> {
     limits::scan_with(

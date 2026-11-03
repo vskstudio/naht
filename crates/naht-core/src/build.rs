@@ -43,6 +43,10 @@ pub enum BuildError {
 ///
 /// The project root itself is the conventional `Folder` named after the directory; its children are
 /// the instances a consumer inserts, so the wrapping folder is dropped from the artifact.
+///
+/// # Errors
+///
+/// Returns an error when the model cannot be encoded or written to `writer`.
 pub fn write_model<W: Write>(
     writer: W,
     root: &Snapshot,
@@ -62,13 +66,19 @@ pub fn write_model<W: Write>(
     Ok(())
 }
 
-/// Write `root` as a **place**: a `DataModel` whose top-level directories are convention-mapped to
-/// services (architecture §6 extension). A top-level directory named after a real Roblox service
-/// (validated against `rbx_reflection`) becomes that service, populated with its contents; anything
-/// else (loose files, ordinary directories) lands under `Workspace`. A directory that *looks* like
-/// a service but isn't returns an explicit warning, never a silent reparent.
+/// Write `root` as a **place**: a `DataModel` whose top-level directories map to services
+/// (architecture §6 extension).
+///
+/// A top-level directory named after a real Roblox service (validated against `rbx_reflection`)
+/// becomes that service, populated with its contents; anything else (loose files, ordinary
+/// directories) lands under `Workspace`. A directory that *looks* like a service but isn't returns
+/// an explicit warning, never a silent reparent.
 ///
 /// Returns the warnings, for the caller to surface.
+///
+/// # Errors
+///
+/// Returns an error when the place cannot be encoded or written to `writer`.
 pub fn write_place<W: Write>(
     writer: W,
     root: &Snapshot,
@@ -83,10 +93,11 @@ pub fn write_place<W: Write>(
     Ok(warnings)
 }
 
-/// Build the place [`WeakDom`]: a `DataModel` root whose top-level directories are convention-mapped
-/// to services. Exposed alongside [`write_place`] so a caller (or a test) can inspect the built tree:
-/// notably that the root instance is a `DataModel`, without re-serializing and reloading it, which
-/// would lose the distinction (a reloaded model and a reloaded place both get a synthetic `DataModel`
+/// Build the place [`WeakDom`]: a `DataModel` root with convention-mapped services.
+///
+/// Exposed alongside [`write_place`] so a caller (or a test) can inspect the built tree: notably
+/// that the root instance is a `DataModel`, without re-serializing and reloading it, which would
+/// lose the distinction (a reloaded model and a reloaded place both get a synthetic `DataModel`
 /// root). Returns the dom and the same warnings [`write_place`] surfaces.
 pub fn build_place_dom(root: &Snapshot) -> (WeakDom, Vec<String>) {
     let mut dom = WeakDom::new(InstanceBuilder::new("DataModel"));
@@ -188,7 +199,7 @@ mod tests {
             .map(|reference| dom.get_by_ref(*reference).unwrap())
             .map(|instance| (instance.name.as_str(), instance.class.as_str()))
             .collect();
-        top.sort();
+        top.sort_unstable();
         assert_eq!(top, vec![("Greeter", "ModuleScript"), ("sub", "Folder")]);
 
         let greeter = roots
@@ -275,7 +286,7 @@ mod tests {
 
         let mut bytes = Vec::new();
         let warnings = write_place(&mut bytes, &project, ModelFormat::Xml).unwrap();
-        assert!(warnings.is_empty());
+        assert_eq!(warnings.len(), 0);
 
         let dom = rbx_xml::from_reader_default(bytes.as_slice()).unwrap();
         let sss = service(&dom, "ServerScriptService").expect("ServerScriptService");
@@ -313,7 +324,7 @@ mod tests {
 
         let mut bytes = Vec::new();
         let warnings = write_place(&mut bytes, &project, ModelFormat::Binary).unwrap();
-        assert!(warnings.is_empty());
+        assert_eq!(warnings.len(), 0);
 
         let dom = rbx_binary::from_reader(bytes.as_slice()).unwrap();
         assert!(service(&dom, "Lighting").is_none());
@@ -346,7 +357,7 @@ mod stage15 {
             .with_child(Snapshot::new("ModuleScript", "Loose"));
 
         let (dom, warnings) = build_place_dom(&project);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings.len(), 0);
 
         let root = dom.get_by_ref(dom.root_ref()).unwrap();
         assert_eq!(root.class, "DataModel");

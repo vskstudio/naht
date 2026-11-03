@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::reconciler::{Classed, Direction, PatchKind};
 
-/// The filesystem extension a binary blob lives behind. A `*.terrain` file is the opaque voxel blob
-/// the daemon syncs (architecture §9); the convention mirrors the script-suffix conventions in the
-/// mapper, kept here because only the binary path consumes it.
+/// The filesystem extension a binary blob lives behind.
+///
+/// A `*.terrain` file is the opaque voxel blob the daemon syncs (architecture §9). The convention
+/// mirrors the script-suffix conventions in the mapper, kept here because only the binary path
+/// consumes it.
 pub const BLOB_EXTENSION: &str = "terrain";
 
 /// The Roblox class a `*.terrain` blob maps to.
@@ -17,7 +19,7 @@ pub struct BlobInstance {
     pub path: String,
     /// The Roblox class name (e.g. `Terrain`).
     pub class: String,
-    /// The raw bytes (encoded as a MessagePack binary blob, not an integer array).
+    /// The raw bytes (encoded as a `MessagePack` binary blob, not an integer array).
     #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
 }

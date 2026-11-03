@@ -112,7 +112,7 @@ async fn conflicting_change_over_the_wire_writes_markers_and_freezes() {
     let cursor = harness.patches(0).await.cursor;
     harness.write("m.luau", "local a = 33\n");
     harness.info(None).await;
-    assert!(harness.patches(cursor).await.patches.is_empty());
+    assert_eq!(harness.patches(cursor).await.patches.len(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -126,7 +126,7 @@ async fn reconnect_rediffs_without_clobbering() {
     harness.ack_all(&first).await;
 
     harness.info(None).await;
-    assert!(harness.patches(first.cursor).await.patches.is_empty());
+    assert_eq!(harness.patches(first.cursor).await.patches.len(), 0);
     assert_eq!(harness.read("a.luau"), "v1");
 }
 

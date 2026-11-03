@@ -57,6 +57,10 @@ impl<V: Vfs> RootedVfs<V> {
     /// Validate a protocol path against this rooted filesystem, including existing symlink
     /// components. Symlinks are rejected even when they currently point inside the root because
     /// their target can change between validation and the subsequent filesystem operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when `path` escapes the root or cannot be checked.
     pub fn validate_path(&self, path: &str) -> Result<(), VfsError> {
         validate_project_path(path).map_err(|error| VfsError::InvalidPath(error.to_string()))?;
         self.checked_absolute(Path::new(path)).map(|_| ())
@@ -97,8 +101,7 @@ impl<V: Vfs> Vfs for RootedVfs<V> {
 
     fn exists(&self, path: &Path) -> bool {
         self.checked_absolute(path)
-            .map(|absolute| self.inner.exists(&absolute))
-            .unwrap_or(false)
+            .is_ok_and(|absolute| self.inner.exists(&absolute))
     }
 
     fn kind(&self, path: &Path) -> Result<EntryKind, VfsError> {

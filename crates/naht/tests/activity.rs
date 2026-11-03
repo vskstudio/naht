@@ -25,7 +25,7 @@ fn ack_records_a_push_event_and_clears_pending() {
 
     let before = session.activity(0);
     assert_eq!(before.pending, 1);
-    assert!(before.events.is_empty());
+    assert_eq!(before.events.len(), 0);
 
     let (_, patches) = session.take_patches(0);
     let path = patches[0].path.clone();

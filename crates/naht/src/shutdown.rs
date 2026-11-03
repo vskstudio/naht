@@ -5,6 +5,10 @@ use tokio_util::sync::CancellationToken;
 
 /// Resolve once the process is asked to stop: Ctrl-C everywhere, and SIGTERM on unix. Fails only if
 /// the signal handlers cannot be installed.
+///
+/// # Errors
+///
+/// Returns an error when the signal handler cannot be installed.
 pub async fn terminated() -> io::Result<()> {
     #[cfg(unix)]
     {

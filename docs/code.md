@@ -7,7 +7,7 @@ sense: the rules of a kind apply on top of the common base.
 | Crate | Kind | Notes |
 |---|---|---|
 | [`crates/naht-core`](../crates/naht-core) | shared library | The brain: VFS, path mapping, reconciliation, 3-way merge, state store and wire protocol. Zero network I/O, linked by the CLI and the daemon. |
-| [`crates/naht`](../crates/naht) | command line tool, with a library half | The `naht` binary (CLI and `serve`). Its library half (`lib.rs`) holds the commands, the watcher and the HTTP server, so they can be tested without the binary. `serve` is a daemon and takes the daemon rules; graceful shutdown, bounded inputs and the configuration exit code are not wired yet ([#30](https://github.com/vskstudio/naht/issues/30)). |
+| [`crates/naht`](../crates/naht) | command line tool, with a library half | The `naht` binary (CLI and `serve`). Its library half (`lib.rs`) holds the commands, the watcher and the HTTP server, so they can be tested without the binary. `serve` is a daemon and takes the daemon rules; graceful shutdown, request body limits and the configuration exit code (78) are in place. |
 
 The Luau plugin under [`plugin/`](../plugin) is not a Cargo crate. Its tests
 run with `lune run plugin/tests/run.luau`.

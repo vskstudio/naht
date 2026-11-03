@@ -11,6 +11,7 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension};
 use std::fs;
 use std::io;
+use std::num::ParseIntError;
 
 const SCHEMA_VERSION: i64 = 1;
 
@@ -41,6 +42,9 @@ pub enum StateError {
         key: String,
         /// The unparseable value.
         value: String,
+        /// The integer parse failure.
+        #[source]
+        source: ParseIntError,
     },
 }
 
@@ -73,6 +77,10 @@ pub struct StateStore {
 impl StateStore {
     /// Open (creating if absent) the state database at `path`, running migrations and verifying the
     /// schema version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be opened or migrated.
     pub fn open(path: &Path) -> Result<Self, StateError> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
@@ -83,6 +91,10 @@ impl StateStore {
     }
 
     /// Open an in-memory state database. Used by tests that do not need persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the in-memory database cannot be created.
     pub fn open_in_memory() -> Result<Self, StateError> {
         Self::init(Connection::open_in_memory()?)
     }
@@ -128,6 +140,10 @@ impl StateStore {
     }
 
     /// Record the project identity in `meta`, overwriting any prior value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project id cannot be written.
     pub fn set_project_id(&self, project_id: &str) -> Result<(), StateError> {
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2)
@@ -138,6 +154,10 @@ impl StateStore {
     }
 
     /// The recorded project identity, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the project id cannot be read.
     pub fn project_id(&self) -> Result<Option<String>, StateError> {
         Ok(self
             .conn
@@ -150,6 +170,10 @@ impl StateStore {
     }
 
     /// Insert or replace the base for one instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the record cannot be written.
     pub fn upsert(&self, record: &InstanceRecord) -> Result<(), StateError> {
         self.conn.execute(
             "INSERT INTO instances
@@ -176,6 +200,10 @@ impl StateStore {
     }
 
     /// Fetch one instance base by GUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the record cannot be read.
     pub fn get(&self, guid: &str) -> Result<Option<InstanceRecord>, StateError> {
         Ok(self
             .conn
@@ -189,6 +217,10 @@ impl StateStore {
     }
 
     /// Remove one instance base by GUID. Removing an absent GUID is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the record cannot be deleted.
     pub fn remove(&self, guid: &str) -> Result<(), StateError> {
         self.conn
             .execute("DELETE FROM instances WHERE guid = ?1", [guid])?;
@@ -196,6 +228,10 @@ impl StateStore {
     }
 
     /// Mark or clear the `conflicted` flag for one instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the conflict flag cannot be updated.
     pub fn set_conflicted(&self, guid: &str, conflicted: bool) -> Result<(), StateError> {
         self.conn.execute(
             "UPDATE instances SET conflicted = ?2 WHERE guid = ?1",
@@ -206,6 +242,10 @@ impl StateStore {
 
     /// Every persisted instance base, ordered by path. Used by the reconciler to find instances
     /// that exist in the base but no longer on a side (deletions).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the records cannot be read.
     pub fn all(&self) -> Result<Vec<InstanceRecord>, StateError> {
         let mut stmt = self.conn.prepare(
             "SELECT guid, path, class, content_hash, base_content, mtime, conflicted
@@ -216,6 +256,10 @@ impl StateStore {
     }
 
     /// Every instance currently frozen as conflicted, ordered by path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the conflicted records cannot be read.
     pub fn conflicted(&self) -> Result<Vec<InstanceRecord>, StateError> {
         let mut stmt = self.conn.prepare(
             "SELECT guid, path, class, content_hash, base_content, mtime, conflicted
@@ -227,6 +271,10 @@ impl StateStore {
 
     /// Record the asset id an uploaded blob resolved to, keyed by its content hash, so an unchanged
     /// asset is never re-uploaded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the asset id cannot be cached.
     pub fn cache_asset(&self, content_hash: &str, asset_id: &str) -> Result<(), StateError> {
         self.conn.execute(
             "INSERT INTO assets (content_hash, asset_id) VALUES (?1, ?2)
@@ -237,6 +285,10 @@ impl StateStore {
     }
 
     /// The cached asset id for a content hash, if the blob has been uploaded before.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the cached asset id cannot be read.
     pub fn cached_asset(&self, content_hash: &str) -> Result<Option<String>, StateError> {
         Ok(self
             .conn
@@ -269,13 +321,16 @@ fn read_meta_i64(conn: &Connection, key: &str) -> Result<Option<i64>, StateError
         .optional()?;
     match raw {
         None => Ok(None),
-        Some(text) => text
-            .parse::<i64>()
-            .map(Some)
-            .map_err(|_| StateError::CorruptMeta {
-                key: key.to_owned(),
-                value: text,
-            }),
+        Some(text) => {
+            let value = text
+                .parse::<i64>()
+                .map_err(|source| StateError::CorruptMeta {
+                    key: key.to_owned(),
+                    value: text.clone(),
+                    source,
+                })?;
+            Ok(Some(value))
+        }
     }
 }
 
@@ -343,14 +398,14 @@ mod tests {
     fn conflicted_flag_round_trips_and_lists() {
         let store = StateStore::open_in_memory().unwrap();
         store.upsert(&text_record("g")).unwrap();
-        assert!(store.conflicted().unwrap().is_empty());
+        assert_eq!(store.conflicted().unwrap().len(), 0);
 
         store.set_conflicted("g", true).unwrap();
         assert!(store.get("g").unwrap().unwrap().conflicted);
         assert_eq!(store.conflicted().unwrap().len(), 1);
 
         store.set_conflicted("g", false).unwrap();
-        assert!(store.conflicted().unwrap().is_empty());
+        assert_eq!(store.conflicted().unwrap().len(), 0);
     }
 
     #[test]

@@ -1,6 +1,8 @@
-//! The user-facing commands behind the CLI. Each is a thin orchestration over `naht-core`: the
-//! sync brain, the state store, and the model builder. The binary's `main` parses arguments and
-//! dispatches here; the integration tests drive these functions directly.
+//! The user-facing commands behind the CLI.
+//!
+//! Each is a thin orchestration over `naht-core`: the sync brain, the state store, and the model
+//! builder. The binary's `main` parses arguments and dispatches here; the integration tests drive
+//! these functions directly.
 
 mod build;
 mod error;

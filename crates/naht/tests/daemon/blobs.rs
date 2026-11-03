@@ -31,7 +31,7 @@ async fn terrain_sync_disabled_does_not_read_or_write_blobs() {
     harness.write("Terrain.terrain", b"disk-terrain");
 
     assert!(harness.info(None).await.status().is_success());
-    assert!(harness.blobs(0).await.patches.is_empty());
+    assert_eq!(harness.blobs(0).await.patches.len(), 0);
 
     let status = harness
         .post_blobs(vec![BlobInstance::new(
@@ -48,7 +48,7 @@ async fn terrain_sync_disabled_does_not_read_or_write_blobs() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn terrain_blob_syncs_both_ways_byte_for_byte() {
     let harness = Harness::start(None).await;
-    let blob: Vec<u8> = (0u16..400).map(|index| (index % 256) as u8).collect();
+    let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(400).collect();
 
     harness.write("Terrain.terrain", &blob);
     assert!(harness.info(None).await.status().is_success());
@@ -60,7 +60,7 @@ async fn terrain_blob_syncs_both_ways_byte_for_byte() {
     assert_eq!(patch.direction, Direction::ToStudio);
     assert_eq!(patch.content.as_deref(), Some(blob.as_slice()));
 
-    let other: Vec<u8> = (0u16..256).rev().map(|index| (index % 256) as u8).collect();
+    let other: Vec<u8> = (u8::MIN..=u8::MAX).rev().collect();
     let status = harness
         .post_blobs(vec![BlobInstance::new(
             "World.terrain",
@@ -91,17 +91,17 @@ async fn a_both_sides_blob_change_freezes_through_the_live_daemon() {
     assert!(status.is_success());
 
     assert_eq!(harness.read_bytes("t.terrain"), b"fs-edit");
-    assert!(harness.blobs(drained).await.patches.is_empty());
+    assert_eq!(harness.blobs(drained).await.patches.len(), 0);
 
     harness.write("t.terrain", b"fs-2");
     harness.info(None).await;
-    assert!(harness.blobs(drained).await.patches.is_empty());
+    assert_eq!(harness.blobs(drained).await.patches.len(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_studio_text_edit_drives_the_blob_reconcile() {
     let harness = Harness::start(None).await;
-    let blob: Vec<u8> = (0u16..300).map(|index| (index % 256) as u8).collect();
+    let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(300).collect();
 
     harness.write("Zone.terrain", &blob);
     let status = harness
@@ -132,5 +132,5 @@ async fn a_text_edit_with_no_blob_change_queues_no_blob_patch() {
         .await;
     assert!(status.is_success());
 
-    assert!(harness.blobs(0).await.patches.is_empty());
+    assert_eq!(harness.blobs(0).await.patches.len(), 0);
 }

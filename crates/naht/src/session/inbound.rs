@@ -10,6 +10,10 @@ use std::path::Path;
 impl Session {
     /// Apply a batch of Studio-side edits to the mirror, then reconcile against the current
     /// filesystem. Filesystem writes (and conflict markers) are performed by the reconciler.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] when a change cannot be applied.
     pub fn apply_changes(&mut self, changes: Vec<Change>) -> Result<(), SessionError> {
         for change in changes {
             match change {
@@ -41,6 +45,10 @@ impl Session {
     /// Apply a batch of Studio-side binary blobs (terrain) to the blob mirror, then reconcile against
     /// the current filesystem. Blob deletions aren't modeled on the wire, terrain isn't removed in
     /// practice, so a batch carries only the blobs Studio currently holds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] when a blob change cannot be applied.
     pub fn apply_blob_changes(&mut self, changes: Vec<BlobInstance>) -> Result<(), SessionError> {
         if !self.terrain_sync {
             return Ok(());

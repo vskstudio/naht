@@ -1,8 +1,8 @@
 //! The wire protocol exchanged with the Studio plugin (architecture §7).
 //!
-//! Bodies are encoded as **MessagePack**: binary, compact, and decodable by a hand-written Luau
+//! Bodies are encoded as `MessagePack`: binary, compact, and decodable by a hand-written Luau
 //! library inside Studio. The types are plain `serde` structs so the encoding stays a swappable
-//! layer: nothing above this module names MessagePack. Field-named encoding (`to_vec_named`) keeps
+//! layer: nothing above this module names `MessagePack`. Field-named encoding (`to_vec_named`) keeps
 //! the wire self-describing, so the Luau side decodes by key rather than by positional offset.
 
 use serde::de::DeserializeOwned;
@@ -152,20 +152,28 @@ pub struct Ack {
 /// Errors from encoding or decoding a protocol message.
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
-    /// The value could not be encoded to MessagePack.
+    /// The value could not be encoded to `MessagePack`.
     #[error("protocol encode failed: {0}")]
     Encode(#[from] encode::Error),
-    /// The bytes could not be decoded from MessagePack.
+    /// The bytes could not be decoded from `MessagePack`.
     #[error("protocol decode failed: {0}")]
     Decode(#[from] decode::Error),
 }
 
-/// Encode a protocol message to MessagePack, with field names preserved.
+/// Encode a protocol message to `MessagePack`, with field names preserved.
+///
+/// # Errors
+///
+/// Returns [`ProtocolError::Encode`] when `value` cannot be encoded.
 pub fn to_msgpack<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
     Ok(rmp_serde::to_vec_named(value)?)
 }
 
-/// Decode a protocol message from MessagePack.
+/// Decode a protocol message from `MessagePack`.
+///
+/// # Errors
+///
+/// Returns [`ProtocolError::Decode`] when `bytes` is not a valid message of type `T`.
 pub fn from_msgpack<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError> {
     Ok(rmp_serde::from_slice(bytes)?)
 }
@@ -209,7 +217,7 @@ mod tests {
         use crate::binary::BlobPatch;
         use crate::reconciler::{Direction, PatchKind};
 
-        let blob: Vec<u8> = (0u16..600).map(|index| (index % 256) as u8).collect();
+        let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(600).collect();
         let batch = BlobPatchBatch {
             cursor: 3,
             patches: vec![BlobPatch {

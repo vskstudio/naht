@@ -39,7 +39,7 @@ impl Harness {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let _ = server::serve(listener, state).await;
+            let _served = server::serve(listener, state).await;
         });
 
         Self {

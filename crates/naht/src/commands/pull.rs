@@ -4,6 +4,10 @@ use std::net::Ipv4Addr;
 
 /// Ask a running daemon to re-sync now (Studio ↔ filesystem). Full on-demand Studio → filesystem
 /// pull lands with the Stage 6 plugin; for now this nudges the daemon's reconnect re-diff.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the server cannot be reached or the snapshot cannot be written.
 pub async fn pull(config: &Config) -> Result<(), CommandError> {
     let url = format!("http://{}:{}/info", Ipv4Addr::LOCALHOST, config.port());
     let response = reqwest::Client::new()

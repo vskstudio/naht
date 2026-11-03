@@ -71,17 +71,41 @@ pub struct DirEntry {
 /// mutability; the daemon owns its [`Vfs`] exclusively.
 pub trait Vfs {
     /// Returns the full contents of the file at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the file cannot be read.
     fn read(&self, path: &Path) -> Result<Vec<u8>, VfsError>;
     /// Returns the entries of the directory at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the directory cannot be listed.
     fn list(&self, path: &Path) -> Result<Vec<DirEntry>, VfsError>;
     /// Replaces the file at `path` with `contents`, creating it when absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the file cannot be written.
     fn write(&mut self, path: &Path, contents: &[u8]) -> Result<(), VfsError>;
     /// Creates the directory at `path` and any missing parent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the directory cannot be created.
     fn create_dir(&mut self, path: &Path) -> Result<(), VfsError>;
     /// Removes the file or directory at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the path cannot be removed.
     fn remove(&mut self, path: &Path) -> Result<(), VfsError>;
     /// Reports whether something exists at `path`.
     fn exists(&self, path: &Path) -> bool;
     /// Reports whether `path` is a file or a directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the path cannot be inspected.
     fn kind(&self, path: &Path) -> Result<EntryKind, VfsError>;
 }

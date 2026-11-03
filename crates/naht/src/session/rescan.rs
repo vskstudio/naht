@@ -8,6 +8,10 @@ impl Session {
     /// Re-read the filesystem and reconcile it against the Studio mirror and persisted base. Used on
     /// a filesystem event and on reconnect (`GET /info`), the latter is the re-diff that replaces a
     /// blind re-push.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] when the project cannot be rescanned.
     pub fn rescan(&mut self) -> Result<(), SessionError> {
         let pre_base = self.base_snapshot()?;
         let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;

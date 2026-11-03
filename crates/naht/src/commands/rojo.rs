@@ -47,16 +47,22 @@ pub(super) struct MigratedNode {
     properties: BTreeMap<String, toml::Value>,
 }
 
-/// Migrate the Rojo `default.project.json` at `root` into a `naht.toml`: the project name, the place
-/// id, and the instance tree (`$path` / `$className` / `$properties`). Returns the warnings for
-/// anything Naht cannot represent, surfaced to the user, never dropped. The user's source files are
-/// left untouched; only the `naht.toml` is written. Public so the migration is testable directly.
+/// Migrate the Rojo `default.project.json` at `root` into a `naht.toml`.
+///
+/// Carries over the project name, the place id, and the instance tree (`$path` / `$className` /
+/// `$properties`). Returns the warnings for anything Naht cannot represent, surfaced to the user,
+/// never dropped. The user's source files are left untouched; only the `naht.toml` is written.
+/// Public so the migration is testable directly.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] when the Rojo project cannot be read or migrated.
 pub fn migrate_from_rojo(root: &Path) -> Result<Vec<String>, CommandError> {
     let rojo = read_rojo_project(root)?;
     let mut nodes = Vec::new();
     let mut warnings = Vec::new();
     if let Some(tree) = &rojo.tree {
-        collect_tree_nodes(tree, String::new(), &mut nodes, &mut warnings);
+        collect_tree_nodes(tree, "", &mut nodes, &mut warnings);
     }
     let toml = render_rojo_config(&rojo.name(root), rojo.serve_place_id(), &nodes)?;
     write_file(&root.join(PROJECT_FILE), &toml)?;
@@ -65,7 +71,7 @@ pub fn migrate_from_rojo(root: &Path) -> Result<Vec<String>, CommandError> {
 
 fn collect_tree_nodes(
     node: &serde_json::Value,
-    instance: String,
+    instance: &str,
     out: &mut Vec<MigratedNode>,
     warnings: &mut Vec<String>,
 ) {
@@ -76,12 +82,14 @@ fn collect_tree_nodes(
         return;
     };
 
-    if !instance.is_empty() {
+    if instance.is_empty() {
+        warn_unknown_directives(object, "(root)", warnings);
+    } else {
         let path = object
             .get("$path")
             .and_then(|value| value.as_str())
             .map(String::from);
-        let leaf = instance.rsplit('/').next().unwrap_or(&instance);
+        let leaf = instance.rsplit('/').next().unwrap_or(instance);
         let class = match object.get("$className").and_then(|value| value.as_str()) {
             Some(class) if class == leaf || class == "Folder" => None,
             Some(class) => Some(class.to_owned()),
@@ -103,17 +111,15 @@ fn collect_tree_nodes(
                 }
             }
         }
-        warn_unknown_directives(object, &instance, warnings);
+        warn_unknown_directives(object, instance, warnings);
         if path.is_some() || class.is_some() || !properties.is_empty() {
             out.push(MigratedNode {
-                instance: instance.clone(),
+                instance: instance.to_owned(),
                 path,
                 class,
                 properties,
             });
         }
-    } else {
-        warn_unknown_directives(object, "(root)", warnings);
     }
 
     for (key, child) in object {
@@ -125,7 +131,7 @@ fn collect_tree_nodes(
         } else {
             format!("{instance}/{key}")
         };
-        collect_tree_nodes(child, child_instance, out, warnings);
+        collect_tree_nodes(child, &child_instance, out, warnings);
     }
 }
 
@@ -151,7 +157,9 @@ fn rojo_property_to_toml(value: &serde_json::Value) -> Option<toml::Value> {
             .as_i64()
             .map(toml::Value::Integer)
             .or_else(|| number.as_f64().map(toml::Value::Float)),
-        _ => None,
+        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            None
+        }
     }
 }
 
@@ -168,7 +176,10 @@ pub(super) fn render_rojo_config(
 
     if let Some(id) = place_id {
         let mut serve = toml::Table::new();
-        serve.insert("place_id".to_owned(), toml::Value::Integer(id as i64));
+        serve.insert(
+            "place_id".to_owned(),
+            toml::Value::try_from(id).map_err(CommandError::RenderConfig)?,
+        );
         doc.insert("serve".to_owned(), toml::Value::Table(serve));
     }
 
@@ -247,7 +258,7 @@ pub(super) fn assemble_project_snapshot(
                             source,
                         }
                     })?;
-                from.name = (*leaf).to_owned();
+                from.name = String::from(*leaf);
                 from
             }
             None => Snapshot::new(
@@ -276,26 +287,31 @@ pub(super) fn assemble_project_snapshot(
 }
 
 fn graft(parent: &mut Snapshot, parents: &[&str], leaf: Snapshot) {
-    match parents.split_first() {
-        Some((segment, rest)) => match parent
-            .children
-            .iter_mut()
-            .find(|child| child.name == *segment)
-        {
-            Some(folder) => graft(folder, rest, leaf),
-            None => {
-                parent.push_child(Snapshot::new("Folder", *segment));
-                graft(parent, parents, leaf);
-            }
-        },
-        None => match parent
-            .children
-            .iter_mut()
-            .find(|child| child.name == leaf.name)
-        {
-            Some(existing) => *existing = leaf,
-            None => parent.push_child(leaf),
-        },
+    let Some((segment, rest)) = parents.split_first() else {
+        place_leaf(parent, leaf);
+        return;
+    };
+    if let Some(folder) = parent
+        .children
+        .iter_mut()
+        .find(|child| child.name == *segment)
+    {
+        graft(folder, rest, leaf);
+    } else {
+        parent.push_child(Snapshot::new("Folder", *segment));
+        graft(parent, parents, leaf);
+    }
+}
+
+fn place_leaf(parent: &mut Snapshot, leaf: Snapshot) {
+    if let Some(existing) = parent
+        .children
+        .iter_mut()
+        .find(|child| child.name == leaf.name)
+    {
+        *existing = leaf;
+    } else {
+        parent.push_child(leaf);
     }
 }
 
@@ -305,6 +321,6 @@ fn toml_value_to_variant(value: &toml::Value) -> Option<Variant> {
         toml::Value::Integer(number) => Some(Variant::Int64(*number)),
         toml::Value::Float(f) => Some(Variant::Float64(*f)),
         toml::Value::String(text) => Some(Variant::String(text.clone())),
-        _ => None,
+        toml::Value::Datetime(_) | toml::Value::Array(_) | toml::Value::Table(_) => None,
     }
 }

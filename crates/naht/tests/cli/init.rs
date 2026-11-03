@@ -29,7 +29,7 @@ fn init_scaffolds_a_working_project() {
 fn init_refuses_to_overwrite_an_existing_project() {
     let dir = tempfile::tempdir().unwrap();
     commands::init(dir.path(), false).unwrap();
-    assert!(commands::init(dir.path(), false).is_err());
+    commands::init(dir.path(), false).expect_err("init refuses an existing project");
 }
 
 #[test]
@@ -47,5 +47,5 @@ fn init_from_rojo_converts_name_and_place_id() {
 
     let config = Config::load(&root).unwrap();
     assert_eq!(config.project.name.as_deref(), Some("MyGame"));
-    assert_eq!(config.serve.place_id, Some(123456));
+    assert_eq!(config.serve.place_id, Some(123_456));
 }

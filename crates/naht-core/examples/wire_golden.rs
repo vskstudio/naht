@@ -1,4 +1,4 @@
-//! Print golden MessagePack encodings of representative protocol messages, as hex.
+//! Print golden `MessagePack` encodings of representative protocol messages, as hex.
 //!
 //! These bytes are exactly what the daemon puts on the wire (`rmp_serde::to_vec_named`). The Luau
 //! plugin's `MessagePack` harness embeds them to cross-check its codec against the real format. Run
@@ -22,7 +22,11 @@ enum GoldenError {
 }
 
 fn hex(out: &mut impl Write, label: &str, bytes: &[u8]) -> io::Result<()> {
-    let encoded: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded: String = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .concat();
     writeln!(out, "{label} {encoded}")
 }
 

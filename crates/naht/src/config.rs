@@ -1,8 +1,10 @@
-//! Layered configuration (architecture §6): defaults → `~/.naht/config.toml` (per-machine) →
-//! project `naht.toml`. Later layers override earlier ones field by field, so a machine-wide setting
-//! holds unless a project opts out of it.
+//! Layered configuration (architecture §6).
 //!
-//! The schema is deliberately small, Naht is convention-first, so config carries only what cannot
+//! Layers are defaults, then `~/.naht/config.toml` (per-machine), then the project `naht.toml`.
+//! Later layers override earlier ones field by field, so a machine-wide setting holds unless a
+//! project opts out of it.
+//!
+//! The schema is deliberately small: Naht is convention-first, so config carries only what cannot
 //! be inferred: the project name, the serve port, and the place-id guard.
 
 use std::io;
@@ -128,6 +130,10 @@ impl AssetsConfig {
 impl Config {
     /// Load the layered config for the project rooted at `root`: per-machine config first, then the
     /// project's `naht.toml`, each overriding the last.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] when a configuration file is unreadable or malformed.
     pub fn load(root: &Path) -> Result<Self, ConfigError> {
         Self::load_from(home_config_path().as_deref(), root)
     }
@@ -190,6 +196,10 @@ impl Config {
 
     /// Resolve the port to bind: a `--port` flag beats `naht.toml`, which beats the default. Port 0
     /// (no fixed port) is rejected here rather than panicking at bind time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] when the port is missing or invalid.
     pub fn resolve_port(&self, cli_port: Option<u16>) -> Result<u16, ConfigError> {
         let port = cli_port.unwrap_or_else(|| self.port());
         if port == 0 {
@@ -269,7 +279,9 @@ mod tests {
 
     #[test]
     fn resolve_port_rejects_zero() {
-        assert!(Config::default().resolve_port(Some(0)).is_err());
+        Config::default()
+            .resolve_port(Some(0))
+            .expect_err("port 0 is rejected");
     }
 
     #[test]
@@ -295,6 +307,6 @@ mod tests {
     fn unknown_keys_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(PROJECT_FILE), "[project]\nbogus = 1\n").unwrap();
-        assert!(Config::load_from(None, dir.path()).is_err());
+        Config::load_from(None, dir.path()).expect_err("missing config is rejected");
     }
 }

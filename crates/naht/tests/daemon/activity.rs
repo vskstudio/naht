@@ -54,5 +54,5 @@ async fn activity_since_filters_seen_events() {
     let seq = first.events[0].seq;
 
     let none = harness.activity(seq).await;
-    assert!(none.events.is_empty());
+    assert_eq!(none.events.len(), 0);
 }

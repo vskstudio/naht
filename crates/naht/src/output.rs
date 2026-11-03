@@ -29,21 +29,37 @@ impl<Stdout: Write, Stderr: Write> Output<Stdout, Stderr> {
     }
 
     /// Write one line to standard output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writing to stdout fails.
     pub fn say(&mut self, line: impl Display) -> io::Result<()> {
         writeln!(self.stdout, "{line}")
     }
 
     /// Write one warning line to standard error, prefixed `naht: warning:`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writing to stderr fails.
     pub fn warn(&mut self, line: impl Display) -> io::Result<()> {
         writeln!(self.stderr, "naht: warning: {line}")
     }
 
     /// Write one failure line to standard error, prefixed `naht:`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writing to stderr fails.
     pub fn fail(&mut self, line: impl Display) -> io::Result<()> {
         writeln!(self.stderr, "naht: {line}")
     }
 
     /// Report what `init` created or converted, after any warnings it raised.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writing to stdout fails.
     pub fn initialized(&mut self, initialized: &Initialized) -> io::Result<()> {
         match initialized {
             Initialized::Rojo {
@@ -66,6 +82,10 @@ impl<Stdout: Write, Stderr: Write> Output<Stdout, Stderr> {
     }
 
     /// Report the conflicted paths of a project, or that there are none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writing to stdout fails.
     pub fn status(&mut self, status: &Status) -> io::Result<()> {
         if status.conflicted.is_empty() {
             return self.say("clean, no conflicted paths");
@@ -81,6 +101,10 @@ impl<Stdout: Write, Stderr: Write> Output<Stdout, Stderr> {
     }
 
     /// Report a finished build: its warnings, then the artifact written.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writing to stdout fails.
     pub fn built(&mut self, built: &Built) -> io::Result<()> {
         for warning in &built.warnings {
             self.warn(warning)?;
