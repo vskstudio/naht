@@ -75,6 +75,7 @@ fn is_project_event(root: &Path, event: &DebouncedEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
     use std::time::Instant;
 
@@ -125,14 +126,14 @@ mod tests {
         let _watch = spawn(&root, Arc::clone(&state)).unwrap();
         state.session_lock().await.rescan().unwrap();
         let (before_write, _) = state.session_lock().await.take_patches(0);
-        std::fs::write(root.join("src").join("Added.luau"), "return {}").unwrap();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        fs::write(root.join("src").join("Added.luau"), "return {}").unwrap();
+        let deadline = time::Instant::now() + Duration::from_secs(5);
         while state.session_lock().await.take_patches(0).0 == before_write {
             assert!(
-                tokio::time::Instant::now() < deadline,
+                time::Instant::now() < deadline,
                 "watcher never reacted to a write"
             );
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            time::sleep(Duration::from_millis(50)).await;
         }
         let (cursor, _) = state.session_lock().await.take_patches(0);
         time::sleep(Duration::from_secs(1)).await;
