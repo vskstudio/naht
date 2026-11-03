@@ -1,10 +1,67 @@
 [workspace]
-members = ["naht-core", "naht"]
-resolver = "2"
+members = ["crates/*"]
+resolver = "3"
 
 [workspace.package]
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vskstudio/naht"
-rust-version = "1.96"
+rust-version = "1.99.1"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+axum = "0.8.9"
+clap = { version = "4.6.1", features = ["derive"] }
+diffy = "0.5.0"
+naht-core = { path = "crates/naht-core" }
+notify-debouncer-full = "0.7.0"
+rbx_binary = "2.0.1"
+rbx_dom_weak = "4.1.0"
+rbx_reflection = "6.1.0"
+rbx_reflection_database = "2.0.2"
+rbx_xml = "2.0.1"
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "multipart", "json"] }
+rmp-serde = "1.3.1"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_bytes = "0.11.19"
+serde_json = "1.0.150"
+tempfile = "3.27.0"
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+toml = "0.9.8"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2024_compatibility = { level = "warn", priority = -1 }
+ambiguous_negative_literals = "warn"
+redundant_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_lifetimes = "warn"
+
+[workspace.lints.rustdoc]
+missing_crate_level_docs = "warn"
+broken_intra_doc_links = "warn"
+private_intra_doc_links = "warn"
+bare_urls = "warn"
+invalid_html_tags = "warn"
+invalid_rust_codeblocks = "warn"
+redundant_explicit_links = "warn"
+unescaped_backticks = "warn"
+
+[workspace.lints.clippy]
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

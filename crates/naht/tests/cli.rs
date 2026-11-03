@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use naht::commands;
 use naht::config::Config;
+use naht_core::Snapshot;
 use naht_core::limits::Reason;
 use naht_core::reconciler::{self, TextInstance};
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
-use naht_core::Snapshot;
 
 /// Class names of the reloaded place's `DataModel` children.
 fn root_classes(dom: &rbx_dom_weak::WeakDom) -> Vec<String> {
@@ -167,9 +167,11 @@ fn build_place_maps_top_level_dirs_to_services() {
     let model = dir.path().join("game.rbxm");
     commands::build(&root, &model).unwrap();
     let model_dom = rbx_binary::from_reader(&std::fs::read(&model).unwrap()[..]).unwrap();
-    assert!(root_classes(&model_dom)
-        .iter()
-        .all(|class| class != "ServerScriptService"));
+    assert!(
+        root_classes(&model_dom)
+            .iter()
+            .all(|class| class != "ServerScriptService")
+    );
 }
 
 #[test]
@@ -188,18 +190,18 @@ fn build_watch_rebuilds_the_output_on_change() {
 
     let mut rebuilt = false;
     for _ in 0..100 {
-        if let Ok(bytes) = std::fs::read(&output) {
-            if let Ok(dom) = rbx_binary::from_reader(&bytes[..]) {
-                let src = dom
-                    .root()
-                    .children()
-                    .iter()
-                    .map(|r| dom.get_by_ref(*r).unwrap())
-                    .find(|instance| instance.name == "src");
-                if src.map(|folder| folder.children().len()) == Some(2) {
-                    rebuilt = true;
-                    break;
-                }
+        if let Ok(bytes) = std::fs::read(&output)
+            && let Ok(dom) = rbx_binary::from_reader(&bytes[..])
+        {
+            let src = dom
+                .root()
+                .children()
+                .iter()
+                .map(|r| dom.get_by_ref(*r).unwrap())
+                .find(|instance| instance.name == "src");
+            if src.map(|folder| folder.children().len()) == Some(2) {
+                rebuilt = true;
+                break;
             }
         }
         std::thread::sleep(Duration::from_millis(50));

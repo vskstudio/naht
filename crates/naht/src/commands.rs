@@ -6,14 +6,14 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use naht_core::build::{self, ModelFormat};
 use naht_core::snapshot::Snapshot;
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
 use naht_core::{limits, mapper, reconciler};
 use notify_debouncer_full::notify::RecursiveMode;
-use notify_debouncer_full::{new_debouncer, DebounceEventResult};
+use notify_debouncer_full::{DebounceEventResult, new_debouncer};
 use rbx_dom_weak::types::Variant;
 use serde::Deserialize;
 
@@ -113,11 +113,11 @@ fn build_once(root: &Path, output: &Path) -> Result<()> {
     warn_unsyncable(&snapshot);
     resolve_assets(root, &mut snapshot)?;
 
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
     let file =
         std::fs::File::create(output).with_context(|| format!("creating {}", output.display()))?;
@@ -197,11 +197,11 @@ pub fn package_plugin(src: &Path, output: &Path) -> Result<()> {
     // writes its children, so without the wrapper the modules would become separate top-level roots.
     let root = Snapshot::new("Folder", "plugin").with_child(tree);
 
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
     let file =
         std::fs::File::create(output).with_context(|| format!("creating {}", output.display()))?;
@@ -621,7 +621,7 @@ fn is_place_output(output: &Path) -> bool {
 /// Watch `root` and rebuild `output` on each debounced change. The caller holds the returned guard
 /// for as long as watching should continue. Our own output writes are ignored, so the rebuild does
 /// not trigger itself.
-pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop> {
+pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use<>> {
     let root = canonical(root)?;
     let watch_root = root.clone();
     let output = output.to_path_buf();
@@ -637,10 +637,10 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop> {
         if changed.is_empty() {
             return;
         }
-        if let Some(out) = output_abs.as_deref() {
-            if changed.iter().all(|path| path == out) {
-                return; // our own write — don't rebuild ourselves into a loop
-            }
+        if let Some(out) = output_abs.as_deref()
+            && changed.iter().all(|path| path == out)
+        {
+            return;
         }
         if let Err(error) = build_once(&root, &output) {
             tracing::warn!(target: "naht::build", %error, "rebuild failed");

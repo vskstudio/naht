@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use naht::session::Session;
 use naht_core::state::StateStore;
-use tracing::field::{Field, Visit};
 use tracing::Level;
+use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 

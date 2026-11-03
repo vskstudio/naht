@@ -2,7 +2,7 @@
 //!
 //! This crate holds everything that decides *what* to sync and *how* to merge, with **zero network
 //! I/O**: the virtual filesystem, the file↔instance path mapping, the reconciler, the 3-way merge,
-//! the persisted state store, and the wire protocol types. The [`naht`] binary wires these into a
+//! the persisted state store, and the wire protocol types. The `naht` binary wires these into a
 //! daemon and CLI; the Studio plugin stays thin because the logic lives here.
 //!
 //! It is intentionally testable in isolation — the reconciler runs against an in-memory VFS so its
