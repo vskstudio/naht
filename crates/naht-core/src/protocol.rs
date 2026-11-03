@@ -209,7 +209,7 @@ mod tests {
         use crate::binary::BlobPatch;
         use crate::reconciler::{Direction, PatchKind};
 
-        let blob: Vec<u8> = (0u16..600).map(|i| (i % 256) as u8).collect();
+        let blob: Vec<u8> = (0u16..600).map(|index| (index % 256) as u8).collect();
         let batch = BlobPatchBatch {
             cursor: 3,
             patches: vec![BlobPatch {

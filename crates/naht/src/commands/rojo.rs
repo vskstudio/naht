@@ -79,16 +79,19 @@ fn collect_tree_nodes(
     if !instance.is_empty() {
         let path = object
             .get("$path")
-            .and_then(|v| v.as_str())
+            .and_then(|value| value.as_str())
             .map(String::from);
         let leaf = instance.rsplit('/').next().unwrap_or(&instance);
-        let class = match object.get("$className").and_then(|v| v.as_str()) {
+        let class = match object.get("$className").and_then(|value| value.as_str()) {
             Some(class) if class == leaf || class == "Folder" => None,
             Some(class) => Some(class.to_owned()),
             None => None,
         };
         let mut properties = BTreeMap::new();
-        if let Some(props) = object.get("$properties").and_then(|v| v.as_object()) {
+        if let Some(props) = object
+            .get("$properties")
+            .and_then(|value| value.as_object())
+        {
             for (key, value) in props {
                 match rojo_property_to_toml(value) {
                     Some(value) => {
@@ -142,12 +145,12 @@ fn warn_unknown_directives(
 
 fn rojo_property_to_toml(value: &serde_json::Value) -> Option<toml::Value> {
     match value {
-        serde_json::Value::Bool(b) => Some(toml::Value::Boolean(*b)),
-        serde_json::Value::String(s) => Some(toml::Value::String(s.clone())),
-        serde_json::Value::Number(n) => n
+        serde_json::Value::Bool(flag) => Some(toml::Value::Boolean(*flag)),
+        serde_json::Value::String(text) => Some(toml::Value::String(text.clone())),
+        serde_json::Value::Number(number) => number
             .as_i64()
             .map(toml::Value::Integer)
-            .or_else(|| n.as_f64().map(toml::Value::Float)),
+            .or_else(|| number.as_f64().map(toml::Value::Float)),
         _ => None,
     }
 }
@@ -224,7 +227,11 @@ pub(super) fn assemble_project_snapshot(
         .retain(|child| !source_roots.contains(child.name.as_str()));
 
     for node in &config.tree {
-        let segments: Vec<&str> = node.instance.split('/').filter(|s| !s.is_empty()).collect();
+        let segments: Vec<&str> = node
+            .instance
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
         let Some((leaf, parents)) = segments.split_last() else {
             warnings.push("a [[tree]] entry has an empty `instance`; skipped".to_owned());
             continue;
@@ -271,22 +278,32 @@ pub(super) fn assemble_project_snapshot(
 fn graft(root: &mut Snapshot, parents: &[&str], leaf: Snapshot) {
     let mut current = root;
     for segment in parents {
-        let index = match current.children.iter().position(|c| c.name == *segment) {
+        let index = match current
+            .children
+            .iter()
+            .position(|child| child.name == *segment)
+        {
             Some(index) => index,
             None => {
                 current.push_child(Snapshot::new("Folder", *segment));
                 current
                     .children
                     .iter()
-                    .position(|c| c.name == *segment)
+                    .position(|child| child.name == *segment)
                     .expect("child just inserted")
             }
         };
         current = &mut current.children[index];
     }
-    if let Some(index) = current.children.iter().position(|c| c.name == leaf.name) {
+    if let Some(index) = current
+        .children
+        .iter()
+        .position(|child| child.name == leaf.name)
+    {
         current.children[index] = leaf;
-        current.children.sort_by(|a, b| a.name.cmp(&b.name));
+        current
+            .children
+            .sort_by(|left, right| left.name.cmp(&right.name));
     } else {
         current.push_child(leaf);
     }
@@ -294,10 +311,10 @@ fn graft(root: &mut Snapshot, parents: &[&str], leaf: Snapshot) {
 
 fn toml_value_to_variant(value: &toml::Value) -> Option<Variant> {
     match value {
-        toml::Value::Boolean(b) => Some(Variant::Bool(*b)),
-        toml::Value::Integer(i) => Some(Variant::Int64(*i)),
+        toml::Value::Boolean(flag) => Some(Variant::Bool(*flag)),
+        toml::Value::Integer(number) => Some(Variant::Int64(*number)),
         toml::Value::Float(f) => Some(Variant::Float64(*f)),
-        toml::Value::String(s) => Some(Variant::String(s.clone())),
+        toml::Value::String(text) => Some(Variant::String(text.clone())),
         _ => None,
     }
 }

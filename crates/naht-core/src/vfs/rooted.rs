@@ -130,7 +130,7 @@ mod tests {
             .list(Path::new(""))
             .unwrap()
             .into_iter()
-            .map(|e| e.path)
+            .map(|entry| entry.path)
             .collect();
         assert_eq!(
             names,

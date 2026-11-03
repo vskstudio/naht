@@ -24,7 +24,7 @@ fn build_produces_a_reloadable_model() {
         .root()
         .children()
         .iter()
-        .map(|r| dom.get_by_ref(*r).unwrap().name.clone())
+        .map(|reference| dom.get_by_ref(*reference).unwrap().name.clone())
         .collect();
     assert!(names.contains(&"src".to_owned()));
     assert!(!names.contains(&".naht".to_owned()));
@@ -86,7 +86,7 @@ fn build_watch_rebuilds_the_output_on_change() {
                 .root()
                 .children()
                 .iter()
-                .map(|r| dom.get_by_ref(*r).unwrap())
+                .map(|reference| dom.get_by_ref(*reference).unwrap())
                 .find(|instance| instance.name == "src");
             if src.map(|folder| folder.children().len()) == Some(2) {
                 rebuilt = true;
@@ -145,7 +145,11 @@ fn assets_disabled_build_is_byte_identical_and_rewrites_nothing() {
             .with_property("MeshId", Variant::String("meshes/rock.obj".to_owned())),
     );
     commands::resolve_assets(&root, &mut snapshot).unwrap();
-    let rock = snapshot.children.iter().find(|c| c.name == "Rock").unwrap();
+    let rock = snapshot
+        .children
+        .iter()
+        .find(|child| child.name == "Rock")
+        .unwrap();
     assert_eq!(
         rock.properties.get("MeshId"),
         Some(&Variant::String("meshes/rock.obj".to_owned())),

@@ -20,15 +20,15 @@ fn package_plugin_produces_a_loadable_rbxmx_with_the_entry_script() {
         .root()
         .children()
         .iter()
-        .map(|r| dom.get_by_ref(*r).unwrap())
-        .find(|i| i.name == "Naht")
+        .map(|reference| dom.get_by_ref(*reference).unwrap())
+        .find(|instance| instance.name == "Naht")
         .expect("single top-level Naht folder");
     assert_eq!(naht.class, "Folder");
 
     let plugin = child(&dom, naht, "Plugin").expect("entry Plugin script under Naht");
     assert_eq!(plugin.class, "Script");
     assert_eq!(
-        child(&dom, naht, "Apply").map(|m| m.class.as_str().to_owned()),
+        child(&dom, naht, "Apply").map(|instance| instance.class.as_str().to_owned()),
         Some("ModuleScript".to_owned())
     );
 }

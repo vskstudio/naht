@@ -79,7 +79,7 @@ pub struct Session {
 fn new_session_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
+        .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
     format!("{nanos:x}")
 }

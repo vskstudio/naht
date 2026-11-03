@@ -17,45 +17,46 @@ fn session_at(root: &Path) -> Session {
 #[test]
 fn ack_records_a_push_event_and_clears_pending() {
     let dir = tempfile::tempdir().unwrap();
-    let mut s = session_at(dir.path());
+    let mut session = session_at(dir.path());
     fs::write(dir.path().join("src").join("A.luau"), "return 1").unwrap();
-    s.rescan().unwrap();
+    session.rescan().unwrap();
 
-    let before = s.activity(0);
+    let before = session.activity(0);
     assert_eq!(before.pending, 1);
     assert!(before.events.is_empty());
 
-    let (_, patches) = s.take_patches(0);
+    let (_, patches) = session.take_patches(0);
     let path = patches[0].path.clone();
-    s.ack(slice::from_ref(&path)).unwrap();
+    session.ack(slice::from_ref(&path)).unwrap();
 
-    let after = s.activity(0);
+    let after = session.activity(0);
     assert_eq!(after.pending, 0);
     assert_eq!(after.events.len(), 1);
-    let e = &after.events[0];
-    assert_eq!(e.path, path);
-    assert_eq!(e.direction, Direction::ToStudio);
-    assert_eq!(e.kind, EventKind::Text);
-    assert_eq!(e.outcome, Outcome::Ok);
-    assert_eq!(e.seq, 1);
+    let event = &after.events[0];
+    assert_eq!(event.path, path);
+    assert_eq!(event.direction, Direction::ToStudio);
+    assert_eq!(event.kind, EventKind::Text);
+    assert_eq!(event.outcome, Outcome::Ok);
+    assert_eq!(event.seq, 1);
 }
 
 #[test]
 fn applying_a_studio_change_records_a_pull_event() {
     let dir = tempfile::tempdir().unwrap();
-    let mut s = session_at(dir.path());
-    s.apply_changes(vec![Change::Upsert {
-        path: "src/New.luau".to_owned(),
-        class: "ModuleScript".to_owned(),
-        content: "return 5".to_owned(),
-    }])
-    .unwrap();
+    let mut session = session_at(dir.path());
+    session
+        .apply_changes(vec![Change::Upsert {
+            path: "src/New.luau".to_owned(),
+            class: "ModuleScript".to_owned(),
+            content: "return 5".to_owned(),
+        }])
+        .unwrap();
 
-    let act = s.activity(0);
+    let act = session.activity(0);
     let pulls: Vec<_> = act
         .events
         .iter()
-        .filter(|e| e.direction == Direction::ToFs)
+        .filter(|event| event.direction == Direction::ToFs)
         .collect();
     assert_eq!(pulls.len(), 1);
     assert_eq!(pulls[0].kind, EventKind::Text);
@@ -65,35 +66,37 @@ fn applying_a_studio_change_records_a_pull_event() {
 #[test]
 fn since_returns_only_newer_events() {
     let dir = tempfile::tempdir().unwrap();
-    let mut s = session_at(dir.path());
-    for i in 0..3 {
-        s.apply_changes(vec![Change::Upsert {
-            path: format!("src/F{i}.luau"),
-            class: "ModuleScript".to_owned(),
-            content: format!("return {i}"),
-        }])
-        .unwrap();
+    let mut session = session_at(dir.path());
+    for index in 0..3 {
+        session
+            .apply_changes(vec![Change::Upsert {
+                path: format!("src/F{index}.luau"),
+                class: "ModuleScript".to_owned(),
+                content: format!("return {index}"),
+            }])
+            .unwrap();
     }
-    let all = s.activity(0);
+    let all = session.activity(0);
     assert!(all.events.len() >= 3);
     let mid = all.events[0].seq;
-    let rest = s.activity(mid);
-    assert!(rest.events.iter().all(|e| e.seq > mid));
+    let rest = session.activity(mid);
+    assert!(rest.events.iter().all(|event| event.seq > mid));
 }
 
 #[test]
 fn buffer_evicts_oldest_past_the_cap() {
     let dir = tempfile::tempdir().unwrap();
-    let mut s = session_at(dir.path());
-    for i in 0..260 {
-        s.apply_changes(vec![Change::Upsert {
-            path: format!("src/E{i}.luau"),
-            class: "ModuleScript".to_owned(),
-            content: "x".to_owned(),
-        }])
-        .unwrap();
+    let mut session = session_at(dir.path());
+    for index in 0..260 {
+        session
+            .apply_changes(vec![Change::Upsert {
+                path: format!("src/E{index}.luau"),
+                class: "ModuleScript".to_owned(),
+                content: "x".to_owned(),
+            }])
+            .unwrap();
     }
-    let act = s.activity(0);
+    let act = session.activity(0);
     assert_eq!(act.events.len(), 256);
     assert_eq!(act.buffer_start_seq, act.events[0].seq);
     assert_eq!(act.buffer_start_seq, 5);

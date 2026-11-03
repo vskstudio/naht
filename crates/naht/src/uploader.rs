@@ -132,6 +132,6 @@ fn extract_asset_id(body: &serde_json::Value) -> Option<String> {
     let id = id
         .as_str()
         .map(str::to_owned)
-        .or_else(|| id.as_u64().map(|n| n.to_string()))?;
+        .or_else(|| id.as_u64().map(|number| number.to_string()))?;
     Some(format!("rbxassetid://{id}"))
 }

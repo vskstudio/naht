@@ -82,7 +82,7 @@ impl Vfs for MemoryVfs {
                 });
             }
         }
-        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(entries)
     }
 
@@ -109,8 +109,9 @@ impl Vfs for MemoryVfs {
             return Ok(());
         }
         if self.dirs.remove(path) {
-            self.files.retain(|p, _| !p.starts_with(path));
-            self.dirs.retain(|p| !p.starts_with(path));
+            self.files
+                .retain(|file_path, _| !file_path.starts_with(path));
+            self.dirs.retain(|dir_path| !dir_path.starts_with(path));
             return Ok(());
         }
         Err(VfsError::NotFound(path.to_path_buf()))

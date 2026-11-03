@@ -31,10 +31,11 @@ fn scan_into(
         match entry.kind {
             EntryKind::Dir => scan_into(vfs, &entry.path, out)?,
             EntryKind::File => {
-                let Some(name) = entry.path.file_name().and_then(|n| n.to_str()) else {
+                let Some(name) = entry.path.file_name().and_then(|os_name| os_name.to_str()) else {
                     continue;
                 };
-                let Some(class) = init_class(name).or_else(|| script_class(name).map(|(c, _)| c))
+                let Some(class) = init_class(name)
+                    .or_else(|| script_class(name).map(|(found_class, _)| found_class))
                 else {
                     continue;
                 };

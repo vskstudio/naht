@@ -53,14 +53,15 @@ impl Snapshot {
     /// Add a child, keeping children sorted by name.
     pub fn push_child(&mut self, child: Snapshot) {
         self.children.push(child);
-        self.children.sort_by(|a, b| a.name.cmp(&b.name));
+        self.children
+            .sort_by(|left, right| left.name.cmp(&right.name));
     }
 
     /// The script body, if this instance carries one.
     #[must_use]
     pub fn source(&self) -> Option<&str> {
         match self.properties.get(SOURCE_PROPERTY) {
-            Some(Variant::String(s)) => Some(s),
+            Some(Variant::String(text)) => Some(text),
             _ => None,
         }
     }

@@ -185,16 +185,16 @@ mod tests {
         let roots = dom.root().children();
         let mut top: Vec<_> = roots
             .iter()
-            .map(|r| dom.get_by_ref(*r).unwrap())
-            .map(|i| (i.name.as_str(), i.class.as_str()))
+            .map(|reference| dom.get_by_ref(*reference).unwrap())
+            .map(|instance| (instance.name.as_str(), instance.class.as_str()))
             .collect();
         top.sort();
         assert_eq!(top, vec![("Greeter", "ModuleScript"), ("sub", "Folder")]);
 
         let greeter = roots
             .iter()
-            .map(|r| dom.get_by_ref(*r).unwrap())
-            .find(|i| i.name == "Greeter")
+            .map(|reference| dom.get_by_ref(*reference).unwrap())
+            .find(|instance| instance.name == "Greeter")
             .unwrap();
         let source = greeter
             .properties
@@ -244,7 +244,7 @@ mod tests {
         dom.root()
             .children()
             .iter()
-            .map(|r| dom.get_by_ref(*r).unwrap())
+            .map(|reference| dom.get_by_ref(*reference).unwrap())
             .find(|instance| instance.class == class)
     }
 
@@ -256,7 +256,7 @@ mod tests {
         instance
             .children()
             .iter()
-            .map(|r| dom.get_by_ref(*r).unwrap())
+            .map(|reference| dom.get_by_ref(*reference).unwrap())
             .find(|child| child.name == name)
     }
 
@@ -332,8 +332,8 @@ mod stage15 {
         instance
             .properties
             .iter()
-            .find(|(k, _)| k.as_str() == key)
-            .map(|(_, v)| v)
+            .find(|(property_name, _)| property_name.as_str() == key)
+            .map(|(_, property_value)| property_value)
     }
 
     #[test]
@@ -354,7 +354,7 @@ mod stage15 {
         let service_classes: Vec<&str> = root
             .children()
             .iter()
-            .map(|r| dom.get_by_ref(*r).unwrap().class.as_str())
+            .map(|reference| dom.get_by_ref(*reference).unwrap().class.as_str())
             .collect();
         assert!(service_classes.contains(&"ReplicatedStorage"));
         assert!(service_classes.contains(&"Workspace"));
@@ -388,15 +388,15 @@ mod stage15 {
             .root()
             .children()
             .iter()
-            .map(|r| dom.get_by_ref(*r).unwrap())
-            .find(|i| i.class == "Workspace")
+            .map(|reference| dom.get_by_ref(*reference).unwrap())
+            .find(|instance| instance.class == "Workspace")
             .expect("Workspace");
         let by_name = |name: &str| {
             workspace
                 .children()
                 .iter()
-                .map(|r| dom.get_by_ref(*r).unwrap())
-                .find(|i| i.name == name)
+                .map(|reference| dom.get_by_ref(*reference).unwrap())
+                .find(|instance| instance.name == name)
                 .unwrap_or_else(|| panic!("missing {name}"))
         };
         let block = by_name("Block");

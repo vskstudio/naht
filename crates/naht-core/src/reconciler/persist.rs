@@ -11,7 +11,11 @@ use super::scan::decode;
 /// List the frozen (conflicted) paths.
 pub fn status(store: &StateStore) -> Result<Status, ReconcileError> {
     Ok(Status {
-        conflicted: store.conflicted()?.into_iter().map(|r| r.path).collect(),
+        conflicted: store
+            .conflicted()?
+            .into_iter()
+            .map(|record| record.path)
+            .collect(),
     })
 }
 

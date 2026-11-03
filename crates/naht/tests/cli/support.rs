@@ -14,7 +14,13 @@ pub fn root_classes(dom: &WeakDom) -> Vec<String> {
     dom.root()
         .children()
         .iter()
-        .map(|r| dom.get_by_ref(*r).unwrap().class.as_str().to_owned())
+        .map(|reference| {
+            dom.get_by_ref(*reference)
+                .unwrap()
+                .class
+                .as_str()
+                .to_owned()
+        })
         .collect()
 }
 
@@ -22,7 +28,7 @@ pub fn service<'a>(dom: &'a WeakDom, class: &str) -> Option<&'a Instance> {
     dom.root()
         .children()
         .iter()
-        .map(|r| dom.get_by_ref(*r).unwrap())
+        .map(|reference| dom.get_by_ref(*reference).unwrap())
         .find(|instance| instance.class == class)
 }
 
@@ -30,7 +36,7 @@ pub fn child<'a>(dom: &'a WeakDom, instance: &Instance, name: &str) -> Option<&'
     instance
         .children()
         .iter()
-        .map(|r| dom.get_by_ref(*r).unwrap())
+        .map(|reference| dom.get_by_ref(*reference).unwrap())
         .find(|child| child.name == name)
 }
 
@@ -38,8 +44,8 @@ pub fn property<'a>(instance: &'a Instance, key: &str) -> Option<&'a Variant> {
     instance
         .properties
         .iter()
-        .find(|(k, _)| k.as_str() == key)
-        .map(|(_, v)| v)
+        .find(|(property_name, _)| property_name.as_str() == key)
+        .map(|(_, property_value)| property_value)
 }
 
 pub fn one(path: &str, content: &str) -> BTreeMap<String, TextInstance> {

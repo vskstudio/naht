@@ -172,7 +172,7 @@ impl Config {
     pub fn project_name(&self, root: &Path) -> String {
         self.project.name.clone().unwrap_or_else(|| {
             root.file_name()
-                .and_then(|n| n.to_str())
+                .and_then(|os_name| os_name.to_str())
                 .unwrap_or("naht")
                 .to_owned()
         })

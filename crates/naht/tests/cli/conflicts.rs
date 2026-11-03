@@ -41,6 +41,11 @@ fn status_and_resolve_reflect_the_conflict_state() {
     fs::write(root.join("src").join("m.luau"), "local a = 99\n").unwrap();
     commands::resolve(&root, rel).unwrap();
 
-    let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-    assert!(reconciler::status(&store).unwrap().conflicted.is_empty());
+    let resolved_store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
+    assert!(
+        reconciler::status(&resolved_store)
+            .unwrap()
+            .conflicted
+            .is_empty()
+    );
 }
