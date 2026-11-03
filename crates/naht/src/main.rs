@@ -1,16 +1,35 @@
-//! `naht` — the CLI and localhost sync daemon.
+//! `naht`, the CLI and localhost sync daemon.
 //!
 //! This binary parses arguments and dispatches to [`naht::commands`]; all sync decisions live in
 //! [`naht_core`] and the daemon modules. Commands: `init` (`--from-rojo` to convert a Rojo project),
 //! `serve`, `pull`, `build`, `status`, `resolve`.
+//!
+//! | Exit code | Meaning |
+//! |---|---|
+//! | 0 | the command succeeded |
+//! | 2 | the command line is wrong, reported by `clap` |
+//! | 65 | the project's input is malformed or the request conflicts with it |
+//! | 66 | an input file or the project directory cannot be read |
+//! | 69 | the daemon is not reachable, or its port cannot be bound |
+//! | 70 | an internal failure that is not the operator's doing |
+//! | 71 | the file watcher cannot start |
+//! | 73 | an output file or project file cannot be created |
+//! | 74 | a file or the state database cannot be read or written |
+//! | 78 | the configuration is invalid |
+
+mod exit;
+mod failure;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use naht::commands;
 use naht::config::Config;
+
+use crate::exit::Exit;
+use crate::failure::Failure;
 
 /// Bidirectional, conflict-safe filesystem sync for Roblox Studio.
 #[derive(Parser)]
@@ -92,34 +111,59 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     let cli = Cli::parse();
-    naht::logging::init(cli.verbose);
-    match cli.command {
-        Command::Init { path, from_rojo } => commands::init(&path, from_rojo),
+    let exit = match naht::logging::init(cli.verbose) {
+        Ok(()) => match dispatch(cli.command).await {
+            Ok(()) => Exit::Success,
+            Err(failure) => {
+                failure::report(&failure).map_or(Exit::IoError, |()| Exit::from(&failure))
+            }
+        },
+        Err(error) => {
+            failure::report(&Failure::Logging(error)).map_or(Exit::IoError, |()| Exit::Software)
+        }
+    };
+    exit.into()
+}
+
+async fn dispatch(command: Command) -> Result<(), Failure> {
+    match command {
+        Command::Init { path, from_rojo } => {
+            commands::init(&path, from_rojo).map_err(Failure::from)
+        }
         Command::Serve { path, port } => {
             let config = Config::load(&path)?;
             let port = config.resolve_port(port)?;
-            commands::serve(config, &path, port).await
+            commands::serve(config, &path, port)
+                .await
+                .map_err(Failure::from)
         }
         Command::Pull { path } => {
             let config = Config::load(&path)?;
-            commands::pull(&config).await
+            commands::pull(&config).await.map_err(Failure::from)
         }
         Command::Build {
             path,
             output,
             watch,
         } => {
-            if watch {
+            let built = if watch {
                 commands::build_watch(&path, &output).await
             } else {
                 commands::build(&path, &output)
-            }
+            };
+            built.map_err(Failure::from)
         }
-        Command::Status { path } => commands::status(&path),
-        Command::Resolve { path, project } => commands::resolve(&project, &path),
-        Command::PackagePlugin { src, output } => commands::package_plugin(&src, &output),
-        Command::CheckVersion { tag } => commands::check_release_version(&tag),
+        Command::Status { path } => commands::status(&path).map_err(Failure::from),
+        Command::Resolve { path, project } => {
+            commands::resolve(&project, &path).map_err(Failure::from)
+        }
+        Command::PackagePlugin { src, output } => {
+            commands::package_plugin(&src, &output).map_err(Failure::from)
+        }
+        Command::CheckVersion { tag } => {
+            commands::check_release_version(&tag).map_err(Failure::from)
+        }
     }
 }

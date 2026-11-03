@@ -36,6 +36,8 @@ jobs:
           toolchain: 1.99.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Install cargo-deny and cargo-machete
+        run: cargo install --locked cargo-deny@0.20.2 cargo-machete@0.9.2
       - name: Quality chain
         run: ./scripts/check.sh
 
