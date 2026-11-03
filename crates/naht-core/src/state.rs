@@ -65,6 +65,7 @@ pub struct InstanceRecord {
 }
 
 /// The SQLite-backed state store.
+#[derive(Debug)]
 pub struct StateStore {
     conn: Connection,
 }

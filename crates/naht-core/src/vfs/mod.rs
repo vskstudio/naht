@@ -39,7 +39,12 @@ pub enum VfsError {
     Symlink(PathBuf),
     /// An underlying I/O failure on the real disk.
     #[error("I/O error at {path}: {source}")]
-    Io { path: PathBuf, source: io::Error },
+    Io {
+        /// The path that failed.
+        path: PathBuf,
+        /// The underlying operating system error.
+        source: io::Error,
+    },
 }
 
 /// Whether a directory entry is a file or a subdirectory.
@@ -65,11 +70,18 @@ pub struct DirEntry {
 /// Mutating operations take `&mut self` so the in-memory implementation needs no interior
 /// mutability; the daemon owns its [`Vfs`] exclusively.
 pub trait Vfs {
+    /// Returns the full contents of the file at `path`.
     fn read(&self, path: &Path) -> Result<Vec<u8>, VfsError>;
+    /// Returns the entries of the directory at `path`.
     fn list(&self, path: &Path) -> Result<Vec<DirEntry>, VfsError>;
+    /// Replaces the file at `path` with `contents`, creating it when absent.
     fn write(&mut self, path: &Path, contents: &[u8]) -> Result<(), VfsError>;
+    /// Creates the directory at `path` and any missing parent.
     fn create_dir(&mut self, path: &Path) -> Result<(), VfsError>;
+    /// Removes the file or directory at `path`.
     fn remove(&mut self, path: &Path) -> Result<(), VfsError>;
+    /// Reports whether something exists at `path`.
     fn exists(&self, path: &Path) -> bool;
+    /// Reports whether `path` is a file or a directory.
     fn kind(&self, path: &Path) -> Result<EntryKind, VfsError>;
 }

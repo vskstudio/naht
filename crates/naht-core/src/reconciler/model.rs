@@ -82,6 +82,7 @@ pub enum ReconcileError {
     /// A filesystem operation failed.
     #[error(transparent)]
     Vfs(#[from] VfsError),
+    /// A text file holds bytes that are not valid UTF-8.
     #[error("non-UTF-8 content at {0}")]
     NonUtf8(String),
     /// `resolve` was asked about a path that is not conflicted.

@@ -9,9 +9,11 @@
 pub mod commands;
 pub mod config;
 pub mod logging;
+/// Rendering of the command-line report.
 pub mod output;
 pub mod server;
 pub mod session;
+/// Graceful shutdown on signals and on request.
 pub mod shutdown;
 pub mod uploader;
 pub mod watcher;
