@@ -80,7 +80,7 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         .text("request", request.to_string())
         .part(
             "fileContent",
-            reqwest::blocking::multipart::Part::bytes(content.to_vec()).file_name(name.to_string()),
+            reqwest::blocking::multipart::Part::bytes(content.to_vec()).file_name(name.to_owned()),
         );
 
     let response = reqwest::blocking::Client::new()
@@ -123,7 +123,7 @@ fn extract_asset_id(body: &serde_json::Value) -> Option<String> {
         .or_else(|| body.get("assetId"))?;
     let id = id
         .as_str()
-        .map(str::to_string)
+        .map(str::to_owned)
         .or_else(|| id.as_u64().map(|n| n.to_string()))?;
     Some(format!("rbxassetid://{id}"))
 }
