@@ -9,6 +9,7 @@
 pub mod commands;
 pub mod config;
 pub mod logging;
+pub mod output;
 pub mod server;
 pub mod session;
 pub mod uploader;

@@ -2,7 +2,7 @@
 //! sync brain, the state store, and the model builder. The binary's `main` parses arguments and
 //! dispatches here; the integration tests drive these functions directly.
 
-use std::io;
+use std::io::{self, Write};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,6 +22,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::config::{Config, ConfigError, PROJECT_FILE};
+use crate::output::Output;
 use crate::server::AppState;
 use crate::session::Session;
 use crate::uploader::{OpenCloudUploader, UploaderError};
@@ -157,6 +158,9 @@ pub enum CommandError {
     /// The HTTP server stopped with an error.
     #[error("the server stopped with an error")]
     Serve(#[source] io::Error),
+    /// A line of command output could not be written.
+    #[error("cannot write command output")]
+    Output(#[source] io::Error),
     /// A release tag does not name the workspace version.
     #[error("release tag `{tag}` does not match workspace version `{want}`")]
     ReleaseMismatch {
@@ -176,8 +180,28 @@ const WATCH_DEBOUNCE: Duration = Duration::from_millis(200);
 /// Naht's internal directory, holding the state database; never part of a build.
 const INTERNAL_DIR: &str = ".naht";
 
+/// What `init` created, or what it converted, for the caller to report.
+#[derive(Debug)]
+pub enum Initialized {
+    Rojo {
+        project_file: PathBuf,
+        warnings: Vec<String>,
+    },
+    Fresh {
+        name: String,
+        root: PathBuf,
+    },
+}
+
+/// A finished build: the artifact written and every warning it raised, in the order found.
+#[derive(Debug)]
+pub struct Built {
+    pub output: PathBuf,
+    pub warnings: Vec<String>,
+}
+
 /// Scaffold a new project at `path`, or convert an existing Rojo project there when `from_rojo`.
-pub fn init(path: &Path, from_rojo: bool) -> Result<(), CommandError> {
+pub fn init(path: &Path, from_rojo: bool) -> Result<Initialized, CommandError> {
     std::fs::create_dir_all(path).map_err(|source| CommandError::CreateDir {
         path: path.to_path_buf(),
         source,
@@ -190,33 +214,23 @@ pub fn init(path: &Path, from_rojo: bool) -> Result<(), CommandError> {
 
     if from_rojo {
         let warnings = migrate_from_rojo(&root)?;
-        for warning in &warnings {
-            eprintln!("  warning: {warning}");
-        }
-        println!("Converted Rojo project into {}", project_file.display());
+        Ok(Initialized::Rojo {
+            project_file,
+            warnings,
+        })
     } else {
         let name = dir_name(&root);
         write_file(&project_file, &render_rojo_config(&name, None, &[])?)?;
         scaffold_source(&root)?;
         ensure_gitignore(&root)?;
-        println!("Initialized Naht project '{name}' at {}", root.display());
+        Ok(Initialized::Fresh { name, root })
     }
-    Ok(())
 }
 
-/// Print the project's conflict state: the paths frozen pending `resolve`, or that it is clean.
-pub fn status(root: &Path) -> Result<(), CommandError> {
+/// The project's conflict state: the paths frozen pending `resolve`.
+pub fn status(root: &Path) -> Result<reconciler::Status, CommandError> {
     let store = open_store(root)?;
-    let status = reconciler::status(&store)?;
-    if status.conflicted.is_empty() {
-        println!("clean, no conflicted paths");
-    } else {
-        println!("{} conflicted path(s):", status.conflicted.len());
-        for path in &status.conflicted {
-            println!("  {path}");
-        }
-    }
-    Ok(())
+    Ok(reconciler::status(&store)?)
 }
 
 /// Clear a conflict at `path` once its markers have been removed by hand.
@@ -224,52 +238,46 @@ pub fn resolve(root: &Path, path: &str) -> Result<(), CommandError> {
     let store = open_store(root)?;
     let vfs = rooted(root)?;
     reconciler::resolve(&vfs, &store, path)?;
-    println!("resolved {path}");
     Ok(())
 }
 
 /// Build the project at `root` into `output` once. The output extension picks the artifact:
 /// `.rbxl`/`.rbxlx` build a **place** (a `DataModel` with convention-mapped services), anything else
 /// a **model**; `.rbxmx`/`.rbxlx` are XML, the rest binary.
-pub fn build(root: &Path, output: &Path) -> Result<(), CommandError> {
+pub fn build(root: &Path, output: &Path) -> Result<Built, CommandError> {
     build_once(&canonical(root)?, output)
 }
 
-/// Build once, then rebuild on every debounced change until interrupted (Stage 9 `--watch`).
-pub async fn build_watch(root: &Path, output: &Path) -> Result<(), CommandError> {
+/// Build once, then rebuild on every debounced change for as long as the returned guard is held.
+pub fn build_watch(root: &Path, output: &Path) -> Result<(Built, impl Drop + use<>), CommandError> {
     let root = canonical(root)?;
-    build_once(&root, output)?;
-    let _watcher = spawn_build_watcher(&root, output)?;
+    let built = build_once(&root, output)?;
+    let watcher = spawn_build_watcher(&root, output)?;
     tracing::info!(target: "naht::build", root = %root.display(), "watching for changes");
-    println!("watching {}, rebuilding on change", root.display());
-    std::future::pending::<()>().await;
-    Ok(())
+    Ok((built, watcher))
 }
 
 /// The single build step shared by `build` and `build --watch`. `root` must already be canonical.
-fn build_once(root: &Path, output: &Path) -> Result<(), CommandError> {
+fn build_once(root: &Path, output: &Path) -> Result<Built, CommandError> {
     let config = Config::load(root)?;
-    let (mut snapshot, warnings) = assemble_project_snapshot(root, &config)?;
-    for warning in &warnings {
-        eprintln!("naht: warning: {warning}");
-    }
-    warn_unsyncable(&snapshot);
-    resolve_assets(root, &mut snapshot)?;
+    let (mut snapshot, mut warnings) = assemble_project_snapshot(root, &config)?;
+    warnings.extend(unsyncable_lines(&limits::scan(&snapshot)));
+    warnings.extend(resolve_assets(root, &mut snapshot)?);
 
     create_parent_dirs(output)?;
     let file = create_file(output)?;
     let writer = io::BufWriter::new(file);
     let format = model_format(output);
     if is_place_output(output) {
-        for warning in build::write_place(writer, &snapshot, format)? {
-            eprintln!("naht: warning: {warning}");
-        }
+        warnings.extend(build::write_place(writer, &snapshot, format)?);
     } else {
         build::write_model(writer, &snapshot, format)?;
     }
     tracing::info!(target: "naht::build", output = %output.display(), "built");
-    println!("built {}", output.display());
-    Ok(())
+    Ok(Built {
+        output: output.to_path_buf(),
+        warnings,
+    })
 }
 
 /// Ask a running daemon to re-sync now (Studio ↔ filesystem). Full on-demand Studio → filesystem
@@ -289,16 +297,22 @@ pub async fn pull(config: &Config) -> Result<(), CommandError> {
             status: response.status(),
         });
     }
-    println!("pulled, daemon re-synced");
     Ok(())
 }
 
 /// Run the sync daemon for the project at `root` on `port`, using `config` for the project name and
-/// place guard.
-pub async fn serve(config: Config, root: &Path, port: u16) -> Result<(), CommandError> {
+/// place guard. Warnings and the serving line go to `out` before the session starts.
+pub async fn serve<Out: Write, Err: Write>(
+    config: Config,
+    root: &Path,
+    port: u16,
+    out: &mut Output<Out, Err>,
+) -> Result<(), CommandError> {
     let root = canonical(root)?;
     if let Ok(snapshot) = mapper::snapshot_dir(&DiskVfs::new(), &root) {
-        report_unsyncable(&serve_warnings(&config, &snapshot));
+        for line in unsyncable_lines(&serve_warnings(&config, &snapshot)) {
+            out.warn(line).map_err(CommandError::Output)?;
+        }
     }
     let store = open_store(&root)?;
     let session = Session::new(
@@ -317,7 +331,11 @@ pub async fn serve(config: Config, root: &Path, port: u16) -> Result<(), Command
         .await
         .map_err(|source| CommandError::Bind { addr, source })?;
     tracing::info!(target: "naht::server", %addr, root = %root.display(), "naht serving");
-    println!("naht serving {} on http://{addr}", root.display());
+    out.say(format_args!(
+        "naht serving {} on http://{addr}",
+        root.display()
+    ))
+    .map_err(CommandError::Output)?;
     crate::server::serve(listener, state)
         .await
         .map_err(CommandError::Serve)
@@ -340,7 +358,6 @@ pub fn package_plugin(src: &Path, output: &Path) -> Result<(), CommandError> {
     create_parent_dirs(output)?;
     let file = create_file(output)?;
     build::write_model(io::BufWriter::new(file), &root, ModelFormat::Xml)?;
-    println!("packaged plugin into {}", output.display());
     Ok(())
 }
 
@@ -355,32 +372,36 @@ pub fn check_release_version(tag: &str) -> Result<(), CommandError> {
             want: want.to_string(),
         });
     }
-    println!("release tag '{tag}' matches workspace version '{want}'");
     Ok(())
 }
 
 /// When `[assets]` is enabled, upload local asset files referenced by properties and rewrite them to
 /// `rbxassetid://…`. Disabled by default, so the common case does no network I/O and leaves every
-/// property untouched. Public so the disabled-path no-op is testable at the snapshot level.
-pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<(), CommandError> {
+/// property untouched. Returns one warning per asset that stayed at its original reference, so a
+/// single bad asset never aborts the whole build.
+pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<Vec<String>, CommandError> {
     let config = Config::load(root)?;
     if !config.assets.is_enabled() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let store = open_store(root)?;
     let uploader = OpenCloudUploader::from_config(&config.assets)?;
     let vfs = RootedVfs::new(root.to_path_buf(), DiskVfs::new());
     let failures = naht_core::assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot);
-    if !failures.is_empty() {
-        eprintln!("naht: {} asset(s) could not be uploaded:", failures.len());
-        for failure in &failures {
-            eprintln!(
-                "  warning: {} ({}) left at its original reference: {}",
-                failure.path, failure.property, failure.error
-            );
-        }
+    if failures.is_empty() {
+        return Ok(Vec::new());
     }
-    Ok(())
+    let mut warnings = vec![format!(
+        "{} asset(s) could not be uploaded:",
+        failures.len()
+    )];
+    warnings.extend(failures.iter().map(|failure| {
+        format!(
+            "{} ({}) left at its original reference: {}",
+            failure.path, failure.property, failure.error
+        )
+    }));
+    Ok(warnings)
 }
 
 /// The instances that can't round-trip live in a `serve` session, honoring the project's enabled
@@ -397,20 +418,14 @@ pub fn serve_warnings(config: &Config, snapshot: &Snapshot) -> Vec<limits::Warni
     )
 }
 
-/// Print, to stderr, every instance that can't round-trip live, never silently dropped.
-fn warn_unsyncable(snapshot: &Snapshot) {
-    report_unsyncable(&limits::scan(snapshot));
-}
-
-/// Print a set of unsyncable warnings to stderr, with a count header. Empty is silent.
-fn report_unsyncable(warnings: &[limits::Warning]) {
+/// The lines that report unsyncable instances, a count header first. Empty when nothing is flagged.
+fn unsyncable_lines(warnings: &[limits::Warning]) -> Vec<String> {
     if warnings.is_empty() {
-        return;
+        return Vec::new();
     }
-    eprintln!("naht: {} item(s) cannot live-sync:", warnings.len());
-    for warning in warnings {
-        eprintln!("  warning: {}", warning.message());
-    }
+    let mut lines = vec![format!("{} item(s) cannot live-sync:", warnings.len())];
+    lines.extend(warnings.iter().map(limits::Warning::message));
+    lines
 }
 
 /// A minimal Rojo `default.project.json`, just the fields Naht can carry over. The `tree` is kept as
@@ -806,7 +821,7 @@ fn is_place_output(output: &Path) -> bool {
 /// Watch `root` and rebuild `output` on each debounced change. The caller holds the returned guard
 /// for as long as watching should continue. Our own output writes are ignored, so the rebuild does
 /// not trigger itself.
-pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop, CommandError> {
+pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use<>, CommandError> {
     let root = canonical(root)?;
     let watch_root = root.clone();
     let output = output.to_path_buf();
@@ -828,8 +843,13 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop, Comm
         if only_own_output {
             return;
         }
-        if let Err(error) = build_once(&root, &output) {
-            tracing::warn!(target: "naht::build", %error, "rebuild failed");
+        match build_once(&root, &output) {
+            Ok(built) => {
+                for warning in &built.warnings {
+                    tracing::warn!(target: "naht::build", %warning, "build warning");
+                }
+            }
+            Err(error) => tracing::warn!(target: "naht::build", %error, "rebuild failed"),
         }
     })
     .map_err(WatchError::from)?;
