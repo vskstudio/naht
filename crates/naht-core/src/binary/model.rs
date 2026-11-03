@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::reconciler::{Classed, Direction, PatchKind};
 
+mod bytes {
+    pub(super) use serde_bytes::{deserialize, serialize};
+}
+
 /// The filesystem extension a binary blob lives behind. A `*.terrain` file is the opaque voxel blob
 /// the daemon syncs (architecture §9); the convention mirrors the script-suffix conventions in the
 /// mapper, kept here because only the binary path consumes it.
@@ -18,7 +22,7 @@ pub struct BlobInstance {
     /// The Roblox class name (e.g. `Terrain`).
     pub class: String,
     /// The raw bytes (encoded as a MessagePack binary blob, not an integer array).
-    #[serde(with = "serde_bytes")]
+    #[serde(with = "bytes")]
     pub content: Vec<u8>,
 }
 
@@ -55,7 +59,7 @@ pub struct BlobPatch {
     /// What the patch does. A `Conflict` froze the path; no bytes were written.
     pub kind: PatchKind,
     /// The blob bytes, or `None` for a delete or a conflict freeze.
-    #[serde(with = "serde_bytes")]
+    #[serde(with = "bytes")]
     pub content: Option<Vec<u8>>,
 }
 
