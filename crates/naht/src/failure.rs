@@ -18,10 +18,12 @@ pub(crate) enum Failure {
     Logging(#[source] tracing::subscriber::SetGlobalDefaultError),
     #[error("cannot write to the terminal")]
     Terminal(#[from] io::Error),
+    #[error("cannot wait for a termination signal")]
+    SignalWait(#[source] io::Error),
 }
 
-pub(crate) fn report<Out: Write, Err: Write>(
-    out: &mut Output<Out, Err>,
+pub(crate) fn report<Stdout: Write, Stderr: Write>(
+    out: &mut Output<Stdout, Stderr>,
     failure: &Failure,
 ) -> io::Result<()> {
     out.fail(Chain(failure))

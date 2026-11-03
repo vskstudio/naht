@@ -161,7 +161,7 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
             ))?;
             naht::shutdown::terminated()
                 .await
-                .map_err(Failure::Terminal)?;
+                .map_err(Failure::SignalWait)?;
         }
         Command::Build {
             path,

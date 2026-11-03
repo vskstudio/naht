@@ -17,7 +17,9 @@ const WATCH_DEBOUNCE: Duration = Duration::from_millis(200);
 /// A finished build: the artifact written and every warning it raised, in the order found.
 #[derive(Debug)]
 pub struct Built {
+    /// The artifact that was written.
     pub output: PathBuf,
+    /// Every warning the build raised, in the order found.
     pub warnings: Vec<String>,
 }
 
@@ -94,9 +96,10 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use
         if changed.is_empty() {
             return;
         }
-        if let Some(out) = output_abs.as_deref()
-            && changed.iter().all(|path| path == out)
-        {
+        let only_own_output = output_abs
+            .as_deref()
+            .is_some_and(|out| changed.iter().all(|path| path == out));
+        if only_own_output {
             return;
         }
         match build_once(&root, &output) {

@@ -1,6 +1,6 @@
 use super::error::CommandError;
-use super::files::{INTERNAL_DIR, dir_name, write_file};
-use crate::config::{Config, PROJECT_FILE};
+use super::files::{dir_name, write_file};
+use crate::config::{Config, INTERNAL_DIR, PROJECT_FILE};
 use naht_core::mapper;
 use naht_core::snapshot::Snapshot;
 use naht_core::vfs::DiskVfs;

@@ -9,9 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify_debouncer_full::notify::{self, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
 use thiserror::Error;
 
+use crate::config::INTERNAL_DIR;
 use crate::server::AppState;
 
 /// Why the filesystem watcher could not start watching the project.
@@ -26,12 +27,18 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 /// must hold onto the returned guard for as long as watching should continue.
 pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, WatchError> {
     let runtime = tokio::runtime::Handle::current();
+    let watched_root = root.to_path_buf();
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
-        // A failed batch (e.g. a transient watch error) is skipped; the next event re-syncs, and a
-        // reconnect re-diff catches anything missed. We never crash the watch thread.
         match result {
             Ok(events) => {
-                tracing::debug!(target: "naht::watcher", batch = events.len(), "filesystem batch");
+                let project_events = events
+                    .iter()
+                    .filter(|event| is_project_event(&watched_root, event))
+                    .count();
+                if project_events == 0 {
+                    return;
+                }
+                tracing::debug!(target: "naht::watcher", batch = project_events, "filesystem batch");
                 let state = state.clone();
                 let tasks = state.tasks().clone();
                 tasks.spawn_on(
@@ -58,4 +65,42 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, Wat
     })?;
     debouncer.watch(root, RecursiveMode::Recursive)?;
     Ok(debouncer)
+}
+
+fn is_project_event(root: &Path, event: &DebouncedEvent) -> bool {
+    let internal = root.join(INTERNAL_DIR);
+    event.paths.iter().any(|path| !path.starts_with(&internal))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    use notify_debouncer_full::notify::{Event, EventKind};
+
+    use super::*;
+
+    fn event_at(path: &str) -> DebouncedEvent {
+        let event = Event::new(EventKind::Any).add_path(PathBuf::from(path));
+        DebouncedEvent::new(event, Instant::now())
+    }
+
+    #[test]
+    fn a_write_under_the_internal_dir_is_not_a_project_event() {
+        let event = event_at("/project/.naht/state.db-wal");
+        assert!(!is_project_event(Path::new("/project"), &event));
+    }
+
+    #[test]
+    fn a_write_in_the_tree_is_a_project_event() {
+        let event = event_at("/project/src/Main.luau");
+        assert!(is_project_event(Path::new("/project"), &event));
+    }
+
+    #[test]
+    fn a_sibling_named_like_the_internal_dir_is_a_project_event() {
+        let event = event_at("/project/.naht-notes/todo.txt");
+        assert!(is_project_event(Path::new("/project"), &event));
+    }
 }

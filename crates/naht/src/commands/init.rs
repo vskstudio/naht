@@ -7,12 +7,18 @@ use std::path::{Path, PathBuf};
 /// What `init` created, or what it converted, for the caller to report.
 #[derive(Debug)]
 pub enum Initialized {
+    /// A Rojo project was converted in place.
     Rojo {
+        /// The Naht project file written in place of the Rojo one.
         project_file: PathBuf,
+        /// Anything the conversion could not carry over, in the order found.
         warnings: Vec<String>,
     },
+    /// A fresh project was scaffolded.
     Fresh {
+        /// The project name, taken from the directory unless the config names it.
         name: String,
+        /// The directory the project was created in.
         root: PathBuf,
     },
 }

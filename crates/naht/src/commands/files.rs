@@ -1,11 +1,9 @@
 use super::error::CommandError;
+use crate::config::INTERNAL_DIR;
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
 use std::io;
 use std::path::{Path, PathBuf};
-
-/// Naht's internal directory, holding the state database; never part of a build.
-pub(super) const INTERNAL_DIR: &str = ".naht";
 
 pub(super) fn read_optional(path: &Path) -> Result<String, CommandError> {
     match std::fs::read_to_string(path) {
