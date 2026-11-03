@@ -32,7 +32,6 @@ pub fn init(verbose: u8) -> Result<(), SetGlobalDefaultError> {
         std::env::var("NAHT_LOG").ok(),
         std::env::var("RUST_LOG").ok(),
     );
-    // A bad env filter falls back to the verbosity level rather than aborting startup.
     let filter = EnvFilter::try_new(&directive)
         .unwrap_or_else(|_| EnvFilter::new(resolve_directive(verbose, None, None)));
     let subscriber = tracing_subscriber::fmt()
@@ -56,17 +55,14 @@ mod tests {
 
     #[test]
     fn env_filter_overrides_verbosity() {
-        // NAHT_LOG wins over -v entirely.
         assert_eq!(
             resolve_directive(2, Some("naht=warn".to_string()), None),
             "naht=warn"
         );
-        // RUST_LOG is the fallback env source.
         assert_eq!(
             resolve_directive(0, None, Some("debug".to_string())),
             "debug"
         );
-        // NAHT_LOG beats RUST_LOG when both are set.
         assert_eq!(
             resolve_directive(0, Some("trace".to_string()), Some("warn".to_string())),
             "trace"

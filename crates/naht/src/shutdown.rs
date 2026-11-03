@@ -3,6 +3,8 @@ use std::io;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
+/// Resolve once the process is asked to stop: Ctrl-C everywhere, and SIGTERM on unix. Fails only if
+/// the signal handlers cannot be installed.
 pub async fn terminated() -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -18,6 +20,8 @@ pub async fn terminated() -> io::Result<()> {
     }
 }
 
+/// Cancel `token` when the process is asked to stop, or as soon as it is cancelled elsewhere,
+/// whichever comes first.
 pub async fn cancel_on_signal(token: CancellationToken) {
     tokio::select! {
         () = token.cancelled() => {}
