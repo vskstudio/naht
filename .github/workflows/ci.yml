@@ -7,7 +7,7 @@ on:
 
 # Least privilege by default: the CI token can only read the repo. Any job that
 # needs more declares it locally. No job here deploys, publishes, or pushes an
-# image — CI builds and verifies only.
+# image: CI builds and verifies only.
 permissions:
   contents: read
 
@@ -24,7 +24,7 @@ jobs:
     name: fmt + clippy + test
     runs-on: ubuntu-24.04
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -48,7 +48,7 @@ jobs:
       run:
         working-directory: site
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -72,7 +72,7 @@ jobs:
     name: plugin headless harness
     runs-on: ubuntu-24.04
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -97,9 +97,9 @@ jobs:
     name: site image build + scan
     runs-on: ubuntu-24.04
     # Verifies the production Dockerfile builds and is free of HIGH/CRITICAL CVEs.
-    # Builds locally only — the image is NEVER pushed to a registry from CI.
+    # Builds locally only, the image is NEVER pushed to a registry from CI.
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

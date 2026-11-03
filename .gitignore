@@ -8,6 +8,8 @@
 *.rbxmx
 *.rbxl
 *.rbxlx
+!crates/naht-core/tests/fixtures/*.rbxm
+!crates/naht-core/tests/fixtures/*.rbxl
 
 # Brainstorm visual companion
 .superpowers/

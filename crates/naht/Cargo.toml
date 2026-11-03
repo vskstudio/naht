@@ -38,6 +38,7 @@ tracing-subscriber.workspace = true
 rbx_binary.workspace = true
 rbx_dom_weak.workspace = true
 rbx_xml.workspace = true
+reqwest = { workspace = true, features = ["query"] }
 tempfile.workspace = true
 
 [lints]
