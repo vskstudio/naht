@@ -119,7 +119,7 @@ mod tests {
         );
         let state = AppState::new(session, Duration::from_secs(1));
         state.session_lock().await.rescan().unwrap();
-        let _watch = spawn(&root, state.clone()).unwrap();
+        let _watch = spawn(&root, Arc::clone(&state)).unwrap();
         state.session_lock().await.rescan().unwrap();
         let (cursor, _) = state.session_lock().await.take_patches(0);
         tokio::time::sleep(Duration::from_secs(1)).await;

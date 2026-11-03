@@ -48,7 +48,7 @@ impl OpenCloudUploader {
             .as_deref()
             .ok_or(UploaderError::KeyNameMissing)?;
         let api_key = env::var(env_name).map_err(|source| UploaderError::KeyUnreadable {
-            name: env_name.to_string(),
+            name: env_name.to_owned(),
             source,
         })?;
         Ok(Self { api_key })
