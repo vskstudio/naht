@@ -171,15 +171,15 @@ pub fn from_msgpack<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reconciler::{Direction, PatchKind};
+    use crate::reconciler::PatchKind;
 
     #[test]
     fn server_info_round_trips_through_msgpack() {
         let info = ServerInfo {
             protocol_version: PROTOCOL_VERSION,
-            server_version: "0.1.0".to_string(),
-            project_name: "demo".to_string(),
-            session_id: "s-1".to_string(),
+            server_version: "0.1.0".to_owned(),
+            project_name: "demo".to_owned(),
+            session_id: "s-1".to_owned(),
             serve_place_id: Some(123),
         };
         let bytes = to_msgpack(&info).unwrap();
@@ -191,11 +191,11 @@ mod tests {
         let batch = PatchBatch {
             cursor: 7,
             patches: vec![Patch {
-                path: "src/A.luau".to_string(),
-                class: "ModuleScript".to_string(),
+                path: "src/A.luau".to_owned(),
+                class: "ModuleScript".to_owned(),
                 direction: Direction::ToStudio,
                 kind: PatchKind::Update,
-                content: Some("return 2".to_string()),
+                content: Some("return 2".to_owned()),
             }],
         };
         let bytes = to_msgpack(&batch).unwrap();
@@ -211,8 +211,8 @@ mod tests {
         let batch = BlobPatchBatch {
             cursor: 3,
             patches: vec![BlobPatch {
-                path: "Terrain.terrain".to_string(),
-                class: "Terrain".to_string(),
+                path: "Terrain.terrain".to_owned(),
+                class: "Terrain".to_owned(),
                 direction: Direction::ToStudio,
                 kind: PatchKind::Update,
                 content: Some(blob.clone()),
@@ -229,12 +229,12 @@ mod tests {
         let batch = ChangeBatch {
             changes: vec![
                 Change::Upsert {
-                    path: "src/A.luau".to_string(),
-                    class: "ModuleScript".to_string(),
-                    content: "return 1".to_string(),
+                    path: "src/A.luau".to_owned(),
+                    class: "ModuleScript".to_owned(),
+                    content: "return 1".to_owned(),
                 },
                 Change::Delete {
-                    path: "src/B.luau".to_string(),
+                    path: "src/B.luau".to_owned(),
                 },
             ],
         };
@@ -250,7 +250,7 @@ mod tests {
             events: vec![SyncEvent {
                 seq: 5,
                 unix_ms: 1_700_000_000_000,
-                path: "src/Foo.luau".to_string(),
+                path: "src/Foo.luau".to_owned(),
                 direction: Direction::ToStudio,
                 kind: EventKind::Text,
                 outcome: Outcome::Ok,

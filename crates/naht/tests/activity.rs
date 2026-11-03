@@ -42,9 +42,9 @@ fn applying_a_studio_change_records_a_pull_event() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = session_at(dir.path());
     s.apply_changes(vec![Change::Upsert {
-        path: "src/New.luau".to_string(),
-        class: "ModuleScript".to_string(),
-        content: "return 5".to_string(),
+        path: "src/New.luau".to_owned(),
+        class: "ModuleScript".to_owned(),
+        content: "return 5".to_owned(),
     }])
     .unwrap();
 
@@ -66,7 +66,7 @@ fn since_returns_only_newer_events() {
     for i in 0..3 {
         s.apply_changes(vec![Change::Upsert {
             path: format!("src/F{i}.luau"),
-            class: "ModuleScript".to_string(),
+            class: "ModuleScript".to_owned(),
             content: format!("return {i}"),
         }])
         .unwrap();
@@ -85,8 +85,8 @@ fn buffer_evicts_oldest_past_the_cap() {
     for i in 0..260 {
         s.apply_changes(vec![Change::Upsert {
             path: format!("src/E{i}.luau"),
-            class: "ModuleScript".to_string(),
-            content: "x".to_string(),
+            class: "ModuleScript".to_owned(),
+            content: "x".to_owned(),
         }])
         .unwrap();
     }

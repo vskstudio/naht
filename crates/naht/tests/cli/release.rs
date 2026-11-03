@@ -14,7 +14,7 @@ fn package_plugin_produces_a_loadable_rbxmx_with_the_entry_script() {
     let out = dir.path().join("naht-plugin.rbxmx");
     commands::package_plugin(&src, &out).unwrap();
 
-    let dom = rbx_xml::from_reader_default(&std::fs::read(&out).unwrap()[..]).unwrap();
+    let dom = rbx_xml::from_reader_default(std::fs::read(&out).unwrap().as_slice()).unwrap();
     let naht = dom
         .root()
         .children()
@@ -27,8 +27,8 @@ fn package_plugin_produces_a_loadable_rbxmx_with_the_entry_script() {
     let plugin = child(&dom, naht, "Plugin").expect("entry Plugin script under Naht");
     assert_eq!(plugin.class, "Script");
     assert_eq!(
-        child(&dom, naht, "Apply").map(|m| m.class.as_str().to_string()),
-        Some("ModuleScript".to_string())
+        child(&dom, naht, "Apply").map(|m| m.class.as_str().to_owned()),
+        Some("ModuleScript".to_owned())
     );
 }
 

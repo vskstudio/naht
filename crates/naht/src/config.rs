@@ -169,7 +169,7 @@ impl Config {
             root.file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("naht")
-                .to_string()
+                .to_owned()
         })
     }
 

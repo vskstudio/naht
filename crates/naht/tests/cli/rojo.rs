@@ -43,15 +43,15 @@ fn from_rojo_migrates_the_tree_so_the_build_matches_rojo() {
         .children()
         .iter()
         .map(|r| dom.get_by_ref(*r).unwrap())
-        .map(|i| (i.name.clone(), i.class.as_str().to_string()))
+        .map(|i| (i.name.clone(), i.class.as_str().to_owned()))
         .collect();
     mapped.sort();
     assert_eq!(
         mapped,
         vec![
-            ("Boot".to_string(), "Script".to_string()),
-            ("Mod".to_string(), "ModuleScript".to_string()),
-            ("Ui".to_string(), "LocalScript".to_string()),
+            ("Boot".to_owned(), "Script".to_owned()),
+            ("Mod".to_owned(), "ModuleScript".to_owned()),
+            ("Ui".to_owned(), "LocalScript".to_owned()),
         ]
     );
     let workspace = service(&dom, "Workspace");

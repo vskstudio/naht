@@ -124,7 +124,7 @@ fn service_ref(
         return *existing;
     }
     let reference = dom.insert(data_model, InstanceBuilder::new(class));
-    services.insert(class.to_string(), reference);
+    services.insert(class.to_owned(), reference);
     reference
 }
 
@@ -171,7 +171,7 @@ mod tests {
         Snapshot::new("Folder", "proj")
             .with_child(
                 Snapshot::new("ModuleScript", "Greeter")
-                    .with_property("Source", Variant::String("return 1".to_string())),
+                    .with_property("Source", Variant::String("return 1".to_owned())),
             )
             .with_child(Snapshot::new("Folder", "sub").with_child(Snapshot::new("Script", "main")))
     }
@@ -181,7 +181,7 @@ mod tests {
         let mut bytes = Vec::new();
         write_model(&mut bytes, &fixture(), ModelFormat::Binary).unwrap();
 
-        let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
+        let dom = rbx_binary::from_reader(bytes.as_slice()).unwrap();
         let roots = dom.root().children();
         let mut top: Vec<_> = roots
             .iter()
@@ -201,14 +201,14 @@ mod tests {
             .iter()
             .find(|(key, _)| key.as_str() == "Source")
             .map(|(_, value)| value);
-        assert_eq!(source, Some(&Variant::String("return 1".to_string())));
+        assert_eq!(source, Some(&Variant::String("return 1".to_owned())));
     }
 
     #[test]
     fn xml_model_is_produced_and_reloadable() {
         let mut bytes = Vec::new();
         write_model(&mut bytes, &fixture(), ModelFormat::Xml).unwrap();
-        let dom = rbx_xml::from_reader_default(&bytes[..]).unwrap();
+        let dom = rbx_xml::from_reader_default(bytes.as_slice()).unwrap();
         assert_eq!(dom.root().children().len(), 2);
     }
 
@@ -217,13 +217,13 @@ mod tests {
         let project = Snapshot::new("Folder", "proj").with_child(
             Snapshot::new("UnionOperation", "Bridge").with_child(
                 Snapshot::new("ModuleScript", "Meta")
-                    .with_property("Source", Variant::String("return 'kept'".to_string())),
+                    .with_property("Source", Variant::String("return 'kept'".to_owned())),
             ),
         );
 
         let mut bytes = Vec::new();
         write_model(&mut bytes, &project, ModelFormat::Binary).unwrap();
-        let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
+        let dom = rbx_binary::from_reader(bytes.as_slice()).unwrap();
 
         let union_ref = dom.root().children()[0];
         let union = dom.get_by_ref(union_ref).unwrap();
@@ -237,7 +237,7 @@ mod tests {
             .iter()
             .find(|(key, _)| key.as_str() == "Source")
             .map(|(_, value)| value);
-        assert_eq!(source, Some(&Variant::String("return 'kept'".to_string())));
+        assert_eq!(source, Some(&Variant::String("return 'kept'".to_owned())));
     }
 
     fn service<'a>(dom: &'a WeakDom, class: &str) -> Option<&'a rbx_dom_weak::Instance> {
@@ -277,7 +277,7 @@ mod tests {
         let warnings = write_place(&mut bytes, &project, ModelFormat::Xml).unwrap();
         assert!(warnings.is_empty());
 
-        let dom = rbx_xml::from_reader_default(&bytes[..]).unwrap();
+        let dom = rbx_xml::from_reader_default(bytes.as_slice()).unwrap();
         let sss = service(&dom, "ServerScriptService").expect("ServerScriptService");
         assert!(child_named(&dom, sss, "Main").is_some());
         let rs = service(&dom, "ReplicatedStorage").expect("ReplicatedStorage");
@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("MyService"));
 
-        let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
+        let dom = rbx_binary::from_reader(bytes.as_slice()).unwrap();
         let workspace = service(&dom, "Workspace").expect("Workspace");
         let my_service =
             child_named(&dom, workspace, "MyService").expect("MyService under Workspace");
@@ -308,14 +308,14 @@ mod tests {
     fn a_top_level_script_named_like_a_service_is_kept_not_dropped() {
         let project = Snapshot::new("Folder", "proj").with_child(
             Snapshot::new("ModuleScript", "Lighting")
-                .with_property("Source", Variant::String("return 1".to_string())),
+                .with_property("Source", Variant::String("return 1".to_owned())),
         );
 
         let mut bytes = Vec::new();
         let warnings = write_place(&mut bytes, &project, ModelFormat::Binary).unwrap();
         assert!(warnings.is_empty());
 
-        let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
+        let dom = rbx_binary::from_reader(bytes.as_slice()).unwrap();
         assert!(service(&dom, "Lighting").is_none());
         let workspace = service(&dom, "Workspace").expect("Workspace");
         let script = child_named(&dom, workspace, "Lighting").expect("Lighting script kept");
@@ -363,8 +363,8 @@ mod stage15 {
     #[test]
     fn typed_properties_survive_snapshot_place_snapshot_with_value_identity() {
         let mut attributes = Attributes::new();
-        attributes.insert("Health".to_string(), Variant::Float64(100.0));
-        attributes.insert("Boss".to_string(), Variant::Bool(true));
+        attributes.insert("Health".to_owned(), Variant::Float64(100.0));
+        attributes.insert("Boss".to_owned(), Variant::Bool(true));
 
         let part = Snapshot::new("Part", "Block")
             .with_property("Size", Variant::Vector3(Vector3::new(4.0, 1.0, 2.0)))
@@ -372,7 +372,7 @@ mod stage15 {
             .with_property("Attributes", Variant::Attributes(attributes.clone()))
             .with_property(
                 "Tags",
-                Variant::Tags(Tags::from(vec!["combat".to_string(), "npc".to_string()])),
+                Variant::Tags(Tags::from(vec!["combat".to_owned(), "npc".to_owned()])),
             );
         let light = Snapshot::new("PointLight", "Glow")
             .with_property("Color", Variant::Color3(Color3::new(0.1, 0.5, 0.9)));
@@ -382,7 +382,7 @@ mod stage15 {
 
         let mut bytes = Vec::new();
         write_place(&mut bytes, &project, ModelFormat::Binary).unwrap();
-        let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
+        let dom = rbx_binary::from_reader(bytes.as_slice()).unwrap();
 
         let workspace = dom
             .root()

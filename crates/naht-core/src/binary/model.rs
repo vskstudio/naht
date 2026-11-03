@@ -61,8 +61,8 @@ pub(super) fn patch(
     content: Option<&[u8]>,
 ) -> BlobPatch {
     BlobPatch {
-        path: path.to_string(),
-        class: class.to_string(),
+        path: path.to_owned(),
+        class: class.to_owned(),
         direction,
         kind,
         content: content.map(<[u8]>::to_vec),

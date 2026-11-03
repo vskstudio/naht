@@ -6,14 +6,14 @@ use rbx_dom_weak::types::Variant;
 use rbx_dom_weak::{Instance, WeakDom};
 
 pub fn read_place(path: &Path) -> WeakDom {
-    rbx_binary::from_reader(&std::fs::read(path).unwrap()[..]).unwrap()
+    rbx_binary::from_reader(std::fs::read(path).unwrap().as_slice()).unwrap()
 }
 
 pub fn root_classes(dom: &WeakDom) -> Vec<String> {
     dom.root()
         .children()
         .iter()
-        .map(|r| dom.get_by_ref(*r).unwrap().class.as_str().to_string())
+        .map(|r| dom.get_by_ref(*r).unwrap().class.as_str().to_owned())
         .collect()
 }
 
@@ -44,7 +44,7 @@ pub fn property<'a>(instance: &'a Instance, key: &str) -> Option<&'a Variant> {
 pub fn one(path: &str, content: &str) -> BTreeMap<String, TextInstance> {
     let mut map = BTreeMap::new();
     map.insert(
-        path.to_string(),
+        path.to_owned(),
         TextInstance::new(path, "ModuleScript", content),
     );
     map

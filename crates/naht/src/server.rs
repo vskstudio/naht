@@ -6,7 +6,6 @@
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
 //! decisions are delegated to the [`Session`]; this layer is pure transport.
 
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -229,8 +228,7 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
 fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, Rejection> {
     for change in &batch.changes {
         let path = match change {
-            naht_core::protocol::Change::Upsert { path, .. }
-            | naht_core::protocol::Change::Delete { path } => path,
+            protocol::Change::Upsert { path, .. } | protocol::Change::Delete { path } => path,
         };
         session.validate_path(path)?;
     }

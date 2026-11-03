@@ -106,9 +106,9 @@ async fn a_studio_text_edit_drives_the_blob_reconcile() {
     h.write("Zone.terrain", &blob);
     let status = h
         .post_changes(vec![Change::Upsert {
-            path: "Script.luau".to_string(),
-            class: "ModuleScript".to_string(),
-            content: "return 1".to_string(),
+            path: "Script.luau".to_owned(),
+            class: "ModuleScript".to_owned(),
+            content: "return 1".to_owned(),
         }])
         .await;
     assert!(status.is_success());
@@ -125,9 +125,9 @@ async fn a_text_edit_with_no_blob_change_queues_no_blob_patch() {
 
     let status = h
         .post_changes(vec![Change::Upsert {
-            path: "Only.luau".to_string(),
-            class: "ModuleScript".to_string(),
-            content: "return 1".to_string(),
+            path: "Only.luau".to_owned(),
+            class: "ModuleScript".to_owned(),
+            content: "return 1".to_owned(),
         }])
         .await;
     assert!(status.is_success());

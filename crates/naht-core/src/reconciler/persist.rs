@@ -22,13 +22,13 @@ pub fn status(store: &StateStore) -> Result<Status, ReconcileError> {
 pub fn resolve(vfs: &impl Vfs, store: &StateStore, path: &str) -> Result<(), ReconcileError> {
     let record = store
         .get(path)?
-        .ok_or_else(|| ReconcileError::NotConflicted(path.to_string()))?;
+        .ok_or_else(|| ReconcileError::NotConflicted(path.to_owned()))?;
     if !record.conflicted {
-        return Err(ReconcileError::NotConflicted(path.to_string()));
+        return Err(ReconcileError::NotConflicted(path.to_owned()));
     }
     let text = decode(path, &vfs.read(Path::new(&record.path))?)?;
     if merge::has_conflict_markers(&text) {
-        return Err(ReconcileError::MarkersRemain(path.to_string()));
+        return Err(ReconcileError::MarkersRemain(path.to_owned()));
     }
     advance_base(store, &record.path, &record.class, &text)?;
     Ok(())
@@ -70,9 +70,9 @@ pub(super) fn freeze(
 
 fn base_record(path: &str, class: &str, content: &str, conflicted: bool) -> InstanceRecord {
     InstanceRecord {
-        guid: path.to_string(),
-        path: path.to_string(),
-        class: class.to_string(),
+        guid: path.to_owned(),
+        path: path.to_owned(),
+        class: class.to_owned(),
         content_hash: content_hash(content.as_bytes()),
         base_content: Some(content.as_bytes().to_vec()),
         mtime: 0,

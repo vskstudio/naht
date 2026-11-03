@@ -18,7 +18,7 @@ pub fn package_plugin(src: &Path, output: &Path) -> Result<(), CommandError> {
             path: src.to_path_buf(),
             source,
         })?;
-    tree.name = "Naht".to_string();
+    tree.name = "Naht".to_owned();
     let root = Snapshot::new("Folder", "plugin").with_child(tree);
 
     create_parent_dirs(output)?;
@@ -34,8 +34,8 @@ pub fn check_release_version(tag: &str) -> Result<(), CommandError> {
     let got = tag.strip_prefix('v').unwrap_or(tag);
     if got != want {
         return Err(CommandError::ReleaseMismatch {
-            tag: tag.to_string(),
-            want: want.to_string(),
+            tag: tag.to_owned(),
+            want: want.to_owned(),
         });
     }
     Ok(())

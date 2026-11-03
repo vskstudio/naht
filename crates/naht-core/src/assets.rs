@@ -162,7 +162,7 @@ mod tests {
             if self.fail || self.fail_on.as_deref() == Some(name) {
                 return Err(AssetError::Upload(format!("simulated failure for {name}")));
             }
-            self.uploads.borrow_mut().push(name.to_string());
+            self.uploads.borrow_mut().push(name.to_owned());
             let id = self.uploads.borrow().len();
             Ok(format!("rbxassetid://{id}"))
         }
@@ -245,19 +245,19 @@ mod tests {
         let vfs = MemoryVfs::new().with_file("assets/rock.obj", "obj");
 
         let mut snapshot = Snapshot::new("MeshPart", "Rock")
-            .with_property("MeshId", Variant::String("assets/rock.obj".to_string()))
-            .with_property("Name", Variant::String("Rock".to_string()));
+            .with_property("MeshId", Variant::String("assets/rock.obj".to_owned()))
+            .with_property("Name", Variant::String("Rock".to_owned()));
 
         let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot);
         assert!(failures.is_empty());
 
         assert_eq!(
             snapshot.properties.get("MeshId"),
-            Some(&Variant::String("rbxassetid://1".to_string()))
+            Some(&Variant::String("rbxassetid://1".to_owned()))
         );
         assert_eq!(
             snapshot.properties.get("Name"),
-            Some(&Variant::String("Rock".to_string()))
+            Some(&Variant::String("Rock".to_owned()))
         );
     }
 
@@ -266,7 +266,7 @@ mod tests {
         use crate::vfs::MemoryVfs;
         let store = StateStore::open_in_memory().unwrap();
         let uploader = FakeUploader {
-            fail_on: Some("a.obj".to_string()),
+            fail_on: Some("a.obj".to_owned()),
             ..Default::default()
         };
         let vfs = MemoryVfs::new()
@@ -276,7 +276,7 @@ mod tests {
 
         let mesh = |name: &str, file: &str| {
             Snapshot::new("MeshPart", name)
-                .with_property("MeshId", Variant::String(file.to_string()))
+                .with_property("MeshId", Variant::String(file.to_owned()))
         };
         let mut root = Snapshot::new("Model", "Root")
             .with_child(mesh("A", "a.obj"))
@@ -292,14 +292,14 @@ mod tests {
                 .and_then(|c| c.properties.get("MeshId"))
                 .cloned()
         };
-        assert_eq!(mesh_id("A"), Some(Variant::String("a.obj".to_string())));
+        assert_eq!(mesh_id("A"), Some(Variant::String("a.obj".to_owned())));
         assert_eq!(
             mesh_id("B"),
-            Some(Variant::String("rbxassetid://1".to_string()))
+            Some(Variant::String("rbxassetid://1".to_owned()))
         );
         assert_eq!(
             mesh_id("C"),
-            Some(Variant::String("rbxassetid://2".to_string()))
+            Some(Variant::String("rbxassetid://2".to_owned()))
         );
 
         assert_eq!(failures.len(), 1);

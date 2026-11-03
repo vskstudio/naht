@@ -31,7 +31,7 @@ fn status_and_resolve_reflect_the_conflict_state() {
     .unwrap();
     assert_eq!(
         reconciler::status(&store).unwrap().conflicted,
-        vec![rel.to_string()]
+        vec![rel.to_owned()]
     );
 
     commands::status(&root).unwrap();

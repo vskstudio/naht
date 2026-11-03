@@ -48,7 +48,7 @@ impl OpenCloudUploader {
             .as_deref()
             .ok_or(UploaderError::KeyNameMissing)?;
         let api_key = env::var(env_name).map_err(|source| UploaderError::KeyUnreadable {
-            name: env_name.to_string(),
+            name: env_name.to_owned(),
             source,
         })?;
         Ok(Self { api_key })
@@ -66,7 +66,7 @@ fn isolated_on_scoped_thread<T: Send>(
 ) -> Result<T, AssetError> {
     std::thread::scope(|scope| match scope.spawn(work).join() {
         Ok(result) => result,
-        Err(_) => Err(AssetError::Upload("upload thread panicked".to_string())),
+        Err(_) => Err(AssetError::Upload("upload thread panicked".to_owned())),
     })
 }
 
@@ -80,7 +80,7 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         .text("request", request.to_string())
         .part(
             "fileContent",
-            reqwest::blocking::multipart::Part::bytes(content.to_vec()).file_name(name.to_string()),
+            reqwest::blocking::multipart::Part::bytes(content.to_vec()).file_name(name.to_owned()),
         );
 
     let response = reqwest::blocking::Client::new()
@@ -99,7 +99,7 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         .json()
         .map_err(|error| AssetError::Upload(error.to_string()))?;
     extract_asset_id(&body)
-        .ok_or_else(|| AssetError::Upload("no asset id in the Open Cloud response".to_string()))
+        .ok_or_else(|| AssetError::Upload("no asset id in the Open Cloud response".to_owned()))
 }
 
 /// A coarse asset-type guess from the file extension; refined as more types are supported.
@@ -123,7 +123,7 @@ fn extract_asset_id(body: &serde_json::Value) -> Option<String> {
         .or_else(|| body.get("assetId"))?;
     let id = id
         .as_str()
-        .map(str::to_string)
+        .map(str::to_owned)
         .or_else(|| id.as_u64().map(|n| n.to_string()))?;
     Some(format!("rbxassetid://{id}"))
 }
