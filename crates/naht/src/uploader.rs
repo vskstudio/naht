@@ -99,7 +99,7 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         .json()
         .map_err(|error| AssetError::Upload(error.to_string()))?;
     extract_asset_id(&body)
-        .ok_or_else(|| AssetError::Upload("no asset id in the Open Cloud response".to_string()))
+        .ok_or_else(|| AssetError::Upload("no asset id in the Open Cloud response".to_owned()))
 }
 
 /// A coarse asset-type guess from the file extension; refined as more types are supported.
