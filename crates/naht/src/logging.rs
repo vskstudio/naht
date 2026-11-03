@@ -10,11 +10,8 @@ use tracing::subscriber;
 use tracing::subscriber::SetGlobalDefaultError;
 use tracing_subscriber::EnvFilter;
 
-fn env_filter_or_verbosity(directive: &str, verbose: u8) -> EnvFilter {
-    EnvFilter::try_new(directive)
-        .unwrap_or_else(|_| EnvFilter::new(resolve_directive(verbose, None, None)))
-}
-
+/// Resolve the log directive: an env filter (`NAHT_LOG`, then `RUST_LOG`) overrides `-v`; otherwise
+/// the repeat count picks the level (`info` → `debug` → `trace`, with `info` the default).
 fn resolve_directive(verbose: u8, naht_log: Option<String>, rust_log: Option<String>) -> String {
     let from_env = naht_log
         .filter(|value| !value.is_empty())
@@ -38,7 +35,8 @@ pub fn init(verbose: u8) -> Result<(), SetGlobalDefaultError> {
         env::var("NAHT_LOG").ok(),
         env::var("RUST_LOG").ok(),
     );
-    let filter = env_filter_or_verbosity(&directive, verbose);
+    let filter = EnvFilter::try_new(&directive)
+        .unwrap_or_else(|_| EnvFilter::new(resolve_directive(verbose, None, None)));
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(io::stderr)

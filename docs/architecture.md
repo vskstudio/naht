@@ -138,6 +138,12 @@ instances only the hash is stored (no merge base).
   reconnect — a **re-diff against the persisted state** rather than a blind re-push. Studio-bound
   patches are **ack-gated**: a patch's base advances only once the plugin acks it, so a half-applied
   batch re-diffs the rest instead of treating them as synced.
+- **Long-poll wake-ups never race the queue.** A parked `/patches` or `/blobs` request enrols its
+  `Notified` future *before* it checks the queue, and `enable()` registers that waiter immediately. A
+  change that enqueues and notifies between the check and the await is then captured, not lost.
+  Without `enable()`, the future only registers on its first poll, so the wakeup can slip through and
+  the request stays parked for the full timeout although a patch is ready. Both channels follow this
+  same discipline.
 
 ## 8. Error handling
 
