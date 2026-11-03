@@ -2,24 +2,170 @@
 //! sync brain, the state store, and the model builder. The binary's `main` parses arguments and
 //! dispatches here; the integration tests drive these functions directly.
 
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
-use naht_core::build::{self, ModelFormat};
+use naht_core::build::{self, BuildError, ModelFormat};
+use naht_core::mapper::MapError;
+use naht_core::reconciler::ReconcileError;
 use naht_core::snapshot::Snapshot;
-use naht_core::state::StateStore;
+use naht_core::state::{StateError, StateStore};
 use naht_core::vfs::{DiskVfs, RootedVfs};
 use naht_core::{limits, mapper, reconciler};
 use notify_debouncer_full::notify::RecursiveMode;
 use notify_debouncer_full::{DebounceEventResult, new_debouncer};
 use rbx_dom_weak::types::Variant;
+use reqwest::StatusCode;
 use serde::Deserialize;
+use thiserror::Error;
 
-use crate::config::{Config, PROJECT_FILE};
+use crate::config::{Config, ConfigError, PROJECT_FILE};
 use crate::server::AppState;
 use crate::session::Session;
+use crate::uploader::{OpenCloudUploader, UploaderError};
+use crate::watcher::WatchError;
+
+/// Why a CLI or daemon command failed, one variant per failure a caller may tell apart. The
+/// message names the layer's failure; the binary joins the chain of causes when it reports it.
+#[derive(Debug, Error)]
+pub enum CommandError {
+    /// `init` refuses to overwrite an existing `naht.toml`.
+    #[error("`{}` already exists; refusing to overwrite", path.display())]
+    ProjectExists {
+        /// The existing project file.
+        path: PathBuf,
+    },
+    /// A directory the command needs could not be created.
+    #[error("cannot create the directory `{}`", path.display())]
+    CreateDir {
+        /// The directory that could not be created.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// An input file could not be read.
+    #[error("cannot read `{}`", path.display())]
+    Read {
+        /// The file that could not be read.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// A file could not be written.
+    #[error("cannot write `{}`", path.display())]
+    Write {
+        /// The file that could not be written.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The build output could not be created.
+    #[error("cannot create the output `{}`", path.display())]
+    Create {
+        /// The output file that could not be created.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The project directory does not exist or cannot be resolved.
+    #[error("project directory not found: `{}`", path.display())]
+    ProjectDir {
+        /// The directory as the operator gave it.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// A project's source tree could not be read as Roblox instances.
+    #[error("cannot read the project tree at `{}`", path.display())]
+    Tree {
+        /// The tree root that failed.
+        path: PathBuf,
+        /// The mapping failure.
+        #[source]
+        source: MapError,
+    },
+    /// A Rojo project file is not valid JSON for the fields Naht migrates.
+    #[error("cannot parse the Rojo project `{}`", path.display())]
+    RojoParse {
+        /// The Rojo project file.
+        path: PathBuf,
+        /// The JSON error, with its position.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The migrated `naht.toml` could not be rendered.
+    #[error("cannot render naht.toml")]
+    RenderConfig(#[source] toml::ser::Error),
+    /// The state database could not be opened at its path.
+    #[error("cannot open the state database `{}`", path.display())]
+    StateOpen {
+        /// The state database path.
+        path: PathBuf,
+        /// The store failure.
+        #[source]
+        source: StateError,
+    },
+    /// A state store operation failed after the database was opened.
+    #[error(transparent)]
+    State(#[from] StateError),
+    /// A reconcile step failed.
+    #[error(transparent)]
+    Reconcile(#[from] ReconcileError),
+    /// The layered configuration is invalid.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    /// The asset uploader could not be built from the configuration.
+    #[error(transparent)]
+    Uploader(#[from] UploaderError),
+    /// A model or place could not be encoded.
+    #[error(transparent)]
+    Build(#[from] BuildError),
+    /// The filesystem watcher could not start.
+    #[error(transparent)]
+    Watch(#[from] WatchError),
+    /// A running daemon could not be reached on its port.
+    #[error("cannot reach the daemon at `{url}` (is `naht serve` running?)")]
+    DaemonUnreachable {
+        /// The address that was tried.
+        url: String,
+        /// The transport failure.
+        #[source]
+        source: reqwest::Error,
+    },
+    /// A running daemon answered with a failure status.
+    #[error("the daemon answered with {status}")]
+    DaemonStatus {
+        /// The status the daemon returned.
+        status: StatusCode,
+    },
+    /// The daemon's port could not be bound.
+    #[error("cannot bind {addr}")]
+    Bind {
+        /// The address that was requested.
+        addr: SocketAddr,
+        /// The bind failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The HTTP server stopped with an error.
+    #[error("the server stopped with an error")]
+    Serve(#[source] io::Error),
+    /// A release tag does not name the workspace version.
+    #[error("release tag `{tag}` does not match workspace version `{want}`")]
+    ReleaseMismatch {
+        /// The tag as given.
+        tag: String,
+        /// The workspace version it should name.
+        want: String,
+    },
+}
 
 /// How long a served long-poll is held open before returning empty.
 const LONG_POLL: Duration = Duration::from_secs(25);
@@ -31,17 +177,15 @@ const WATCH_DEBOUNCE: Duration = Duration::from_millis(200);
 const INTERNAL_DIR: &str = ".naht";
 
 /// Scaffold a new project at `path`, or convert an existing Rojo project there when `from_rojo`.
-pub fn init(path: &Path, from_rojo: bool) -> Result<()> {
-    std::fs::create_dir_all(path).with_context(|| format!("creating {}", path.display()))?;
-    // Resolve the real directory so a default `.` names the project after the actual folder, not
-    // the literal ".".
+pub fn init(path: &Path, from_rojo: bool) -> Result<(), CommandError> {
+    std::fs::create_dir_all(path).map_err(|source| CommandError::CreateDir {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let root = canonical(path)?;
     let project_file = root.join(PROJECT_FILE);
     if project_file.exists() {
-        bail!(
-            "{} already exists; refusing to overwrite",
-            project_file.display()
-        );
+        return Err(CommandError::ProjectExists { path: project_file });
     }
 
     if from_rojo {
@@ -52,8 +196,7 @@ pub fn init(path: &Path, from_rojo: bool) -> Result<()> {
         println!("Converted Rojo project into {}", project_file.display());
     } else {
         let name = dir_name(&root);
-        std::fs::write(&project_file, render_rojo_config(&name, None, &[])?)
-            .with_context(|| format!("writing {}", project_file.display()))?;
+        write_file(&project_file, &render_rojo_config(&name, None, &[])?)?;
         scaffold_source(&root)?;
         ensure_gitignore(&root)?;
         println!("Initialized Naht project '{name}' at {}", root.display());
@@ -62,11 +205,11 @@ pub fn init(path: &Path, from_rojo: bool) -> Result<()> {
 }
 
 /// Print the project's conflict state: the paths frozen pending `resolve`, or that it is clean.
-pub fn status(root: &Path) -> Result<()> {
+pub fn status(root: &Path) -> Result<(), CommandError> {
     let store = open_store(root)?;
     let status = reconciler::status(&store)?;
     if status.conflicted.is_empty() {
-        println!("clean — no conflicted paths");
+        println!("clean, no conflicted paths");
     } else {
         println!("{} conflicted path(s):", status.conflicted.len());
         for path in &status.conflicted {
@@ -77,7 +220,7 @@ pub fn status(root: &Path) -> Result<()> {
 }
 
 /// Clear a conflict at `path` once its markers have been removed by hand.
-pub fn resolve(root: &Path, path: &str) -> Result<()> {
+pub fn resolve(root: &Path, path: &str) -> Result<(), CommandError> {
     let store = open_store(root)?;
     let vfs = rooted(root)?;
     reconciler::resolve(&vfs, &store, path)?;
@@ -88,23 +231,23 @@ pub fn resolve(root: &Path, path: &str) -> Result<()> {
 /// Build the project at `root` into `output` once. The output extension picks the artifact:
 /// `.rbxl`/`.rbxlx` build a **place** (a `DataModel` with convention-mapped services), anything else
 /// a **model**; `.rbxmx`/`.rbxlx` are XML, the rest binary.
-pub fn build(root: &Path, output: &Path) -> Result<()> {
+pub fn build(root: &Path, output: &Path) -> Result<(), CommandError> {
     build_once(&canonical(root)?, output)
 }
 
 /// Build once, then rebuild on every debounced change until interrupted (Stage 9 `--watch`).
-pub async fn build_watch(root: &Path, output: &Path) -> Result<()> {
+pub async fn build_watch(root: &Path, output: &Path) -> Result<(), CommandError> {
     let root = canonical(root)?;
     build_once(&root, output)?;
     let _watcher = spawn_build_watcher(&root, output)?;
     tracing::info!(target: "naht::build", root = %root.display(), "watching for changes");
-    println!("watching {} — rebuilding on change", root.display());
+    println!("watching {}, rebuilding on change", root.display());
     std::future::pending::<()>().await;
     Ok(())
 }
 
 /// The single build step shared by `build` and `build --watch`. `root` must already be canonical.
-fn build_once(root: &Path, output: &Path) -> Result<()> {
+fn build_once(root: &Path, output: &Path) -> Result<(), CommandError> {
     let config = Config::load(root)?;
     let (mut snapshot, warnings) = assemble_project_snapshot(root, &config)?;
     for warning in &warnings {
@@ -113,15 +256,9 @@ fn build_once(root: &Path, output: &Path) -> Result<()> {
     warn_unsyncable(&snapshot);
     resolve_assets(root, &mut snapshot)?;
 
-    if let Some(parent) = output.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    let file =
-        std::fs::File::create(output).with_context(|| format!("creating {}", output.display()))?;
-    let writer = std::io::BufWriter::new(file);
+    create_parent_dirs(output)?;
+    let file = create_file(output)?;
+    let writer = io::BufWriter::new(file);
     let format = model_format(output);
     if is_place_output(output) {
         for warning in build::write_place(writer, &snapshot, format)? {
@@ -137,26 +274,29 @@ fn build_once(root: &Path, output: &Path) -> Result<()> {
 
 /// Ask a running daemon to re-sync now (Studio ↔ filesystem). Full on-demand Studio → filesystem
 /// pull lands with the Stage 6 plugin; for now this nudges the daemon's reconnect re-diff.
-pub async fn pull(config: &Config) -> Result<()> {
+pub async fn pull(config: &Config) -> Result<(), CommandError> {
     let url = format!("http://{}:{}/info", Ipv4Addr::LOCALHOST, config.port());
     let response = reqwest::Client::new()
         .get(&url)
         .send()
         .await
-        .with_context(|| format!("connecting to the daemon at {url} (is `naht serve` running?)"))?;
+        .map_err(|source| CommandError::DaemonUnreachable {
+            url: url.clone(),
+            source,
+        })?;
     if !response.status().is_success() {
-        bail!("daemon returned {}", response.status());
+        return Err(CommandError::DaemonStatus {
+            status: response.status(),
+        });
     }
-    println!("pulled — daemon re-synced");
+    println!("pulled, daemon re-synced");
     Ok(())
 }
 
 /// Run the sync daemon for the project at `root` on `port`, using `config` for the project name and
 /// place guard.
-pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
+pub async fn serve(config: Config, root: &Path, port: u16) -> Result<(), CommandError> {
     let root = canonical(root)?;
-    // Surface anything that can't round-trip live before the session starts (architecture §9). With
-    // terrain sync enabled the daemon drives the blob channel, so terrain is no longer flagged.
     if let Ok(snapshot) = mapper::snapshot_dir(&DiskVfs::new(), &root) {
         report_unsyncable(&serve_warnings(&config, &snapshot));
     }
@@ -170,18 +310,17 @@ pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
     );
     let state = AppState::new(session, LONG_POLL);
 
-    let _watcher =
-        crate::watcher::spawn(&root, state.clone()).context("starting the file watcher")?;
+    let _watcher = crate::watcher::spawn(&root, state.clone())?;
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .with_context(|| format!("binding {addr}"))?;
+        .map_err(|source| CommandError::Bind { addr, source })?;
     tracing::info!(target: "naht::server", %addr, root = %root.display(), "naht serving");
     println!("naht serving {} on http://{addr}", root.display());
     crate::server::serve(listener, state)
         .await
-        .context("serving")
+        .map_err(CommandError::Serve)
 }
 
 /// Package the Studio plugin under `src` into a single installable `.rbxmx` model at `output`.
@@ -189,54 +328,48 @@ pub async fn serve(config: Config, root: &Path, port: u16) -> Result<()> {
 /// The hand-written Luau modules are assembled under one `Naht` `Folder`, so the entry `Script` and
 /// its sibling `ModuleScript`s keep the `script.Parent.X` require paths they use at runtime. The
 /// directory convention maps the files: `Plugin.server.luau` → the `Script`, the rest → `ModuleScript`.
-pub fn package_plugin(src: &Path, output: &Path) -> Result<()> {
-    let mut tree = mapper::snapshot_dir(&DiskVfs::new(), src)
-        .with_context(|| format!("reading plugin sources at {}", src.display()))?;
+pub fn package_plugin(src: &Path, output: &Path) -> Result<(), CommandError> {
+    let mut tree =
+        mapper::snapshot_dir(&DiskVfs::new(), src).map_err(|source| CommandError::Tree {
+            path: src.to_path_buf(),
+            source,
+        })?;
     tree.name = "Naht".to_string();
-    // Wrap so the `Naht` folder is the single top-level instance: `write_model` drops the wrapper and
-    // writes its children, so without the wrapper the modules would become separate top-level roots.
     let root = Snapshot::new("Folder", "plugin").with_child(tree);
 
-    if let Some(parent) = output.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    let file =
-        std::fs::File::create(output).with_context(|| format!("creating {}", output.display()))?;
-    build::write_model(std::io::BufWriter::new(file), &root, ModelFormat::Xml)?;
+    create_parent_dirs(output)?;
+    let file = create_file(output)?;
+    build::write_model(io::BufWriter::new(file), &root, ModelFormat::Xml)?;
     println!("packaged plugin into {}", output.display());
     Ok(())
 }
 
 /// Verify a release tag (`vX.Y.Z` or `X.Y.Z`) matches the workspace crate version, so a tagged
 /// release cannot ship a binary whose version disagrees with its tag.
-pub fn check_release_version(tag: &str) -> Result<()> {
+pub fn check_release_version(tag: &str) -> Result<(), CommandError> {
     let want = naht_core::version();
     let got = tag.strip_prefix('v').unwrap_or(tag);
     if got != want {
-        bail!("release tag '{tag}' does not match workspace version '{want}'");
+        return Err(CommandError::ReleaseMismatch {
+            tag: tag.to_string(),
+            want: want.to_string(),
+        });
     }
     println!("release tag '{tag}' matches workspace version '{want}'");
     Ok(())
 }
 
-// --- helpers -------------------------------------------------------------------------------------
-
 /// When `[assets]` is enabled, upload local asset files referenced by properties and rewrite them to
 /// `rbxassetid://…`. Disabled by default, so the common case does no network I/O and leaves every
 /// property untouched. Public so the disabled-path no-op is testable at the snapshot level.
-pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
+pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<(), CommandError> {
     let config = Config::load(root)?;
     if !config.assets.is_enabled() {
         return Ok(());
     }
     let store = open_store(root)?;
-    let uploader = crate::uploader::OpenCloudUploader::from_config(&config.assets)?;
+    let uploader = OpenCloudUploader::from_config(&config.assets)?;
     let vfs = RootedVfs::new(root.to_path_buf(), DiskVfs::new());
-    // A failed upload pauses only that asset's path (architecture §8); the rest still resolve, so we
-    // report each failure rather than abort the whole build on the first bad asset.
     let failures = naht_core::assets::rewrite_snapshot_assets(&uploader, &store, &vfs, snapshot);
     if !failures.is_empty() {
         eprintln!("naht: {} asset(s) could not be uploaded:", failures.len());
@@ -251,7 +384,7 @@ pub fn resolve_assets(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
 }
 
 /// The instances that can't round-trip live in a `serve` session, honoring the project's enabled
-/// capabilities — notably `[serve] terrain_sync`, which drives the daemon's blob channel and so stops
+/// capabilities, notably `[serve] terrain_sync`, which drives the daemon's blob channel and so stops
 /// terrain from being flagged. The same options the running session uses, so the warning matches what
 /// actually syncs.
 #[must_use]
@@ -264,7 +397,7 @@ pub fn serve_warnings(config: &Config, snapshot: &Snapshot) -> Vec<limits::Warni
     )
 }
 
-/// Print, to stderr, every instance that can't round-trip live — never silently dropped.
+/// Print, to stderr, every instance that can't round-trip live, never silently dropped.
 fn warn_unsyncable(snapshot: &Snapshot) {
     report_unsyncable(&limits::scan(snapshot));
 }
@@ -302,11 +435,13 @@ impl RojoProject {
     }
 }
 
-fn read_rojo_project(path: &Path) -> Result<RojoProject> {
+fn read_rojo_project(path: &Path) -> Result<RojoProject, CommandError> {
     let file = path.join("default.project.json");
-    let text =
-        std::fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parsing {}", file.display()))
+    let text = std::fs::read_to_string(&file).map_err(|source| CommandError::Read {
+        path: file.clone(),
+        source,
+    })?;
+    serde_json::from_str(&text).map_err(|source| CommandError::RojoParse { path: file, source })
 }
 
 /// One migrated instance-tree node, ready to render into a `[[tree]]` entry.
@@ -319,9 +454,9 @@ struct MigratedNode {
 
 /// Migrate the Rojo `default.project.json` at `root` into a `naht.toml`: the project name, the place
 /// id, and the instance tree (`$path` / `$className` / `$properties`). Returns the warnings for
-/// anything Naht cannot represent — surfaced to the user, never dropped. The user's source files are
+/// anything Naht cannot represent, surfaced to the user, never dropped. The user's source files are
 /// left untouched; only the `naht.toml` is written. Public so the migration is testable directly.
-pub fn migrate_from_rojo(root: &Path) -> Result<Vec<String>> {
+pub fn migrate_from_rojo(root: &Path) -> Result<Vec<String>, CommandError> {
     let rojo = read_rojo_project(root)?;
     let mut nodes = Vec::new();
     let mut warnings = Vec::new();
@@ -329,9 +464,7 @@ pub fn migrate_from_rojo(root: &Path) -> Result<Vec<String>> {
         collect_tree_nodes(tree, String::new(), &mut nodes, &mut warnings);
     }
     let toml = render_rojo_config(&rojo.name(root), rojo.serve_place_id(), &nodes)?;
-    let project_file = root.join(PROJECT_FILE);
-    std::fs::write(&project_file, toml)
-        .with_context(|| format!("writing {}", project_file.display()))?;
+    write_file(&root.join(PROJECT_FILE), &toml)?;
     Ok(warnings)
 }
 
@@ -356,8 +489,6 @@ fn collect_tree_nodes(
             .and_then(|v| v.as_str())
             .map(String::from);
         let leaf = instance.rsplit('/').next().unwrap_or(&instance);
-        // Skip a `$className` the convention already infers: a service named after itself, or a plain
-        // directory's `Folder`. Anything else is a genuine override Naht must record.
         let class = match object.get("$className").and_then(|v| v.as_str()) {
             Some(class) if class == leaf || class == "Folder" => None,
             Some(class) => Some(class.to_string()),
@@ -433,7 +564,11 @@ fn rojo_property_to_toml(value: &serde_json::Value) -> Option<toml::Value> {
 
 /// Render a migrated project to `naht.toml` text: `[project]`, optional `[serve]`, and a `[[tree]]`
 /// array for the genuine exceptions.
-fn render_rojo_config(name: &str, place_id: Option<u64>, nodes: &[MigratedNode]) -> Result<String> {
+fn render_rojo_config(
+    name: &str,
+    place_id: Option<u64>,
+    nodes: &[MigratedNode],
+) -> Result<String, CommandError> {
     let mut doc = toml::Table::new();
 
     let mut project = toml::Table::new();
@@ -471,18 +606,23 @@ fn render_rojo_config(name: &str, place_id: Option<u64>, nodes: &[MigratedNode])
         doc.insert("tree".to_string(), toml::Value::Array(entries));
     }
 
-    toml::to_string(&doc).context("rendering naht.toml")
+    toml::to_string(&doc).map_err(CommandError::RenderConfig)
 }
 
 /// Build the project's snapshot, honoring any `[[tree]]` mappings (migrated from Rojo). With no tree
 /// config this is the plain convention scan of the project directory (the common case, unchanged).
-/// A `$path`-mapped instance is grafted at its instance location from its filesystem source — which
-/// is left in place — and any source root it draws from is dropped from the convention scan so it
+/// A `$path`-mapped instance is grafted at its instance location from its filesystem source, which
+/// is left in place, and any source root it draws from is dropped from the convention scan so it
 /// does not also appear as a literal top-level folder. Returns warnings for unrepresentable entries.
-fn assemble_project_snapshot(root: &Path, config: &Config) -> Result<(Snapshot, Vec<String>)> {
+fn assemble_project_snapshot(
+    root: &Path,
+    config: &Config,
+) -> Result<(Snapshot, Vec<String>), CommandError> {
     let mut snapshot =
-        mapper::snapshot_dir(&DiskVfs::new(), root).context("snapshotting the project")?;
-    // `.naht` holds internal state, not Roblox source — keep it out of the artifact.
+        mapper::snapshot_dir(&DiskVfs::new(), root).map_err(|source| CommandError::Tree {
+            path: root.to_path_buf(),
+            source,
+        })?;
     snapshot.children.retain(|child| child.name != INTERNAL_DIR);
     let mut warnings = Vec::new();
 
@@ -509,9 +649,13 @@ fn assemble_project_snapshot(root: &Path, config: &Config) -> Result<(Snapshot, 
 
         let mut built = match &node.path {
             Some(path) => {
-                let mut from = mapper::snapshot_dir(&DiskVfs::new(), &root.join(path))
-                    .with_context(|| {
-                        format!("snapshotting {path} for instance {}", node.instance)
+                let source_dir = root.join(path);
+                let mut from =
+                    mapper::snapshot_dir(&DiskVfs::new(), &source_dir).map_err(|source| {
+                        CommandError::Tree {
+                            path: source_dir,
+                            source,
+                        }
                     })?;
                 from.name = (*leaf).to_string();
                 from
@@ -579,17 +723,21 @@ fn toml_value_to_variant(value: &toml::Value) -> Option<Variant> {
     }
 }
 
-fn scaffold_source(path: &Path) -> Result<()> {
+fn scaffold_source(path: &Path) -> Result<(), CommandError> {
     let src = path.join("src");
-    std::fs::create_dir_all(&src).with_context(|| format!("creating {}", src.display()))?;
-    let sample = src.join("Hello.luau");
-    std::fs::write(&sample, "-- Naht sample module\nreturn {}\n")
-        .with_context(|| format!("writing {}", sample.display()))
+    std::fs::create_dir_all(&src).map_err(|source| CommandError::CreateDir {
+        path: src.clone(),
+        source,
+    })?;
+    write_file(
+        &src.join("Hello.luau"),
+        "-- Naht sample module\nreturn {}\n",
+    )
 }
 
-fn ensure_gitignore(path: &Path) -> Result<()> {
+fn ensure_gitignore(path: &Path) -> Result<(), CommandError> {
     let gitignore = path.join(".gitignore");
-    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    let existing = read_optional(&gitignore)?;
     if existing.lines().any(|line| line.trim() == "/.naht") {
         return Ok(());
     }
@@ -598,7 +746,44 @@ fn ensure_gitignore(path: &Path) -> Result<()> {
         updated.push('\n');
     }
     updated.push_str("/.naht\n");
-    std::fs::write(&gitignore, updated).with_context(|| format!("writing {}", gitignore.display()))
+    write_file(&gitignore, &updated)
+}
+
+fn read_optional(path: &Path) -> Result<String, CommandError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(source) => Err(CommandError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn write_file(path: &Path, contents: &str) -> Result<(), CommandError> {
+    std::fs::write(path, contents).map_err(|source| CommandError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn create_file(path: &Path) -> Result<std::fs::File, CommandError> {
+    std::fs::File::create(path).map_err(|source| CommandError::Create {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn create_parent_dirs(output: &Path) -> Result<(), CommandError> {
+    match output.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            std::fs::create_dir_all(parent).map_err(|source| CommandError::CreateDir {
+                path: parent.to_path_buf(),
+                source,
+            })
+        }
+        _ => Ok(()),
+    }
 }
 
 fn model_format(output: &Path) -> ModelFormat {
@@ -621,7 +806,7 @@ fn is_place_output(output: &Path) -> bool {
 /// Watch `root` and rebuild `output` on each debounced change. The caller holds the returned guard
 /// for as long as watching should continue. Our own output writes are ignored, so the rebuild does
 /// not trigger itself.
-pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use<>> {
+pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop, CommandError> {
     let root = canonical(root)?;
     let watch_root = root.clone();
     let output = output.to_path_buf();
@@ -637,31 +822,38 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use
         if changed.is_empty() {
             return;
         }
-        if let Some(out) = output_abs.as_deref()
-            && changed.iter().all(|path| path == out)
-        {
+        let only_own_output = output_abs
+            .as_deref()
+            .is_some_and(|out| changed.iter().all(|path| path == out));
+        if only_own_output {
             return;
         }
         if let Err(error) = build_once(&root, &output) {
             tracing::warn!(target: "naht::build", %error, "rebuild failed");
         }
-    })?;
-    debouncer.watch(&watch_root, RecursiveMode::Recursive)?;
+    })
+    .map_err(WatchError::from)?;
+    debouncer
+        .watch(&watch_root, RecursiveMode::Recursive)
+        .map_err(WatchError::from)?;
     Ok(debouncer)
 }
 
-fn open_store(root: &Path) -> Result<StateStore> {
-    StateStore::open(&root.join(INTERNAL_DIR).join("state.db"))
-        .context("opening the state database")
+fn open_store(root: &Path) -> Result<StateStore, CommandError> {
+    let path = root.join(INTERNAL_DIR).join("state.db");
+    StateStore::open(&path).map_err(|source| CommandError::StateOpen { path, source })
 }
 
-fn rooted(root: &Path) -> Result<RootedVfs<DiskVfs>> {
+fn rooted(root: &Path) -> Result<RootedVfs<DiskVfs>, CommandError> {
     Ok(RootedVfs::new(canonical(root)?, DiskVfs::new()))
 }
 
-fn canonical(root: &Path) -> Result<std::path::PathBuf> {
+fn canonical(root: &Path) -> Result<PathBuf, CommandError> {
     root.canonicalize()
-        .with_context(|| format!("project directory not found: {}", root.display()))
+        .map_err(|source| CommandError::ProjectDir {
+            path: root.to_path_buf(),
+            source,
+        })
 }
 
 fn dir_name(path: &Path) -> String {

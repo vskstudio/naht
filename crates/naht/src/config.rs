@@ -2,19 +2,46 @@
 //! project `naht.toml`. Later layers override earlier ones field by field, so a machine-wide setting
 //! holds unless a project opts out of it.
 //!
-//! The schema is deliberately small — Naht is convention-first, so config carries only what cannot
+//! The schema is deliberately small, Naht is convention-first, so config carries only what cannot
 //! be inferred: the project name, the serve port, and the place-id guard.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
 use serde::Deserialize;
+use thiserror::Error;
 
 /// The project's config file name, read from the project root.
 pub const PROJECT_FILE: &str = "naht.toml";
 
 /// The default localhost port the daemon listens on when none is configured.
 pub const DEFAULT_PORT: u16 = 34872;
+
+/// Why a config layer could not be loaded or a port could not be resolved.
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    /// A config file exists but cannot be read.
+    #[error("cannot read `{}`", path.display())]
+    Read {
+        /// The file that could not be read.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// A config file is not valid TOML for this schema.
+    #[error("cannot parse `{}`", path.display())]
+    Parse {
+        /// The file that does not parse.
+        path: PathBuf,
+        /// The TOML error, with its position.
+        #[source]
+        source: toml::de::Error,
+    },
+    /// Port 0 asks the OS for an arbitrary port, which a daemon cannot advertise.
+    #[error("port must be between 1 and 65535, got 0")]
+    PortZero,
+}
 
 /// A single config layer, as parsed from one TOML file. Every field is optional so layers can be
 /// merged without a partial layer wiping a value set by an earlier one.
@@ -36,7 +63,7 @@ pub struct Config {
 ///
 /// `instance` is a slash-separated path from the place root (e.g. `ReplicatedStorage/Common`). `path`
 /// (when set) is the filesystem directory, relative to the project root, whose contents source the
-/// instance — the Rojo `$path` that Naht's directory convention does not already place. `class` and
+/// instance, the Rojo `$path` that Naht's directory convention does not already place. `class` and
 /// `properties` carry a Rojo `$className` / `$properties` the convention cannot express.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +79,7 @@ pub struct TreeNode {
     pub properties: std::collections::BTreeMap<String, toml::Value>,
 }
 
-/// `[project]` — identity that cannot be inferred from the directory alone.
+/// `[project]`, identity that cannot be inferred from the directory alone.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProjectConfig {
@@ -60,7 +87,7 @@ pub struct ProjectConfig {
     pub name: Option<String>,
 }
 
-/// `[serve]` — daemon settings.
+/// `[serve]`, daemon settings.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServeConfig {
@@ -74,14 +101,14 @@ pub struct ServeConfig {
     pub terrain_sync: Option<bool>,
 }
 
-/// `[assets]` — Open Cloud asset upload (Stage 12). Disabled by default, so the unchanged behavior is
+/// `[assets]`, Open Cloud asset upload (Stage 12). Disabled by default, so the unchanged behavior is
 /// reference-only: properties keep their values and nothing is uploaded.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AssetsConfig {
     /// Whether to upload local assets and rewrite their references. Off unless set.
     pub enabled: Option<bool>,
-    /// The name of the environment variable holding the Open Cloud API key — never the key itself.
+    /// The name of the environment variable holding the Open Cloud API key, never the key itself.
     pub api_key_env: Option<String>,
 }
 
@@ -95,13 +122,13 @@ impl AssetsConfig {
 impl Config {
     /// Load the layered config for the project rooted at `root`: per-machine config first, then the
     /// project's `naht.toml`, each overriding the last.
-    pub fn load(root: &Path) -> Result<Self> {
+    pub fn load(root: &Path) -> Result<Self, ConfigError> {
         Self::load_from(home_config_path().as_deref(), root)
     }
 
     /// The layered load with an explicit per-machine config path, so tests need not touch the real
     /// home directory.
-    fn load_from(home_config: Option<&Path>, root: &Path) -> Result<Self> {
+    fn load_from(home_config: Option<&Path>, root: &Path) -> Result<Self, ConfigError> {
         let mut config = Config::default();
         if let Some(home) = home_config {
             config.overlay(read_layer(home)?);
@@ -159,21 +186,27 @@ impl Config {
 
     /// Resolve the port to bind: a `--port` flag beats `naht.toml`, which beats the default. Port 0
     /// (no fixed port) is rejected here rather than panicking at bind time.
-    pub fn resolve_port(&self, cli_port: Option<u16>) -> Result<u16> {
+    pub fn resolve_port(&self, cli_port: Option<u16>) -> Result<u16, ConfigError> {
         let port = cli_port.unwrap_or_else(|| self.port());
         if port == 0 {
-            anyhow::bail!("port must be between 1 and 65535, got 0");
+            return Err(ConfigError::PortZero);
         }
         Ok(port)
     }
 }
 
 /// Parse one config file; an absent file is an empty layer, not an error.
-fn read_layer(path: &Path) -> Result<Config> {
+fn read_layer(path: &Path) -> Result<Config, ConfigError> {
     match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str(&text).with_context(|| format!("parsing {}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+        Ok(text) => toml::from_str(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
+        Err(source) => Err(ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
     }
 }
 

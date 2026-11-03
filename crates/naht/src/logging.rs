@@ -1,9 +1,10 @@
 //! Structured logging for the daemon and CLI (Stage 8).
 //!
-//! `naht-core` stays free of logging dependencies — it returns data, and the binary decides how to
+//! `naht-core` stays free of logging dependencies, it returns data, and the binary decides how to
 //! surface it. Verbosity comes from `-v` flags, but an explicit `NAHT_LOG`/`RUST_LOG` env filter
 //! always wins, so an operator can dial in per-target levels without touching flags.
 
+use tracing::subscriber::SetGlobalDefaultError;
 use tracing_subscriber::EnvFilter;
 
 /// Resolve the log directive: an env filter (`NAHT_LOG`, then `RUST_LOG`) overrides `-v`; otherwise
@@ -23,9 +24,9 @@ fn resolve_directive(verbose: u8, naht_log: Option<String>, rust_log: Option<Str
     .to_string()
 }
 
-/// Install the global tracing subscriber, writing to stderr. Idempotent in practice — called once
+/// Install the global tracing subscriber, writing to stderr. Idempotent in practice, called once
 /// from `main`.
-pub fn init(verbose: u8) {
+pub fn init(verbose: u8) -> Result<(), SetGlobalDefaultError> {
     let directive = resolve_directive(
         verbose,
         std::env::var("NAHT_LOG").ok(),
@@ -34,10 +35,11 @@ pub fn init(verbose: u8) {
     // A bad env filter falls back to the verbosity level rather than aborting startup.
     let filter = EnvFilter::try_new(&directive)
         .unwrap_or_else(|_| EnvFilter::new(resolve_directive(verbose, None, None)));
-    let _ = tracing_subscriber::fmt()
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
-        .try_init();
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)
 }
 
 #[cfg(test)]

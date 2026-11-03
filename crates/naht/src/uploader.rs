@@ -2,19 +2,38 @@
 //! and the upload-once/cache policy with no network I/O; this is the binary-side client that actually
 //! talks to Roblox Open Cloud.
 //!
-//! The API key never appears in config or code — only the *name* of an environment variable holding
+//! The API key never appears in config or code, only the *name* of an environment variable holding
 //! it. The blocking HTTP runs on a dedicated thread so it doesn't panic inside the async runtime.
 //!
 //! Note: the upload is exercised by `naht-core`'s tests through a fake; this real path needs a live
 //! key to validate, and the Open Cloud asset operation is asynchronous in reality (the response may
 //! be an operation to poll). The id extraction here is best-effort.
 
-use anyhow::{Context, Result};
+use std::env::{self, VarError};
+
 use naht_core::assets::{AssetError, AssetUploader};
+use thiserror::Error;
 
 use crate::config::AssetsConfig;
 
 const ASSETS_ENDPOINT: &str = "https://apis.roblox.com/assets/v1/assets";
+
+/// Why the Open Cloud client could not be built from the `[assets]` config.
+#[derive(Debug, Error)]
+pub enum UploaderError {
+    /// Uploads are enabled but no environment variable name was configured.
+    #[error("[assets] is enabled but `api_key_env` is not set")]
+    KeyNameMissing,
+    /// The configured environment variable is unset or not valid Unicode.
+    #[error("cannot read the Open Cloud API key from `${name}`")]
+    KeyUnreadable {
+        /// The configured environment variable name, never its value.
+        name: String,
+        /// Why the variable could not be read.
+        #[source]
+        source: VarError,
+    },
+}
 
 /// An Open Cloud client holding the resolved API key.
 pub struct OpenCloudUploader {
@@ -23,13 +42,15 @@ pub struct OpenCloudUploader {
 
 impl OpenCloudUploader {
     /// Build the uploader from config, reading the API key from the named environment variable.
-    pub fn from_config(assets: &AssetsConfig) -> Result<Self> {
+    pub fn from_config(assets: &AssetsConfig) -> Result<Self, UploaderError> {
         let env_name = assets
             .api_key_env
             .as_deref()
-            .context("[assets] is enabled but `api_key_env` is not set")?;
-        let api_key = std::env::var(env_name)
-            .with_context(|| format!("reading the Open Cloud API key from ${env_name}"))?;
+            .ok_or(UploaderError::KeyNameMissing)?;
+        let api_key = env::var(env_name).map_err(|source| UploaderError::KeyUnreadable {
+            name: env_name.to_string(),
+            source,
+        })?;
         Ok(Self { api_key })
     }
 }

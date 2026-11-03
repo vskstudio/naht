@@ -1,0 +1,31 @@
+[advisories]
+version = 2
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+deny = [
+    { crate = "anyhow", reason = "typed errors end to end, see rust-book errors.md" },
+    { crate = "eyre", reason = "typed errors end to end, see rust-book errors.md" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-2-Clause-Patent",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
