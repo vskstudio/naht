@@ -12,7 +12,6 @@ use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 
-/// A layer that records each event's message and level.
 #[derive(Clone, Default)]
 struct Capture(Arc<Mutex<Vec<(Level, String)>>>);
 

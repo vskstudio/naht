@@ -1,6 +1,6 @@
 //! Detect what cannot round-trip live, and say so explicitly (architecture §9).
 //!
-//! We cannot beat the Studio API ceiling — engine-generated geometry (CSG unions), mesh binaries,
+//! We cannot beat the Studio API ceiling: engine-generated geometry (CSG unions), mesh binaries,
 //! terrain voxels, and security-locked properties such as `HttpService.HttpEnabled` do not survive a
 //! live text sync. What Naht does better than Rojo/Argon is **detect and warn**, with guidance,
 //! instead of dropping silently. This module scans a [`Snapshot`] tree and returns those warnings;
@@ -8,11 +8,9 @@
 
 use crate::snapshot::Snapshot;
 
-/// Engine-generated binary geometry — round-trips opaquely inside an `rbxm`, never as live text.
 const BINARY_GEOMETRY_CLASSES: &[&str] =
     &["UnionOperation", "NegateOperation", "IntersectOperation"];
 
-/// Properties that scripts and plugins cannot set, by design.
 const LOCKED_PROPERTIES: &[&str] = &["HttpEnabled"];
 
 /// Why an instance or property can't be synced live.
@@ -40,7 +38,7 @@ pub struct Warning {
 }
 
 impl Warning {
-    /// A human-facing explanation with guidance — never a silent drop.
+    /// A human-facing explanation with guidance, never a silent drop.
     #[must_use]
     pub fn message(&self) -> String {
         match &self.reason {
@@ -172,7 +170,6 @@ mod tests {
             .into_iter()
             .map(|w| w.reason)
             .collect();
-        // Terrain now syncs as a blob, but the mesh binary is still flagged.
         assert!(!reasons.contains(&Reason::Terrain));
         assert!(reasons.contains(&Reason::MeshBinary));
     }

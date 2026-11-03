@@ -125,7 +125,6 @@ impl Session {
         self.next_seq += 1;
     }
 
-    /// Append one completed sync op to the bounded activity buffer, evicting the oldest past the cap.
     pub(super) fn record_event(
         &mut self,
         path: String,

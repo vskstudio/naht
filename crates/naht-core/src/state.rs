@@ -1,4 +1,4 @@
-//! The persisted last-sync base (architecture §5) — the thing neither Rojo nor Argon keeps.
+//! The persisted last-sync base (architecture §5), the thing neither Rojo nor Argon keeps.
 //!
 //! Lives in `.naht/state.db` (SQLite). Per instance, keyed by stable GUID, it records the path,
 //! class, content hash, the last-synced `base_content` (the base for 3-way merge; text only), the
@@ -10,8 +10,6 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension};
 
-/// The on-disk schema version. Bumped only by a migration; an older or newer database is rejected
-/// rather than silently misread.
 const SCHEMA_VERSION: i64 = 1;
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -55,7 +53,7 @@ pub struct InstanceRecord {
     pub class: String,
     /// A fast change-detection hash of the last-synced content.
     pub content_hash: String,
-    /// The last-synced content — the base for 3-way text merge. `None` for binary instances, which
+    /// The last-synced content, the base for 3-way text merge. `None` for binary instances, which
     /// store only the hash.
     pub base_content: Option<Vec<u8>>,
     /// The filesystem modification time, as recorded at last sync.
@@ -323,7 +321,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("state.db");
         StateStore::open(&db).unwrap();
-        // Simulate a database written by a different schema version.
         let raw = Connection::open(&db).unwrap();
         raw.execute(
             "UPDATE meta SET value = '999' WHERE key = 'schema_version'",

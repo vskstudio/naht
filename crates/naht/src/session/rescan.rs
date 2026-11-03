@@ -19,9 +19,6 @@ impl Session {
         Ok(())
     }
 
-    /// Re-read the filesystem's binary blobs and reconcile them against the Studio blob mirror and the
-    /// persisted (hash-only) base. Filesystem writes are applied by the reconciler; Studio-bound blob
-    /// patches are queued for the `/blobs` long-poll.
     pub(super) fn reconcile_blobs(&mut self) -> Result<(), SessionError> {
         let fs = binary::scan_blobs(&self.vfs, Path::new(PROJECT_ROOT))?;
         let patches = binary::reconcile_blobs(&mut self.vfs, &self.store, &fs, &self.studio_blobs)?;

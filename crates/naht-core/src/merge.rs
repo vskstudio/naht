@@ -23,14 +23,14 @@ pub enum Merge {
 pub fn merge3(base: &str, fs: &str, studio: &str) -> Merge {
     match diffy::merge(base, fs, studio) {
         Ok(merged) => Merge::Clean(merged),
-        // diffy hard-codes the `ours` / `theirs` labels; relabel them to FS / Studio so the markers
-        // tell the user which side is which.
-        Err(conflicted) => Merge::Conflict(
-            conflicted
-                .replace("<<<<<<< ours", &format!("<<<<<<< {FS_LABEL}"))
-                .replace(">>>>>>> theirs", &format!(">>>>>>> {STUDIO_LABEL}")),
-        ),
+        Err(conflicted) => Merge::Conflict(relabel_conflict_sides(&conflicted)),
     }
+}
+
+fn relabel_conflict_sides(conflicted: &str) -> String {
+    conflicted
+        .replace("<<<<<<< ours", &format!("<<<<<<< {FS_LABEL}"))
+        .replace(">>>>>>> theirs", &format!(">>>>>>> {STUDIO_LABEL}"))
 }
 
 /// Whether `text` still contains any git-style conflict marker line.
@@ -65,7 +65,6 @@ mod tests {
         };
         assert!(text.contains("<<<<<<< FS"));
         assert!(text.contains(">>>>>>> Studio"));
-        // No data lost: both sides' versions survive in the markers.
         assert!(text.contains("local a = 11"));
         assert!(text.contains("local a = 22"));
         assert!(has_conflict_markers(&text));

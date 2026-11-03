@@ -3,7 +3,7 @@
 //! The reconciler works on the lightweight, comparable [`Snapshot`] tree; building a distributable
 //! artifact is a separate edge concern (architecture §6: build config is independent of sync
 //! mapping). A snapshot is converted into a [`WeakDom`] and written as either a **model** (binary
-//! `rbxm` / XML `rbxmx` — a bare instance list) or a **place** (`rbxl`/`rbxlx` — a `DataModel` with
+//! `rbxm` / XML `rbxmx`, a bare instance list) or a **place** (`rbxl`/`rbxlx`, a `DataModel` with
 //! convention-mapped services). We depend on `rbx_binary`/`rbx_xml` rather than hand-rolling either.
 
 use std::collections::BTreeMap;
@@ -15,19 +15,16 @@ use rbx_reflection::ClassTag;
 
 use crate::snapshot::Snapshot;
 
-/// The service every loose top-level entry (and any unknown service-shaped directory) falls into.
 const DEFAULT_SERVICE: &str = "Workspace";
 
-/// Suffixes that make a top-level directory *look* like a service. Used only to warn when such a
-/// directory isn't a real service — a likely typo, not a silent reparent.
 const SERVICE_SUFFIXES: &[&str] = &["Service", "Storage", "Gui", "Lighting", "Players"];
 
 /// The model serialization format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelFormat {
-    /// Binary `.rbxm` — compact, the usual choice.
+    /// Binary `.rbxm`: compact, the usual choice.
     Binary,
-    /// XML `.rbxmx` — text, diff-friendly.
+    /// XML `.rbxmx`: text, diff-friendly.
     Xml,
 }
 
@@ -68,7 +65,7 @@ pub fn write_model<W: Write>(
 /// Write `root` as a **place**: a `DataModel` whose top-level directories are convention-mapped to
 /// services (architecture §6 extension). A top-level directory named after a real Roblox service
 /// (validated against `rbx_reflection`) becomes that service, populated with its contents; anything
-/// else — loose files, ordinary directories — lands under `Workspace`. A directory that *looks* like
+/// else (loose files, ordinary directories) lands under `Workspace`. A directory that *looks* like
 /// a service but isn't returns an explicit warning, never a silent reparent.
 ///
 /// Returns the warnings, for the caller to surface.
@@ -87,8 +84,8 @@ pub fn write_place<W: Write>(
 }
 
 /// Build the place [`WeakDom`]: a `DataModel` root whose top-level directories are convention-mapped
-/// to services. Exposed alongside [`write_place`] so a caller (or a test) can inspect the built tree —
-/// notably that the root instance is a `DataModel` — without re-serializing and reloading it, which
+/// to services. Exposed alongside [`write_place`] so a caller (or a test) can inspect the built tree:
+/// notably that the root instance is a `DataModel`, without re-serializing and reloading it, which
 /// would lose the distinction (a reloaded model and a reloaded place both get a synthetic `DataModel`
 /// root). Returns the dom and the same warnings [`write_place`] surfaces.
 pub fn build_place_dom(root: &Snapshot) -> (WeakDom, Vec<String>) {
@@ -98,17 +95,13 @@ pub fn build_place_dom(root: &Snapshot) -> (WeakDom, Vec<String>) {
     let mut warnings = Vec::new();
 
     for child in &root.children {
-        // Only a top-level *directory* maps to a service. A script that merely shares a service's
-        // name (e.g. `Lighting.luau`) is ordinary source and must not be mistaken for one — it would
-        // be dropped, since a service takes its directory's *children*, not the entry itself.
-        let is_directory = child.class == "Folder";
-        if is_directory && is_service(&child.name) {
+        if maps_to_service(child) {
             let service = service_ref(&mut dom, data_model, &mut services, &child.name);
             for grandchild in &child.children {
                 dom.insert(service, build_instance(grandchild));
             }
         } else {
-            if is_directory && looks_service_like(&child.name) {
+            if is_directory(child) && looks_service_like(&child.name) {
                 warnings.push(format!(
                     "'{}' looks like a service but isn't a known one; placed under {DEFAULT_SERVICE}",
                     child.name
@@ -121,7 +114,6 @@ pub fn build_place_dom(root: &Snapshot) -> (WeakDom, Vec<String>) {
     (dom, warnings)
 }
 
-/// Get or create the service of `class` under the `DataModel`, deduplicated by class name.
 fn service_ref(
     dom: &mut WeakDom,
     data_model: Ref,
@@ -136,7 +128,14 @@ fn service_ref(
     reference
 }
 
-/// Whether `name` is a real Roblox service, per the reflection database.
+fn is_directory(child: &Snapshot) -> bool {
+    child.class == "Folder"
+}
+
+fn maps_to_service(child: &Snapshot) -> bool {
+    is_directory(child) && is_service(&child.name)
+}
+
 fn is_service(name: &str) -> bool {
     rbx_reflection_database::get()
         .ok()
@@ -148,7 +147,6 @@ fn is_service(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether `name` resembles a service (by suffix) — used only to warn about a likely typo.
 fn looks_service_like(name: &str) -> bool {
     SERVICE_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
 }
@@ -216,8 +214,6 @@ mod tests {
 
     #[test]
     fn a_union_round_trips_through_rbxm_without_losing_its_subtree() {
-        // Naht never text-ifies binary geometry; it passes the instance through verbatim, so a
-        // Union (and anything under it) round-trips opaquely inside an rbxm.
         let project = Snapshot::new("Folder", "proj").with_child(
             Snapshot::new("UnionOperation", "Bridge").with_child(
                 Snapshot::new("ModuleScript", "Meta")
@@ -244,7 +240,6 @@ mod tests {
         assert_eq!(source, Some(&Variant::String("return 'kept'".to_string())));
     }
 
-    /// Find a `DataModel` child instance of the given class in a reloaded place.
     fn service<'a>(dom: &'a WeakDom, class: &str) -> Option<&'a rbx_dom_weak::Instance> {
         dom.root()
             .children()
@@ -302,7 +297,6 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("MyService"));
 
-        // The whole unknown directory lands under Workspace, nothing dropped.
         let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
         let workspace = service(&dom, "Workspace").expect("Workspace");
         let my_service =
@@ -312,8 +306,6 @@ mod tests {
 
     #[test]
     fn a_top_level_script_named_like_a_service_is_kept_not_dropped() {
-        // `Lighting.luau` is a ModuleScript named "Lighting", not the Lighting service — it must
-        // survive as a Workspace child, with its source intact.
         let project = Snapshot::new("Folder", "proj").with_child(
             Snapshot::new("ModuleScript", "Lighting")
                 .with_property("Source", Variant::String("return 1".to_string())),
@@ -324,7 +316,6 @@ mod tests {
         assert!(warnings.is_empty());
 
         let dom = rbx_binary::from_reader(&bytes[..]).unwrap();
-        // No empty Lighting service was created.
         assert!(service(&dom, "Lighting").is_none());
         let workspace = service(&dom, "Workspace").expect("Workspace");
         let script = child_named(&dom, workspace, "Lighting").expect("Lighting script kept");
@@ -337,7 +328,6 @@ mod stage15 {
     use super::*;
     use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Variant, Vector3};
 
-    /// Find an instance by name among `instance`'s descendants' immediate children list.
     fn prop<'a>(instance: &'a rbx_dom_weak::Instance, key: &str) -> Option<&'a Variant> {
         instance
             .properties
@@ -348,9 +338,6 @@ mod stage15 {
 
     #[test]
     fn place_root_instance_is_a_data_model() {
-        // Stage 9 criterion 1: the built place's *root instance* is a `DataModel`, with the services
-        // as its direct children — asserted on the built dom, since a reloaded model and a reloaded
-        // place both get a synthetic `DataModel` root and so can't be told apart that way.
         let project = Snapshot::new("Folder", "proj")
             .with_child(
                 Snapshot::new("Folder", "ReplicatedStorage")
@@ -375,8 +362,6 @@ mod stage15 {
 
     #[test]
     fn typed_properties_survive_snapshot_place_snapshot_with_value_identity() {
-        // Stage 10 criterion 3 (the place-file leg): real typed properties round-trip through the
-        // binary place format with their exact values — not just frontmatter string parsing.
         let mut attributes = Attributes::new();
         attributes.insert("Health".to_string(), Variant::Float64(100.0));
         attributes.insert("Boss".to_string(), Variant::Bool(true));
@@ -389,8 +374,6 @@ mod stage15 {
                 "Tags",
                 Variant::Tags(Tags::from(vec!["combat".to_string(), "npc".to_string()])),
             );
-        // `Color3` quantizes to `Color3uint8` on a `BasePart`, so carry it where it stays a true
-        // `Color3` (a light's `Color`) to assert exact identity.
         let light = Snapshot::new("PointLight", "Glow")
             .with_property("Color", Variant::Color3(Color3::new(0.1, 0.5, 0.9)));
         let project = Snapshot::new("Folder", "proj")

@@ -64,7 +64,6 @@ pub fn serve_warnings(config: &Config, snapshot: &Snapshot) -> Vec<limits::Warni
     )
 }
 
-/// The lines that report unsyncable instances, a count header first. Empty when nothing is flagged.
 pub(super) fn unsyncable_lines(warnings: &[limits::Warning]) -> Vec<String> {
     if warnings.is_empty() {
         return Vec::new();

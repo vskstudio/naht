@@ -18,12 +18,10 @@ fn ack_records_a_push_event_and_clears_pending() {
     std::fs::write(dir.path().join("src").join("A.luau"), "return 1").unwrap();
     s.rescan().unwrap();
 
-    // The new file is a queued, unacked FS→Studio patch: pending, no completed event yet.
     let before = s.activity(0);
     assert_eq!(before.pending, 1);
     assert!(before.events.is_empty());
 
-    // Ack the exact path the reconcile queued (don't hardcode the mapper's key).
     let (_, patches) = s.take_patches(0);
     let path = patches[0].path.clone();
     s.ack(std::slice::from_ref(&path)).unwrap();
@@ -36,7 +34,7 @@ fn ack_records_a_push_event_and_clears_pending() {
     assert_eq!(e.direction, Direction::ToStudio);
     assert_eq!(e.kind, EventKind::Text);
     assert_eq!(e.outcome, Outcome::Ok);
-    assert_eq!(e.seq, 1); // seqs are 1-based (0 is the "from start" cursor sentinel)
+    assert_eq!(e.seq, 1);
 }
 
 #[test]
@@ -95,5 +93,5 @@ fn buffer_evicts_oldest_past_the_cap() {
     let act = s.activity(0);
     assert_eq!(act.events.len(), 256);
     assert_eq!(act.buffer_start_seq, act.events[0].seq);
-    assert_eq!(act.buffer_start_seq, 5); // 260 events, seqs 1..=260 → oldest 4 evicted, front = 5
+    assert_eq!(act.buffer_start_seq, 5);
 }

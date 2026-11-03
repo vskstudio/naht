@@ -52,9 +52,6 @@ impl Session {
         self.reconcile_blobs()
     }
 
-    /// Record the result of a blob reconcile. Filesystem-bound effects were already applied to disk by
-    /// the reconciler. A Studio-bound patch is queued and the blob mirror advanced immediately
-    /// (last-writer-wins, not ack-gated). A conflict froze the path; nothing is sent.
     pub(super) fn absorb_blobs(&mut self, patches: Vec<BlobPatch>) {
         for patch in patches {
             if patch.kind == PatchKind::Conflict {
@@ -93,8 +90,6 @@ impl Session {
         }
     }
 
-    /// Record the result of a reconcile. Filesystem-bound effects already advanced the base; for a
-    /// Studio-bound patch the base is held (ack-gated) until the plugin confirms it.
     pub(super) fn absorb(
         &mut self,
         patches: Vec<Patch>,
@@ -170,7 +165,6 @@ impl Session {
         Ok(())
     }
 
-    /// Advance the Studio mirror to the state a durable patch leaves behind.
     pub(super) fn mirror(&mut self, patch: &Patch) {
         match patch.kind {
             PatchKind::Delete => {
