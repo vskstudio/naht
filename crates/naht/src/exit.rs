@@ -39,6 +39,7 @@ impl From<&Failure> for Exit {
         match failure {
             Failure::Config(_) => Self::Config,
             Failure::Logging(_) => Self::Software,
+            Failure::Terminal(_) => Self::IoError,
             Failure::Command(command) => Self::from(command),
         }
     }
@@ -62,7 +63,8 @@ impl From<&CommandError> for Exit {
             | CommandError::Write { .. }
             | CommandError::StateOpen { .. }
             | CommandError::State(_)
-            | CommandError::Serve(_) => Self::IoError,
+            | CommandError::Serve(_)
+            | CommandError::Output(_) => Self::IoError,
             CommandError::Config(_) | CommandError::Uploader(_) => Self::Config,
             CommandError::Watch(_) => Self::OsError,
             CommandError::DaemonUnreachable { .. }

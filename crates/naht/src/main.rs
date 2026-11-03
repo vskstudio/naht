@@ -20,6 +20,7 @@
 mod exit;
 mod failure;
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -27,6 +28,7 @@ use clap::{Parser, Subcommand};
 
 use naht::commands;
 use naht::config::Config;
+use naht::output::Output;
 
 use crate::exit::Exit;
 use crate::failure::Failure;
@@ -113,57 +115,79 @@ enum Command {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let mut out = Output::terminal();
     let exit = match naht::logging::init(cli.verbose) {
-        Ok(()) => match dispatch(cli.command).await {
+        Ok(()) => match dispatch(cli.command, &mut out).await {
             Ok(()) => Exit::Success,
             Err(failure) => {
-                failure::report(&failure).map_or(Exit::IoError, |()| Exit::from(&failure))
+                failure::report(&mut out, &failure).map_or(Exit::IoError, |()| Exit::from(&failure))
             }
         },
-        Err(error) => {
-            failure::report(&Failure::Logging(error)).map_or(Exit::IoError, |()| Exit::Software)
-        }
+        Err(error) => failure::report(&mut out, &Failure::Logging(error))
+            .map_or(Exit::IoError, |()| Exit::Software),
     };
     exit.into()
 }
 
-async fn dispatch(command: Command) -> Result<(), Failure> {
+async fn dispatch<Stdout: Write, Stderr: Write>(
+    command: Command,
+    out: &mut Output<Stdout, Stderr>,
+) -> Result<(), Failure> {
     match command {
         Command::Init { path, from_rojo } => {
-            commands::init(&path, from_rojo).map_err(Failure::from)
+            let initialized = commands::init(&path, from_rojo)?;
+            out.initialized(&initialized)?;
         }
         Command::Serve { path, port } => {
             let config = Config::load(&path)?;
             let port = config.resolve_port(port)?;
-            commands::serve(config, &path, port)
-                .await
-                .map_err(Failure::from)
+            commands::serve(config, &path, port, out).await?;
         }
         Command::Pull { path } => {
             let config = Config::load(&path)?;
-            commands::pull(&config).await.map_err(Failure::from)
+            commands::pull(&config).await?;
+            out.say("pulled, daemon re-synced")?;
         }
         Command::Build {
             path,
             output,
-            watch,
+            watch: true,
         } => {
-            let built = if watch {
-                commands::build_watch(&path, &output).await
-            } else {
-                commands::build(&path, &output)
-            };
-            built.map_err(Failure::from)
+            let (built, _watcher) = commands::build_watch(&path, &output)?;
+            out.built(&built)?;
+            out.say(format_args!(
+                "watching {}, rebuilding on change",
+                path.display()
+            ))?;
+            std::future::pending::<()>().await;
         }
-        Command::Status { path } => commands::status(&path).map_err(Failure::from),
+        Command::Build {
+            path,
+            output,
+            watch: false,
+        } => {
+            let built = commands::build(&path, &output)?;
+            out.built(&built)?;
+        }
+        Command::Status { path } => {
+            let status = commands::status(&path)?;
+            out.status(&status)?;
+        }
         Command::Resolve { path, project } => {
-            commands::resolve(&project, &path).map_err(Failure::from)
+            commands::resolve(&project, &path)?;
+            out.say(format_args!("resolved {path}"))?;
         }
         Command::PackagePlugin { src, output } => {
-            commands::package_plugin(&src, &output).map_err(Failure::from)
+            commands::package_plugin(&src, &output)?;
+            out.say(format_args!("packaged plugin into {}", output.display()))?;
         }
         Command::CheckVersion { tag } => {
-            commands::check_release_version(&tag).map_err(Failure::from)
+            commands::check_release_version(&tag)?;
+            out.say(format_args!(
+                "release tag '{tag}' matches workspace version '{}'",
+                naht_core::version()
+            ))?;
         }
     }
+    Ok(())
 }
