@@ -9,6 +9,8 @@
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension};
+use std::fs;
+use std::io;
 
 const SCHEMA_VERSION: i64 = 1;
 
@@ -23,7 +25,7 @@ pub enum StateError {
     Sqlite(#[from] rusqlite::Error),
     /// Could not create the directory holding the database.
     #[error("state I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
     /// The database was written by a different schema version.
     #[error("state schema version mismatch: found {found}, this build expects {expected}")]
     SchemaVersionMismatch {
@@ -74,7 +76,7 @@ impl StateStore {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent)?;
         }
         Self::init(Connection::open(path)?)
     }

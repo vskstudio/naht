@@ -3,8 +3,11 @@ use super::files::{canonical, open_store};
 use super::inspect::{serve_warnings, unsyncable_lines};
 use crate::config::Config;
 use crate::output::Output;
+use crate::server;
 use crate::server::AppState;
 use crate::session::Session;
+use crate::shutdown;
+use crate::watcher;
 use naht_core::mapper;
 use naht_core::vfs::DiskVfs;
 use std::io::Write;
@@ -12,6 +15,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
+use tokio::task;
 
 const LONG_POLL: Duration = Duration::from_secs(25);
 
@@ -26,7 +31,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     let root = canonical(root)?;
     let startup_snapshot = {
         let root = root.clone();
-        tokio::task::spawn_blocking(move || mapper::snapshot_dir(&DiskVfs::new(), &root)).await
+        task::spawn_blocking(move || mapper::snapshot_dir(&DiskVfs::new(), &root)).await
     };
     match startup_snapshot {
         Ok(Ok(snapshot)) => {
@@ -52,12 +57,12 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     let state = AppState::new(session, LONG_POLL);
     state
         .tasks()
-        .spawn(crate::shutdown::cancel_on_signal(state.shutdown().clone()));
+        .spawn(shutdown::cancel_on_signal(state.shutdown().clone()));
 
-    let watcher = crate::watcher::spawn(&root, Arc::clone(&state))?;
+    let watcher = watcher::spawn(&root, Arc::clone(&state))?;
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let listener = tokio::net::TcpListener::bind(addr)
+    let listener = TcpListener::bind(addr)
         .await
         .map_err(|source| CommandError::Bind { addr, source })?;
     tracing::info!(target: "naht::server", %addr, root = %root.display(), "naht serving");
@@ -66,7 +71,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         root.display()
     ))
     .map_err(CommandError::Output)?;
-    let served = crate::server::serve(listener, Arc::clone(&state))
+    let served = server::serve(listener, Arc::clone(&state))
         .await
         .map_err(CommandError::Serve);
     state.shutdown().cancel();
@@ -82,6 +87,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{CommandError, Config, Output, serve};
+    use tokio::time;
 
     #[tokio::test]
     async fn a_taken_port_fails_instead_of_hanging() {
@@ -89,7 +95,7 @@ mod tests {
         let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = taken.local_addr().unwrap().port();
         let mut out = Output::new(Vec::new(), Vec::new());
-        let outcome = tokio::time::timeout(
+        let outcome = time::timeout(
             Duration::from_secs(10),
             serve(Config::default(), root.path(), port, &mut out),
         )

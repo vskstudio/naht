@@ -35,6 +35,11 @@ use tower::{BoxError, ServiceBuilder};
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::session::{Session, SessionError};
+use std::io;
+use tokio::net::TcpListener;
+use tokio::sync::MutexGuard;
+use tokio::task;
+use tokio::time;
 
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
 
@@ -90,11 +95,11 @@ impl AppState {
         F: FnOnce(&mut Session) -> T + Send + 'static,
     {
         let state = Arc::clone(self);
-        tokio::task::spawn_blocking(move || work(&mut state.session.blocking_lock())).await
+        task::spawn_blocking(move || work(&mut state.session.blocking_lock())).await
     }
 
     /// Lock the session for exclusive access. Used by the watcher to reconcile on a filesystem event.
-    pub async fn session_lock(&self) -> tokio::sync::MutexGuard<'_, Session> {
+    pub async fn session_lock(&self) -> MutexGuard<'_, Session> {
         self.session.lock().await
     }
 
@@ -140,7 +145,7 @@ async fn overload(error: BoxError) -> StatusCode {
 
 /// Serve `state` on an already-bound `listener` until the shutdown token is cancelled, then let
 /// in-flight requests finish.
-pub async fn serve(listener: tokio::net::TcpListener, state: Arc<AppState>) -> std::io::Result<()> {
+pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()> {
     let shutdown = state.shutdown.clone();
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown.cancelled_owned())
@@ -201,7 +206,7 @@ async fn patches(State(state): State<Arc<AppState>>, Query(query): Query<CursorQ
             return patch_batch(&session, cursor);
         }
     }
-    let _ = tokio::time::timeout(state.long_poll, notified).await;
+    let _ = time::timeout(state.long_poll, notified).await;
 
     let session = state.session.lock().await;
     patch_batch(&session, cursor)
@@ -247,7 +252,7 @@ async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQue
             return blob_batch(&session, cursor);
         }
     }
-    let _ = tokio::time::timeout(state.long_poll, notified).await;
+    let _ = time::timeout(state.long_poll, notified).await;
 
     let session = state.session.lock().await;
     blob_batch(&session, cursor)

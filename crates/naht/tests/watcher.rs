@@ -6,10 +6,15 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use naht::server;
 use naht::server::AppState;
 use naht::session::Session;
+use naht::watcher;
 use naht_core::reconciler::PatchKind;
 use naht_core::state::StateStore;
+use std::fs;
+use tokio::net::TcpListener;
+use tokio::time;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_new_file_becomes_a_queued_patch() {
@@ -19,19 +24,17 @@ async fn a_new_file_becomes_a_queued_patch() {
     let session = Session::new(root.clone(), store, "demo", None, true);
     let state = AppState::new(session, Duration::from_secs(1));
 
-    let _watcher = naht::watcher::spawn(&root, Arc::clone(&state)).unwrap();
+    let _watcher = watcher::spawn(&root, Arc::clone(&state)).unwrap();
 
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .await
-        .unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     tokio::spawn({
         let state = Arc::clone(&state);
         async move {
-            let _ = naht::server::serve(listener, state).await;
+            let _ = server::serve(listener, state).await;
         }
     });
 
-    std::fs::write(root.join("Watched.luau"), "return 7").unwrap();
+    fs::write(root.join("Watched.luau"), "return 7").unwrap();
 
     let mut found = None;
     for _ in 0..100 {
@@ -43,7 +46,7 @@ async fn a_new_file_becomes_a_queued_patch() {
                 break;
             }
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
     }
 
     let patch = found.expect("the watcher should have queued a patch for the new file");

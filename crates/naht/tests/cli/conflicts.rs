@@ -4,14 +4,15 @@ use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
 
 use super::support::one;
+use std::fs;
 
 #[test]
 fn status_and_resolve_reflect_the_conflict_state() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
-    std::fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
     let rel = "src/m.luau";
-    std::fs::write(root.join("src").join("m.luau"), "local a = 1\n").unwrap();
+    fs::write(root.join("src").join("m.luau"), "local a = 1\n").unwrap();
 
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     let mut vfs = RootedVfs::new(root.clone(), DiskVfs::new());
@@ -37,7 +38,7 @@ fn status_and_resolve_reflect_the_conflict_state() {
     commands::status(&root).unwrap();
 
     assert!(commands::resolve(&root, rel).is_err());
-    std::fs::write(root.join("src").join("m.luau"), "local a = 99\n").unwrap();
+    fs::write(root.join("src").join("m.luau"), "local a = 99\n").unwrap();
     commands::resolve(&root, rel).unwrap();
 
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();

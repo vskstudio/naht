@@ -3,6 +3,7 @@ use naht_core::reconciler::{Direction, PatchKind};
 use reqwest::StatusCode;
 
 use super::support::Harness;
+use std::fs;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fs_change_appears_via_patches() {
@@ -67,7 +68,7 @@ async fn post_changes_rejects_symlink_paths_that_escape_the_project_root() {
         "outside-link-{}",
         h.root.file_name().unwrap().to_string_lossy()
     ));
-    std::fs::write(&outside, "original").unwrap();
+    fs::write(&outside, "original").unwrap();
     symlink(&outside, h.root.join("linked.luau")).unwrap();
 
     let status = h
@@ -79,7 +80,7 @@ async fn post_changes_rejects_symlink_paths_that_escape_the_project_root() {
         .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(std::fs::read_to_string(outside).unwrap(), "original");
+    assert_eq!(fs::read_to_string(outside).unwrap(), "original");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
