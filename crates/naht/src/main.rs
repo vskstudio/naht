@@ -129,9 +129,9 @@ async fn main() -> ExitCode {
     exit.into()
 }
 
-async fn dispatch<Out: Write, Err: Write>(
+async fn dispatch<Stdout: Write, Stderr: Write>(
     command: Command,
-    out: &mut Output<Out, Err>,
+    out: &mut Output<Stdout, Stderr>,
 ) -> Result<(), Failure> {
     match command {
         Command::Init { path, from_rojo } => {
