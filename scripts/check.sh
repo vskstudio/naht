@@ -17,5 +17,5 @@ run cargo fmt --all --check
 run cargo clippy --locked --workspace --all-targets -- -D warnings
 run cargo test --locked --workspace
 RUSTDOCFLAGS="-D warnings" run cargo doc --locked --workspace --no-deps
-run cargo deny check advisories bans licenses sources
+run cargo deny check
 run cargo machete

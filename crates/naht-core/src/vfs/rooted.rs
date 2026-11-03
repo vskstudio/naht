@@ -62,7 +62,10 @@ impl<V: Vfs> RootedVfs<V> {
     ///
     /// Returns [`VfsError`] when `path` escapes the root or cannot be checked.
     pub fn validate_path(&self, path: &str) -> Result<(), VfsError> {
-        validate_project_path(path).map_err(|error| VfsError::InvalidPath(error.to_string()))?;
+        validate_project_path(path).map_err(|source| VfsError::Malformed {
+            path: path.to_owned(),
+            source,
+        })?;
         self.checked_absolute(Path::new(path)).map(|_| ())
     }
 
