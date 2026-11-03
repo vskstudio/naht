@@ -155,7 +155,7 @@ fn a_frozen_path_is_skipped_on_the_next_reconcile() {
     )
     .unwrap();
     assert!(patches.is_empty());
-    assert_eq!(status(&store).unwrap().conflicted, vec!["m".to_string()]);
+    assert_eq!(status(&store).unwrap().conflicted, vec!["m".to_owned()]);
 }
 
 #[test]

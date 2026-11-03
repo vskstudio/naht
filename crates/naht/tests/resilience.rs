@@ -75,8 +75,8 @@ fn an_unacked_patch_holds_the_base_so_a_racing_studio_edit_merges_not_clobbers()
     session
         .apply_changes(vec![Change::Upsert {
             path,
-            class: "ModuleScript".to_string(),
-            content: "a\nb\nC\n".to_string(),
+            class: "ModuleScript".to_owned(),
+            content: "a\nb\nC\n".to_owned(),
         }])
         .unwrap();
 

@@ -23,9 +23,9 @@ async fn activity_reports_a_push_event_after_ack() {
 async fn activity_reports_a_pull_event_after_a_studio_change() {
     let h = Harness::start(None).await;
     h.post_changes(vec![Change::Upsert {
-        path: "New.luau".to_string(),
-        class: "ModuleScript".to_string(),
-        content: "return 5".to_string(),
+        path: "New.luau".to_owned(),
+        class: "ModuleScript".to_owned(),
+        content: "return 5".to_owned(),
     }])
     .await;
 

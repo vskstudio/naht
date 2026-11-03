@@ -229,8 +229,7 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
 fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, Rejection> {
     for change in &batch.changes {
         let path = match change {
-            naht_core::protocol::Change::Upsert { path, .. }
-            | naht_core::protocol::Change::Delete { path } => path,
+            protocol::Change::Upsert { path, .. } | protocol::Change::Delete { path } => path,
         };
         session.validate_path(path)?;
     }

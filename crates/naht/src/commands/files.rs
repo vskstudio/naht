@@ -63,5 +63,5 @@ pub(super) fn dir_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("naht")
-        .to_string()
+        .to_owned()
 }

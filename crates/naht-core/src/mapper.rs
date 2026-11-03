@@ -116,10 +116,10 @@ fn script_snapshot(
     let bytes = vfs.read(path)?;
     let body = String::from_utf8(bytes).map_err(|_| MapError::NonUtf8(path.to_path_buf()))?;
     let (mut properties, source) = frontmatter::split(&body)?;
-    properties.insert(SOURCE_PROPERTY.to_string(), Variant::String(source));
+    properties.insert(SOURCE_PROPERTY.to_owned(), Variant::String(source));
     Ok(Snapshot {
-        name: name.to_string(),
-        class: class.to_string(),
+        name: name.to_owned(),
+        class: class.to_owned(),
         properties,
         children: Vec::new(),
     })
@@ -147,7 +147,7 @@ pub(crate) fn script_class(file_name: &str) -> Option<(&'static str, String)> {
         if let Some(stem) = file_name.strip_suffix(suffix)
             && !stem.is_empty()
         {
-            return Some((class, stem.to_string()));
+            return Some((class, stem.to_owned()));
         }
     }
     None
@@ -181,7 +181,7 @@ fn init_file_name(class: &str) -> &'static str {
 fn file_name(path: &Path) -> Result<String, MapError> {
     path.file_name()
         .and_then(|n| n.to_str())
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .ok_or_else(|| MapError::NoFileName(path.to_path_buf()))
 }
 
@@ -284,19 +284,19 @@ mod tests {
         use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Vector3};
 
         let mut attributes = Attributes::new();
-        attributes.insert("Health".to_string(), Variant::Float64(100.0));
-        attributes.insert("Title".to_string(), Variant::String("hero".to_string()));
+        attributes.insert("Health".to_owned(), Variant::Float64(100.0));
+        attributes.insert("Title".to_owned(), Variant::String("hero".to_owned()));
 
         let project = Snapshot::new("Folder", "proj").with_child(
             Snapshot::new("ModuleScript", "Config")
-                .with_property(SOURCE_PROPERTY, Variant::String("return {}".to_string()))
+                .with_property(SOURCE_PROPERTY, Variant::String("return {}".to_owned()))
                 .with_property("Color", Variant::Color3(Color3::new(0.1, 0.5, 0.9)))
                 .with_property("Position", Variant::Vector3(Vector3::new(1.0, 2.0, 3.0)))
                 .with_property("Material", Variant::Enum(Enum::from_u32(256)))
                 .with_property("Attributes", Variant::Attributes(attributes))
                 .with_property(
                     "Tags",
-                    Variant::Tags(Tags::from(vec!["combat".to_string(), "npc".to_string()])),
+                    Variant::Tags(Tags::from(vec!["combat".to_owned(), "npc".to_owned()])),
                 ),
         );
 

@@ -38,7 +38,7 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, Wat
                     return;
                 }
                 tracing::debug!(target: "naht::watcher", batch = project_events, "filesystem batch");
-                let state = state.clone();
+                let state = Arc::clone(&state);
                 let tasks = state.tasks().clone();
                 tasks.spawn_on(
                     async move {

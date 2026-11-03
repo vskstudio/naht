@@ -100,10 +100,10 @@ pub(super) fn patch(
     content: Option<&str>,
 ) -> Patch {
     Patch {
-        path: path.to_string(),
-        class: class.to_string(),
+        path: path.to_owned(),
+        class: class.to_owned(),
         direction,
         kind,
-        content: content.map(ToString::to_string),
+        content: content.map(str::to_owned),
     }
 }

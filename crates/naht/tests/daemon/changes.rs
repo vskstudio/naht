@@ -27,9 +27,9 @@ async fn post_changes_writes_the_file() {
 
     let status = h
         .post_changes(vec![Change::Upsert {
-            path: "New.luau".to_string(),
-            class: "ModuleScript".to_string(),
-            content: "return 5".to_string(),
+            path: "New.luau".to_owned(),
+            class: "ModuleScript".to_owned(),
+            content: "return 5".to_owned(),
         }])
         .await;
 
@@ -48,8 +48,8 @@ async fn post_changes_rejects_paths_that_escape_the_project_root() {
     let status = h
         .post_changes(vec![Change::Upsert {
             path: format!("../{sentinel}"),
-            class: "ModuleScript".to_string(),
-            content: "return 5".to_string(),
+            class: "ModuleScript".to_owned(),
+            content: "return 5".to_owned(),
         }])
         .await;
 
@@ -72,9 +72,9 @@ async fn post_changes_rejects_symlink_paths_that_escape_the_project_root() {
 
     let status = h
         .post_changes(vec![Change::Upsert {
-            path: "linked.luau".to_string(),
-            class: "ModuleScript".to_string(),
-            content: "overwritten".to_string(),
+            path: "linked.luau".to_owned(),
+            class: "ModuleScript".to_owned(),
+            content: "overwritten".to_owned(),
         }])
         .await;
 
@@ -93,9 +93,9 @@ async fn conflicting_change_over_the_wire_writes_markers_and_freezes() {
     h.write("m.luau", "local a = 11\n");
     let status = h
         .post_changes(vec![Change::Upsert {
-            path: "m.luau".to_string(),
-            class: "ModuleScript".to_string(),
-            content: "local a = 22\n".to_string(),
+            path: "m.luau".to_owned(),
+            class: "ModuleScript".to_owned(),
+            content: "local a = 22\n".to_owned(),
         }])
         .await;
     assert!(status.is_success());
@@ -139,7 +139,7 @@ async fn a_half_acked_batch_re_emits_only_the_unacked_path() {
     let first = h.patches(0).await;
     assert_eq!(first.patches.len(), 2);
 
-    assert!(h.ack(vec!["A.luau".to_string()]).await.is_success());
+    assert!(h.ack(vec!["A.luau".to_owned()]).await.is_success());
 
     h.info(None).await;
     let again = h.patches(first.cursor).await;

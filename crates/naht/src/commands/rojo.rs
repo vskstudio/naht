@@ -81,7 +81,7 @@ fn collect_tree_nodes(
         let leaf = instance.rsplit('/').next().unwrap_or(&instance);
         let class = match object.get("$className").and_then(|v| v.as_str()) {
             Some(class) if class == leaf || class == "Folder" => None,
-            Some(class) => Some(class.to_string()),
+            Some(class) => Some(class.to_owned()),
             None => None,
         };
         let mut properties = std::collections::BTreeMap::new();
@@ -157,13 +157,13 @@ pub(super) fn render_rojo_config(
     let mut doc = toml::Table::new();
 
     let mut project = toml::Table::new();
-    project.insert("name".to_string(), toml::Value::String(name.to_string()));
-    doc.insert("project".to_string(), toml::Value::Table(project));
+    project.insert("name".to_owned(), toml::Value::String(name.to_owned()));
+    doc.insert("project".to_owned(), toml::Value::Table(project));
 
     if let Some(id) = place_id {
         let mut serve = toml::Table::new();
-        serve.insert("place_id".to_string(), toml::Value::Integer(id as i64));
-        doc.insert("serve".to_string(), toml::Value::Table(serve));
+        serve.insert("place_id".to_owned(), toml::Value::Integer(id as i64));
+        doc.insert("serve".to_owned(), toml::Value::Table(serve));
     }
 
     if !nodes.is_empty() {
@@ -172,23 +172,23 @@ pub(super) fn render_rojo_config(
             .map(|node| {
                 let mut entry = toml::Table::new();
                 entry.insert(
-                    "instance".to_string(),
+                    "instance".to_owned(),
                     toml::Value::String(node.instance.clone()),
                 );
                 if let Some(path) = &node.path {
-                    entry.insert("path".to_string(), toml::Value::String(path.clone()));
+                    entry.insert("path".to_owned(), toml::Value::String(path.clone()));
                 }
                 if let Some(class) = &node.class {
-                    entry.insert("class".to_string(), toml::Value::String(class.clone()));
+                    entry.insert("class".to_owned(), toml::Value::String(class.clone()));
                 }
                 if !node.properties.is_empty() {
                     let props: toml::Table = node.properties.clone().into_iter().collect();
-                    entry.insert("properties".to_string(), toml::Value::Table(props));
+                    entry.insert("properties".to_owned(), toml::Value::Table(props));
                 }
                 toml::Value::Table(entry)
             })
             .collect();
-        doc.insert("tree".to_string(), toml::Value::Array(entries));
+        doc.insert("tree".to_owned(), toml::Value::Array(entries));
     }
 
     toml::to_string(&doc).map_err(CommandError::RenderConfig)
@@ -223,7 +223,7 @@ pub(super) fn assemble_project_snapshot(
     for node in &config.tree {
         let segments: Vec<&str> = node.instance.split('/').filter(|s| !s.is_empty()).collect();
         let Some((leaf, parents)) = segments.split_last() else {
-            warnings.push("a [[tree]] entry has an empty `instance`; skipped".to_string());
+            warnings.push("a [[tree]] entry has an empty `instance`; skipped".to_owned());
             continue;
         };
 
@@ -237,11 +237,11 @@ pub(super) fn assemble_project_snapshot(
                             source,
                         }
                     })?;
-                from.name = (*leaf).to_string();
+                from.name = (*leaf).to_owned();
                 from
             }
             None => Snapshot::new(
-                node.class.clone().unwrap_or_else(|| "Folder".to_string()),
+                node.class.clone().unwrap_or_else(|| "Folder".to_owned()),
                 *leaf,
             ),
         };

@@ -270,7 +270,7 @@ fn read_meta_i64(conn: &Connection, key: &str) -> Result<Option<i64>, StateError
             .parse::<i64>()
             .map(Some)
             .map_err(|_| StateError::CorruptMeta {
-                key: key.to_string(),
+                key: key.to_owned(),
                 value: text,
             }),
     }
@@ -282,10 +282,10 @@ mod tests {
 
     fn text_record(guid: &str) -> InstanceRecord {
         InstanceRecord {
-            guid: guid.to_string(),
-            path: "src/Greeter.luau".to_string(),
-            class: "ModuleScript".to_string(),
-            content_hash: "abc123".to_string(),
+            guid: guid.to_owned(),
+            path: "src/Greeter.luau".to_owned(),
+            class: "ModuleScript".to_owned(),
+            content_hash: "abc123".to_owned(),
             base_content: Some(b"return 1".to_vec()),
             mtime: 1_700_000_000,
             conflicted: false,
@@ -297,10 +297,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join(".naht").join("state.db");
         let record = text_record("guid-1");
-        {
-            let store = StateStore::open(&db).unwrap();
-            store.upsert(&record).unwrap();
-        }
+        let store = StateStore::open(&db).unwrap();
+        store.upsert(&record).unwrap();
+        drop(store);
         let reopened = StateStore::open(&db).unwrap();
         assert_eq!(reopened.get("guid-1").unwrap(), Some(record));
     }
@@ -310,7 +309,7 @@ mod tests {
         let store = StateStore::open_in_memory().unwrap();
         store.upsert(&text_record("g")).unwrap();
         let mut updated = text_record("g");
-        updated.content_hash = "def456".to_string();
+        updated.content_hash = "def456".to_owned();
         updated.base_content = Some(b"return 2".to_vec());
         store.upsert(&updated).unwrap();
         assert_eq!(store.get("g").unwrap(), Some(updated));
@@ -355,10 +354,10 @@ mod tests {
     fn binary_instances_store_no_base_content() {
         let store = StateStore::open_in_memory().unwrap();
         let binary = InstanceRecord {
-            guid: "mesh".to_string(),
-            path: "Model.rbxm".to_string(),
-            class: "Model".to_string(),
-            content_hash: "hash-only".to_string(),
+            guid: "mesh".to_owned(),
+            path: "Model.rbxm".to_owned(),
+            class: "Model".to_owned(),
+            content_hash: "hash-only".to_owned(),
             base_content: None,
             mtime: 1,
             conflicted: false,
@@ -380,6 +379,6 @@ mod tests {
         let store = StateStore::open_in_memory().unwrap();
         assert_eq!(store.project_id().unwrap(), None);
         store.set_project_id("proj-42").unwrap();
-        assert_eq!(store.project_id().unwrap(), Some("proj-42".to_string()));
+        assert_eq!(store.project_id().unwrap(), Some("proj-42".to_owned()));
     }
 }

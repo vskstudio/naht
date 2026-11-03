@@ -206,10 +206,10 @@ fn advance(
 
 fn record(path: &str, class: &str, hash: &str, conflicted: bool) -> InstanceRecord {
     InstanceRecord {
-        guid: path.to_string(),
-        path: path.to_string(),
-        class: class.to_string(),
-        content_hash: hash.to_string(),
+        guid: path.to_owned(),
+        path: path.to_owned(),
+        class: class.to_owned(),
+        content_hash: hash.to_owned(),
         base_content: None,
         mtime: 0,
         conflicted,

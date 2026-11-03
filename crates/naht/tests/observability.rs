@@ -49,7 +49,7 @@ fn a_sync_emits_exactly_one_info_patch_event() {
     let mut session = Session::new(root, store, "demo", None, true);
 
     let capture = Capture::default();
-    let events = capture.0.clone();
+    let events = Arc::clone(&capture.0);
     let subscriber = tracing_subscriber::registry().with(capture);
     tracing::subscriber::with_default(subscriber, || {
         session.rescan().unwrap();

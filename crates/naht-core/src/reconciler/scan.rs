@@ -48,5 +48,5 @@ fn scan_into(
 }
 
 pub(super) fn decode(path: &str, bytes: &[u8]) -> Result<String, ReconcileError> {
-    String::from_utf8(bytes.to_vec()).map_err(|_| ReconcileError::NonUtf8(path.to_string()))
+    String::from_utf8(bytes.to_vec()).map_err(|_| ReconcileError::NonUtf8(path.to_owned()))
 }

@@ -3,6 +3,7 @@
 //! so it polls with a generous timeout rather than asserting on a fixed delay.
 
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use naht::server::AppState;
@@ -18,13 +19,13 @@ async fn a_new_file_becomes_a_queued_patch() {
     let session = Session::new(root.clone(), store, "demo", None, true);
     let state = AppState::new(session, Duration::from_secs(1));
 
-    let _watcher = naht::watcher::spawn(&root, state.clone()).unwrap();
+    let _watcher = naht::watcher::spawn(&root, Arc::clone(&state)).unwrap();
 
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
     tokio::spawn({
-        let state = state.clone();
+        let state = Arc::clone(&state);
         async move {
             let _ = naht::server::serve(listener, state).await;
         }

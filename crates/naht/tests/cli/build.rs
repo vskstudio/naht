@@ -23,8 +23,8 @@ fn build_produces_a_reloadable_model() {
         .iter()
         .map(|r| dom.get_by_ref(*r).unwrap().name.clone())
         .collect();
-    assert!(names.contains(&"src".to_string()));
-    assert!(!names.contains(&".naht".to_string()));
+    assert!(names.contains(&"src".to_owned()));
+    assert!(!names.contains(&".naht".to_owned()));
 }
 
 #[test]
@@ -48,9 +48,9 @@ fn build_place_maps_top_level_dirs_to_services() {
     let place = dir.path().join("game.rbxl");
     commands::build(&root, &place).unwrap();
     let classes = root_classes(&read_place(&place));
-    assert!(classes.contains(&"ServerScriptService".to_string()));
-    assert!(classes.contains(&"ReplicatedStorage".to_string()));
-    assert!(classes.contains(&"Workspace".to_string()));
+    assert!(classes.contains(&"ServerScriptService".to_owned()));
+    assert!(classes.contains(&"ReplicatedStorage".to_owned()));
+    assert!(classes.contains(&"Workspace".to_owned()));
 
     let model = dir.path().join("game.rbxm");
     commands::build(&root, &model).unwrap();
@@ -77,7 +77,7 @@ fn build_watch_rebuilds_the_output_on_change() {
     let mut rebuilt = false;
     for _ in 0..100 {
         if let Ok(bytes) = std::fs::read(&output)
-            && let Ok(dom) = rbx_binary::from_reader(&bytes[..])
+            && let Ok(dom) = rbx_binary::from_reader(bytes.as_slice())
         {
             let src = dom
                 .root()
@@ -116,8 +116,8 @@ fn cli_place_build_root_is_a_data_model() {
 
     assert_eq!(dom.get_by_ref(dom.root_ref()).unwrap().class, "DataModel");
     let classes = root_classes(&dom);
-    assert!(classes.contains(&"ReplicatedStorage".to_string()));
-    assert!(classes.contains(&"Workspace".to_string()));
+    assert!(classes.contains(&"ReplicatedStorage".to_owned()));
+    assert!(classes.contains(&"Workspace".to_owned()));
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn assets_disabled_build_is_byte_identical_and_rewrites_nothing() {
     let mut snapshot = Snapshot::new("Folder", "proj").with_child(
         Snapshot::new("MeshPart", "Rock").with_property(
             "MeshId",
-            rbx_dom_weak::types::Variant::String("meshes/rock.obj".to_string()),
+            rbx_dom_weak::types::Variant::String("meshes/rock.obj".to_owned()),
         ),
     );
     commands::resolve_assets(&root, &mut snapshot).unwrap();
@@ -148,7 +148,7 @@ fn assets_disabled_build_is_byte_identical_and_rewrites_nothing() {
     assert_eq!(
         rock.properties.get("MeshId"),
         Some(&rbx_dom_weak::types::Variant::String(
-            "meshes/rock.obj".to_string()
+            "meshes/rock.obj".to_owned()
         )),
         "assets disabled must not rewrite the reference"
     );

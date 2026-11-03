@@ -39,7 +39,7 @@ impl Session {
     pub fn info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: PROTOCOL_VERSION,
-            server_version: naht_core::version().to_string(),
+            server_version: naht_core::version().to_owned(),
             project_name: self.project_name.clone(),
             session_id: self.session_id.clone(),
             serve_place_id: self.serve_place_id,

@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert_eq!(
             warnings[0].reason,
-            Reason::LockedProperty("HttpEnabled".to_string())
+            Reason::LockedProperty("HttpEnabled".to_owned())
         );
         assert!(warnings[0].message().contains("Game Settings"));
     }

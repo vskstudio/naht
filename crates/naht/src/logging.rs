@@ -24,7 +24,7 @@ fn resolve_directive(verbose: u8, naht_log: Option<String>, rust_log: Option<Str
         1 => "debug",
         _ => "trace",
     }
-    .to_string()
+    .to_owned()
 }
 
 /// Install the global tracing subscriber, writing to stderr. Idempotent in practice, called once
@@ -58,15 +58,15 @@ mod tests {
     #[test]
     fn env_filter_overrides_verbosity() {
         assert_eq!(
-            resolve_directive(2, Some("naht=warn".to_string()), None),
+            resolve_directive(2, Some("naht=warn".to_owned()), None),
             "naht=warn"
         );
         assert_eq!(
-            resolve_directive(0, None, Some("debug".to_string())),
+            resolve_directive(0, None, Some("debug".to_owned())),
             "debug"
         );
         assert_eq!(
-            resolve_directive(0, Some("trace".to_string()), Some("warn".to_string())),
+            resolve_directive(0, Some("trace".to_owned()), Some("warn".to_owned())),
             "trace"
         );
     }

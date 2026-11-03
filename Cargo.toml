@@ -46,6 +46,8 @@ redundant_lifetimes = "warn"
 trivial_casts = "warn"
 trivial_numeric_casts = "warn"
 unused_lifetimes = "warn"
+unused_qualifications = "warn"
+redundant_imports = "warn"
 
 [workspace.lints.rustdoc]
 missing_crate_level_docs = "warn"
@@ -66,6 +68,10 @@ correctness = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
+str_to_string = "warn"
+deref_by_slicing = "warn"
+clone_on_ref_ptr = "warn"
+semicolon_outside_block = "warn"
 
 [profile.release]
 lto = "thin"

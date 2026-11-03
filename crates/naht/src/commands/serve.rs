@@ -10,6 +10,7 @@ use naht_core::vfs::DiskVfs;
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 const LONG_POLL: Duration = Duration::from_secs(25);
@@ -53,7 +54,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         .tasks()
         .spawn(crate::shutdown::cancel_on_signal(state.shutdown().clone()));
 
-    let watcher = crate::watcher::spawn(&root, state.clone())?;
+    let watcher = crate::watcher::spawn(&root, Arc::clone(&state))?;
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let listener = tokio::net::TcpListener::bind(addr)
@@ -65,7 +66,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         root.display()
     ))
     .map_err(CommandError::Output)?;
-    let served = crate::server::serve(listener, state.clone())
+    let served = crate::server::serve(listener, Arc::clone(&state))
         .await
         .map_err(CommandError::Serve);
     state.shutdown().cancel();
