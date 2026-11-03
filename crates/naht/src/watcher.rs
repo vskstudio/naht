@@ -83,8 +83,10 @@ mod tests {
     use notify_debouncer_full::notify::event::{AccessKind, AccessMode};
 
     use super::*;
+    use crate::commands;
     use crate::config::Config;
     use crate::session::Session;
+    use tokio::time;
 
     fn event_at(path: &str) -> DebouncedEvent {
         event_of(EventKind::Any, path)
@@ -108,7 +110,7 @@ mod tests {
     async fn an_idle_daemon_emits_no_batch() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        crate::commands::init(&root, false).unwrap();
+        commands::init(&root, false).unwrap();
         let config = Config::load(&root).unwrap();
         let store = StateStore::open(&root.join(INTERNAL_DIR).join("state.db")).unwrap();
         let session = Session::new(
@@ -120,10 +122,10 @@ mod tests {
         );
         let state = AppState::new(session, Duration::from_secs(1));
         state.session_lock().await.rescan().unwrap();
-        let _watch = spawn(&root, state.clone()).unwrap();
+        let _watch = spawn(&root, Arc::clone(&state)).unwrap();
         state.session_lock().await.rescan().unwrap();
         let (cursor, _) = state.session_lock().await.take_patches(0);
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        time::sleep(Duration::from_secs(1)).await;
         let (after, _) = state.session_lock().await.take_patches(0);
         assert_eq!(cursor, after);
     }
