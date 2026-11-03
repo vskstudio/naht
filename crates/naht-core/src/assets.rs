@@ -3,7 +3,7 @@
 //!
 //! `naht-core` defines the [`AssetUploader`] interface and the **upload-once, cache-by-hash** policy;
 //! it does no network I/O itself (the real Open Cloud client lives in the `naht` binary). Disabled by
-//! default — when off, properties keep their original values, so behavior is unchanged.
+//! default. When off, properties keep their original values, so behavior is unchanged.
 
 use std::path::Path;
 
@@ -38,7 +38,7 @@ pub enum AssetError {
 
 /// Resolve a local asset blob to an asset id, uploading it **once** and caching the result by content
 /// hash. An unchanged blob (same hash) is served from the cache without re-uploading. An upload
-/// failure surfaces here and pauses only this asset — the caller keeps syncing everything else.
+/// failure surfaces here and pauses only this asset, so the caller keeps syncing everything else.
 pub fn resolve_asset(
     uploader: &dyn AssetUploader,
     store: &StateStore,
@@ -65,8 +65,7 @@ pub fn resolve_asset_ref(
     vfs: &impl Vfs,
     value: &str,
 ) -> Result<Option<String>, AssetError> {
-    // Already an asset reference, or plainly not a local path — leave it untouched.
-    if value.starts_with("rbxassetid://") || value.contains("://") {
+    if is_already_resolved(value) {
         return Ok(None);
     }
     let path = Path::new(value);
@@ -78,10 +77,14 @@ pub fn resolve_asset_ref(
     Ok(Some(resolve_asset(uploader, store, name, &content)?))
 }
 
+fn is_already_resolved(value: &str) -> bool {
+    value.starts_with("rbxassetid://") || value.contains("://")
+}
+
 /// One asset property that could not be resolved, so it was left at its original reference.
 ///
 /// A failed upload (architecture §8) pauses **only** that property's path; the rest of the snapshot
-/// is still rewritten. The caller surfaces these — and, in a live session, pauses the named paths.
+/// is still rewritten. The caller surfaces these and, in a live session, pauses the named paths.
 #[derive(Debug)]
 pub struct AssetFailure {
     /// The instance path, by name, from the scanned root (e.g. `Model/Rock`).
@@ -93,8 +96,8 @@ pub struct AssetFailure {
 }
 
 /// Walk a snapshot and rewrite every string property that references a local asset file to its
-/// uploaded asset id (uploading once, cached). Properties that are already asset ids — or aren't
-/// local files — are left untouched. The build/sync pipeline calls this when `[assets]` is enabled.
+/// uploaded asset id (uploading once, cached). Properties that are already asset ids, or are not
+/// local files, are left untouched. The build/sync pipeline calls this when `[assets]` is enabled.
 ///
 /// A single asset that fails to resolve does **not** abort the walk (architecture §8): that property
 /// is left at its original reference and recorded in the returned failures, while every other asset
@@ -121,7 +124,6 @@ fn rewrite_into(
     failures: &mut Vec<AssetFailure>,
 ) {
     for (key, value) in snapshot.properties.iter_mut() {
-        // A script's source is code, not an asset reference — never upload it.
         if key == SOURCE_PROPERTY {
             continue;
         }
@@ -129,8 +131,6 @@ fn rewrite_into(
             match resolve_asset_ref(uploader, store, vfs, text) {
                 Ok(Some(asset_id)) => *value = Variant::String(asset_id),
                 Ok(None) => {}
-                // Pause only this property's path: leave the reference as-is and record the error,
-                // so the siblings below still get uploaded.
                 Err(error) => failures.push(AssetFailure {
                     path: path.clone(),
                     property: key.clone(),
@@ -150,8 +150,6 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
-    /// A fake uploader: hands out sequential ids, counts uploads per name, and can be set to fail —
-    /// either every upload (`fail`) or only an asset with a given name (`fail_on`).
     #[derive(Default)]
     struct FakeUploader {
         uploads: RefCell<Vec<String>>,
@@ -176,7 +174,6 @@ mod tests {
         let uploader = FakeUploader::default();
 
         let first = resolve_asset(&uploader, &store, "mesh.obj", b"mesh-bytes").unwrap();
-        // Resolving the same content again must hit the cache, not re-upload.
         let second = resolve_asset(&uploader, &store, "mesh.obj", b"mesh-bytes").unwrap();
 
         assert_eq!(first, "rbxassetid://1");
@@ -207,12 +204,10 @@ mod tests {
         };
         let working = FakeUploader::default();
 
-        // One asset's upload fails — surfaced as an error, nothing cached for it.
         let failed = resolve_asset(&failing, &store, "broken.obj", b"x");
         assert!(matches!(failed, Err(AssetError::Upload(_))));
         assert!(store.cached_asset(&content_hash(b"x")).unwrap().is_none());
 
-        // A different asset still resolves fine — the failure didn't block the rest.
         let ok = resolve_asset(&working, &store, "fine.obj", b"y").unwrap();
         assert_eq!(ok, "rbxassetid://1");
     }
@@ -224,11 +219,9 @@ mod tests {
         let uploader = FakeUploader::default();
         let vfs = MemoryVfs::new().with_file("meshes/rock.obj", "obj-bytes");
 
-        // A local file is uploaded and the caller gets an asset id to write back.
         let resolved = resolve_asset_ref(&uploader, &store, &vfs, "meshes/rock.obj").unwrap();
         assert_eq!(resolved.as_deref(), Some("rbxassetid://1"));
 
-        // An existing asset id is left untouched; a path with no file is left untouched.
         assert_eq!(
             resolve_asset_ref(&uploader, &store, &vfs, "rbxassetid://42").unwrap(),
             None
@@ -262,7 +255,6 @@ mod tests {
             snapshot.properties.get("MeshId"),
             Some(&Variant::String("rbxassetid://1".to_string()))
         );
-        // A non-asset string property is untouched.
         assert_eq!(
             snapshot.properties.get("Name"),
             Some(&Variant::String("Rock".to_string()))
@@ -273,7 +265,6 @@ mod tests {
     fn a_failing_asset_is_isolated_while_its_siblings_still_upload() {
         use crate::vfs::MemoryVfs;
         let store = StateStore::open_in_memory().unwrap();
-        // The uploader fails only on `a.obj`; `b.obj` and `c.obj` upload fine.
         let uploader = FakeUploader {
             fail_on: Some("a.obj".to_string()),
             ..Default::default()
@@ -301,7 +292,6 @@ mod tests {
                 .and_then(|c| c.properties.get("MeshId"))
                 .cloned()
         };
-        // A keeps its original reference; B and C were rewritten to uploaded ids.
         assert_eq!(mesh_id("A"), Some(Variant::String("a.obj".to_string())));
         assert_eq!(
             mesh_id("B"),
@@ -312,13 +302,11 @@ mod tests {
             Some(Variant::String("rbxassetid://2".to_string()))
         );
 
-        // The one failure is reported against A's path and property, and is an upload error.
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].path, "Root/A");
         assert_eq!(failures[0].property, "MeshId");
         assert!(matches!(failures[0].error, AssetError::Upload(_)));
 
-        // The failure didn't skip any sibling: exactly the two good assets uploaded.
         assert_eq!(uploader.uploads.borrow().len(), 2);
     }
 }

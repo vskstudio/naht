@@ -13,6 +13,7 @@ run() {
 
 run cargo fmt --all --check
 ./scripts/check-file-size.sh
+./scripts/check-no-comments.sh
 run cargo clippy --locked --workspace --all-targets -- -D warnings
 run cargo test --locked --workspace
 RUSTDOCFLAGS="-D warnings" run cargo doc --locked --workspace --no-deps

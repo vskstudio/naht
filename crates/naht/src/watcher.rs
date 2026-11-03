@@ -20,7 +20,6 @@ use crate::server::AppState;
 #[error("cannot watch the project directory")]
 pub struct WatchError(#[from] notify::Error);
 
-/// How long to wait for a burst of filesystem events to settle before reconciling.
 const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// Start watching `root` recursively, reconciling into `state` on each debounced batch. The caller

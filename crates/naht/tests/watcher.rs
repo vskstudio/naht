@@ -20,7 +20,6 @@ async fn a_new_file_becomes_a_queued_patch() {
 
     let _watcher = naht::watcher::spawn(&root, state.clone()).unwrap();
 
-    // Bind the listener so the server is live, mirroring real use; the watcher is the unit under test.
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
@@ -33,7 +32,6 @@ async fn a_new_file_becomes_a_queued_patch() {
 
     std::fs::write(root.join("Watched.luau"), "return 7").unwrap();
 
-    // Wait up to ~5s for the debounced event to reconcile into a queued patch.
     let mut found = None;
     for _ in 0..100 {
         {

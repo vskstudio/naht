@@ -57,18 +57,24 @@ impl OpenCloudUploader {
 
 impl AssetUploader for OpenCloudUploader {
     fn upload(&self, name: &str, content: &[u8]) -> Result<String, AssetError> {
-        // Run the blocking request off the async runtime: reqwest::blocking panics if called from a
-        // runtime thread, so isolate it on a scoped thread.
-        std::thread::scope(|scope| {
-            match scope
-                .spawn(|| upload_blocking(&self.api_key, name, content))
-                .join()
-            {
-                Ok(result) => result,
-                Err(_) => Err(AssetError::Upload("upload thread panicked".to_string())),
-            }
-        })
+        upload_off_async_runtime(&self.api_key, name, content)
     }
+}
+
+fn upload_off_async_runtime(
+    api_key: &str,
+    name: &str,
+    content: &[u8],
+) -> Result<String, AssetError> {
+    std::thread::scope(|scope| {
+        match scope
+            .spawn(|| upload_blocking(api_key, name, content))
+            .join()
+        {
+            Ok(result) => result,
+            Err(_) => Err(AssetError::Upload("upload thread panicked".to_string())),
+        }
+    })
 }
 
 fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, AssetError> {
@@ -103,7 +109,6 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         .ok_or_else(|| AssetError::Upload("no asset id in the Open Cloud response".to_string()))
 }
 
-/// A coarse asset-type guess from the file extension; refined as more types are supported.
 fn asset_type(name: &str) -> &'static str {
     match name
         .rsplit('.')

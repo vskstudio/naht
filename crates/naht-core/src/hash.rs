@@ -1,7 +1,7 @@
 //! A small, stable content hash for change detection.
 //!
-//! FNV-1a (64-bit) is deterministic across runs — unlike `std`'s `DefaultHasher`, whose output is
-//! not stable — so a hash persisted in the state store still means the same thing after a restart.
+//! FNV-1a (64-bit) is deterministic across runs, unlike `std`'s `DefaultHasher`, whose output is
+//! not stable, so a hash persisted in the state store still means the same thing after a restart.
 //! This is a change-detection digest, not a cryptographic one.
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

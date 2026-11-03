@@ -1,4 +1,4 @@
-//! The instance snapshot tree — the in-memory shape a file tree maps to and from.
+//! The instance snapshot tree: the in-memory shape a file tree maps to and from.
 
 use std::collections::BTreeMap;
 

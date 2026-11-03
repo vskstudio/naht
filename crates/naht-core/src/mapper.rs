@@ -70,7 +70,6 @@ pub fn snapshot_dir(vfs: &impl Vfs, dir: &Path) -> Result<Snapshot, MapError> {
                 if let Some((class, child_name)) = script_class(file_name) {
                     snapshot.push_child(script_snapshot(vfs, &entry.path, class, &child_name)?);
                 }
-                // A non-source file is not a Roblox instance; skipping it is correct, not a drop.
             }
         }
     }
@@ -139,7 +138,6 @@ fn is_script(class: &str) -> bool {
     matches!(class, SCRIPT | LOCAL_SCRIPT | MODULE_SCRIPT)
 }
 
-/// Classify a non-init source file by suffix, returning its class and instance name.
 pub(crate) fn script_class(file_name: &str) -> Option<(&'static str, String)> {
     for (suffix, class) in [
         (".server.luau", SCRIPT),
@@ -285,9 +283,6 @@ mod tests {
     fn structured_properties_survive_fs_snapshot_fs_round_trip() {
         use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Vector3};
 
-        // The same value set the build leg covers (Stage 10 criterion 3), here through the *file*
-        // round-trip: a script's frontmatter properties survive snapshot → files → snapshot with
-        // value identity, not just isolated frontmatter parsing.
         let mut attributes = Attributes::new();
         attributes.insert("Health".to_string(), Variant::Float64(100.0));
         attributes.insert("Title".to_string(), Variant::String("hero".to_string()));
@@ -309,7 +304,6 @@ mod tests {
         write_tree(&mut dest, Path::new(""), &project).unwrap();
         let round_tripped = snapshot_dir(&dest, Path::new("proj")).unwrap();
 
-        // Whole-tree identity: every property came back with its exact typed value.
         assert_eq!(round_tripped, project);
     }
 }

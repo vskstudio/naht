@@ -1,6 +1,6 @@
 //! The wire protocol exchanged with the Studio plugin (architecture §7).
 //!
-//! Bodies are encoded as **MessagePack** — binary, compact, and decodable by a hand-written Luau
+//! Bodies are encoded as **MessagePack**: binary, compact, and decodable by a hand-written Luau
 //! library inside Studio. The types are plain `serde` structs so the encoding stays a swappable
 //! layer: nothing above this module names MessagePack. Field-named encoding (`to_vec_named`) keeps
 //! the wire self-describing, so the Luau side decodes by key rather than by positional offset.
@@ -96,7 +96,7 @@ pub struct Pong {
 pub enum EventKind {
     /// A text patch (source that is diffed/merged).
     Text,
-    /// A binary blob (synced opaquely — e.g. terrain).
+    /// A binary blob (synced opaquely, e.g. terrain).
     Blob,
 }
 
@@ -130,7 +130,7 @@ pub struct SyncEvent {
 /// caller's cursor. Read-only; polled by an external consumer to render live sync activity.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SyncActivity {
-    /// Text patches sent to Studio but not yet acked — the live in-flight FS→Studio set.
+    /// Text patches sent to Studio but not yet acked: the live in-flight FS→Studio set.
     pub pending: u32,
     /// The oldest `seq` still retained. The caller's next expected event is `since + 1`, so it has a
     /// gap (events evicted between polls) exactly when `since + 1 < buffer_start_seq`.
@@ -207,7 +207,6 @@ mod tests {
         use crate::binary::BlobPatch;
         use crate::reconciler::{Direction, PatchKind};
 
-        // Bytes that would corrupt under any text encoding: NUL, high bytes, the full 0..256 range.
         let blob: Vec<u8> = (0u16..600).map(|i| (i % 256) as u8).collect();
         let batch = BlobPatchBatch {
             cursor: 3,

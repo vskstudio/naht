@@ -19,14 +19,12 @@ fn an_atomic_save_yields_one_update_with_the_final_content() {
     let root = dir.path();
     let mut session = session(root);
 
-    // Establish the base: the file syncs, and the plugin applies and acks it (advancing the base).
     std::fs::write(root.join("src").join("A.luau"), "return 1").unwrap();
     session.rescan().unwrap();
     let (cursor, first) = session.take_patches(0);
     assert_eq!(first.len(), 1);
     session.ack(&[first[0].path.clone()]).unwrap();
 
-    // Atomic save: write a temp file, then rename it over the original.
     std::fs::write(root.join("src").join("A.luau.tmp"), "return 2").unwrap();
     std::fs::rename(
         root.join("src").join("A.luau.tmp"),
@@ -47,7 +45,6 @@ fn a_create_then_delete_before_reconcile_produces_no_patch() {
     let root = dir.path();
     let mut session = session(root);
 
-    // A transient file that is gone again before the (debounced) reconcile runs.
     std::fs::write(root.join("src").join("Temp.luau"), "return 0").unwrap();
     std::fs::remove_file(root.join("src").join("Temp.luau")).unwrap();
     session.rescan().unwrap();
@@ -66,20 +63,15 @@ fn an_unacked_patch_holds_the_base_so_a_racing_studio_edit_merges_not_clobbers()
     let mut session = session(root);
     let file = root.join("src").join("A.luau");
 
-    // Agreed base, applied and acked by the plugin.
     std::fs::write(&file, "a\nb\nc\n").unwrap();
     session.rescan().unwrap();
     let (_, first) = session.take_patches(0);
     let path = first[0].path.clone();
     session.ack(std::slice::from_ref(&path)).unwrap();
 
-    // The filesystem edits line 1, but the plugin never acks — so the base is held at the agreed
-    // content rather than jumping ahead to a change Studio hasn't seen.
     std::fs::write(&file, "A\nb\nc\n").unwrap();
     session.rescan().unwrap();
 
-    // Studio edits line 3 concurrently and pushes it. Because the base is still the common ancestor,
-    // this 3-way merges instead of overwriting the filesystem's line-1 change.
     session
         .apply_changes(vec![Change::Upsert {
             path,

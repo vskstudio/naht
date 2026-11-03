@@ -8,7 +8,6 @@ use std::collections::BTreeMap;
 
 use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Variant, Vector3};
 
-/// The directive prefix that marks a frontmatter line.
 const PREFIX: &str = "--!naht";
 
 /// Errors from parsing a frontmatter directive.
@@ -30,21 +29,24 @@ pub enum FrontmatterError {
 /// Returns the parsed properties (empty if there is no directive) and the remaining body with the
 /// directive line and its trailing newline removed.
 pub fn split(body: &str) -> Result<(BTreeMap<String, Variant>, String), FrontmatterError> {
-    let Some(rest) = body.strip_prefix(PREFIX) else {
+    let Some(rest) = directive_rest(body) else {
         return Ok((BTreeMap::new(), body.to_string()));
     };
-    // The prefix must be followed by whitespace; otherwise this is some other `--!...` comment
-    // (e.g. a hypothetical `--!nahtish`), not our directive, and the body is left untouched.
-    if !rest.starts_with(char::is_whitespace) {
-        return Ok((BTreeMap::new(), body.to_string()));
-    }
-    // The directive occupies the first line; the body is whatever follows the newline.
-    let (line, remainder) = match rest.split_once('\n') {
-        Some((line, remainder)) => (line, remainder.to_string()),
-        None => (rest, String::new()),
-    };
+    let (line, remainder) = split_directive_line(rest);
     let props = parse_table(line.trim())?;
     Ok((props, remainder))
+}
+
+fn directive_rest(body: &str) -> Option<&str> {
+    body.strip_prefix(PREFIX)
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+}
+
+fn split_directive_line(rest: &str) -> (&str, String) {
+    match rest.split_once('\n') {
+        Some((line, remainder)) => (line, remainder.to_string()),
+        None => (rest, String::new()),
+    }
 }
 
 /// Render properties as a frontmatter directive line (including its trailing newline), or `None`
@@ -91,8 +93,6 @@ fn parse_table(s: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError> {
     Ok(props)
 }
 
-/// Split on `delim`, but ignore delimiters inside double-quoted spans or nested `(...)`/`{...}`
-/// groups (so a `Color3(1, 0, 0)` or `Attributes({ A = 1 })` value survives intact).
 fn split_top_level(s: &str, delim: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -174,12 +174,10 @@ fn parse_value(s: &str) -> Result<Variant, FrontmatterError> {
     Err(FrontmatterError::BadValue(s.to_string()))
 }
 
-/// The inside of a `Name(...)` call, or `None` when `s` is not that call.
 fn call_args<'a>(s: &'a str, name: &str) -> Option<&'a str> {
     s.strip_prefix(name)?.strip_prefix('(')?.strip_suffix(')')
 }
 
-/// Parse exactly `N` comma-separated `f32`s from a constructor's arguments.
 fn floats<const N: usize>(whole: &str, args: &str) -> Result<[f32; N], FrontmatterError> {
     let parts = split_top_level(args, ',');
     let mut out = [0.0f32; N];
@@ -215,7 +213,6 @@ fn render_value(value: &Variant) -> String {
     match value {
         Variant::Bool(b) => b.to_string(),
         Variant::Int64(i) => i.to_string(),
-        // `{:?}` keeps integral floats as `1.0` so they re-parse as floats, not ints.
         Variant::Float64(f) => format!("{f:?}"),
         Variant::String(s) => format!("\"{}\"", escape(s)),
         Variant::Color3(c) => format!("Color3({:?}, {:?}, {:?})", c.r, c.g, c.b),
@@ -281,7 +278,6 @@ mod tests {
 
     #[test]
     fn other_directive_comments_are_not_frontmatter() {
-        // A comment that merely shares the prefix's first bytes is left as source, not an error.
         let (props, body) = split("--!nahtish whatever\nprint('hi')\n").unwrap();
         assert!(props.is_empty());
         assert_eq!(body, "--!nahtish whatever\nprint('hi')\n");

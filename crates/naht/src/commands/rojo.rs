@@ -37,7 +37,6 @@ fn read_rojo_project(path: &Path) -> Result<RojoProject, CommandError> {
     serde_json::from_str(&text).map_err(|source| CommandError::RojoParse { path: file, source })
 }
 
-/// One migrated instance-tree node, ready to render into a `[[tree]]` entry.
 pub(super) struct MigratedNode {
     instance: String,
     path: Option<String>,
@@ -150,8 +149,6 @@ fn rojo_property_to_toml(value: &serde_json::Value) -> Option<toml::Value> {
     }
 }
 
-/// Render a migrated project to `naht.toml` text: `[project]`, optional `[serve]`, and a `[[tree]]`
-/// array for the genuine exceptions.
 pub(super) fn render_rojo_config(
     name: &str,
     place_id: Option<u64>,
@@ -197,11 +194,6 @@ pub(super) fn render_rojo_config(
     toml::to_string(&doc).map_err(CommandError::RenderConfig)
 }
 
-/// Build the project's snapshot, honoring any `[[tree]]` mappings (migrated from Rojo). With no tree
-/// config this is the plain convention scan of the project directory (the common case, unchanged).
-/// A `$path`-mapped instance is grafted at its instance location from its filesystem source, which
-/// is left in place, and any source root it draws from is dropped from the convention scan so it
-/// does not also appear as a literal top-level folder. Returns warnings for unrepresentable entries.
 pub(super) fn assemble_project_snapshot(
     root: &Path,
     config: &Config,

@@ -1,4 +1,4 @@
-//! `naht` — the localhost sync daemon, as a library.
+//! `naht`: the localhost sync daemon, as a library.
 //!
 //! The [`session`] module owns the per-run sync state (the Studio mirror, the patch queue, and the
 //! filesystem-bound reconcile); [`server`] is the pure-transport HTTP layer; [`watcher`] feeds

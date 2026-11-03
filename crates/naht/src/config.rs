@@ -127,8 +127,6 @@ impl Config {
         Self::load_from(home_config_path().as_deref(), root)
     }
 
-    /// The layered load with an explicit per-machine config path, so tests need not touch the real
-    /// home directory.
     fn load_from(home_config: Option<&Path>, root: &Path) -> Result<Self, ConfigError> {
         let mut config = Config::default();
         if let Some(home) = home_config {
@@ -138,7 +136,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Overlay `other` onto `self`, with `other`'s present fields winning.
     fn overlay(&mut self, other: Config) {
         if other.project.name.is_some() {
             self.project.name = other.project.name;
@@ -158,10 +155,12 @@ impl Config {
         if other.assets.api_key_env.is_some() {
             self.assets.api_key_env = other.assets.api_key_env;
         }
-        // The tree is taken whole from the layer that defines one (a project's layout is not merged
-        // field-by-field with a machine layer's).
-        if !other.tree.is_empty() {
-            self.tree = other.tree;
+        self.replace_tree(other.tree);
+    }
+
+    fn replace_tree(&mut self, tree: Vec<TreeNode>) {
+        if !tree.is_empty() {
+            self.tree = tree;
         }
     }
 
@@ -196,7 +195,6 @@ impl Config {
     }
 }
 
-/// Parse one config file; an absent file is an empty layer, not an error.
 fn read_layer(path: &Path) -> Result<Config, ConfigError> {
     match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text).map_err(|source| ConfigError::Parse {
@@ -211,7 +209,6 @@ fn read_layer(path: &Path) -> Result<Config, ConfigError> {
     }
 }
 
-/// The per-machine config path, `~/.naht/config.toml`, if a home directory is known.
 fn home_config_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -225,14 +222,12 @@ mod tests {
     #[test]
     fn project_layer_overrides_the_machine_layer_field_by_field() {
         let dir = tempfile::tempdir().unwrap();
-        // Per-machine layer: a name and a port.
         let home = dir.path().join("home-config.toml");
         std::fs::write(
             &home,
             "[project]\nname = \"machine\"\n[serve]\nport = 9000\n",
         )
         .unwrap();
-        // Project layer: overrides the name, leaves the port to fall through from the machine layer.
         std::fs::write(
             dir.path().join(PROJECT_FILE),
             "[project]\nname = \"project\"\n",
@@ -248,7 +243,6 @@ mod tests {
     fn name_falls_back_to_directory_when_unset() {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::load_from(None, dir.path()).unwrap();
-        // No file: the name is the directory's, and the port is the default.
         let expected = dir.path().file_name().unwrap().to_str().unwrap();
         assert_eq!(config.project_name(dir.path()), expected);
         assert_eq!(config.port(), DEFAULT_PORT);
@@ -260,11 +254,11 @@ mod tests {
         std::fs::write(dir.path().join(PROJECT_FILE), "[serve]\nport = 5000\n").unwrap();
         let config = Config::load_from(None, dir.path()).unwrap();
 
-        assert_eq!(config.resolve_port(Some(6000)).unwrap(), 6000); // CLI wins
-        assert_eq!(config.resolve_port(None).unwrap(), 5000); // then naht.toml
+        assert_eq!(config.resolve_port(Some(6000)).unwrap(), 6000);
+        assert_eq!(config.resolve_port(None).unwrap(), 5000);
 
         let bare = Config::default();
-        assert_eq!(bare.resolve_port(None).unwrap(), DEFAULT_PORT); // then the default
+        assert_eq!(bare.resolve_port(None).unwrap(), DEFAULT_PORT);
     }
 
     #[test]

@@ -56,6 +56,11 @@ pub struct AppState {
 }
 
 impl AppState {
+    fn wake_all_long_polls(&self) {
+        self.patches_ready.notify_waiters();
+        self.blobs_ready.notify_waiters();
+    }
+
     /// Wrap a session, parking long-polls for at most `long_poll` before they return empty.
     pub fn new(session: Session, long_poll: Duration) -> Arc<Self> {
         Arc::new(Self {
@@ -182,7 +187,6 @@ fn handshake(session: &mut Session, place_id: Option<u64>) -> Result<ServerInfo,
     Ok(session.info())
 }
 
-/// The long-poll cursor query, shared by the `/patches` and `/blobs` channels.
 #[derive(Deserialize)]
 struct CursorQuery {
     cursor: Option<u64>,
@@ -218,8 +222,7 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         Err(error) => return Rejection::Blocking(error).into_response(),
     };
     tracing::info!(target: "naht::server", count, "changes applied from Studio");
-    state.patches_ready.notify_waiters();
-    state.blobs_ready.notify_waiters();
+    state.wake_all_long_polls();
     StatusCode::OK.into_response()
 }
 
