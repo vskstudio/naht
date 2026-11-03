@@ -1,4 +1,4 @@
-# Naht — Implementation Spec (staged)
+# Naht: Implementation Spec (staged)
 
 Naht was built in **stages**, each one a single self-contained PR that left the project working. This
 file records what shipped; the per-stage detail lives in git history. Design context:
@@ -8,15 +8,15 @@ file records what shipped; the per-stage detail lives in git history. Design con
 - TDD: the failing test came first.
 - No `unwrap()`/`expect()` on fallible I/O. `thiserror` in `naht-core`, `anyhow` in the `naht` binary.
 - CI green: `cargo fmt --check`, `cargo clippy --all-targets` (0 warnings), `cargo test`.
-- Depend on the `rbx-dom` ecosystem for Roblox types — never reinvent them.
+- Depend on the `rbx-dom` ecosystem for Roblox types. Never reinvent them.
 
 ---
 
-## Shipped — Stages 0–19 (merged, `v0.1.0`)
+## Shipped: Stages 0 to 19 (merged, `v0.1.0`)
 
 - **0** scaffolding · **1** VFS + PathMapper + Snapshot · **2** SQLite state store · **3** reconciler
   + 3-way merge · **4** daemon HTTP + MessagePack protocol · **5** CLI + layered config + model build
-  · **6** Studio plugin (Luau) — v1 live-sync milestone · **7** resilience, limits handling & polish.
+  · **6** Studio plugin (Luau), the v1 live-sync milestone · **7** resilience, limits handling & polish.
 - **8** daemon observability (`tracing`) + CLI ergonomics (`serve --port`, `-v`) · **9** place-file
   build (`.rbxl`/`.rbxlx`) + `build --watch` · **10** resilience & edge-case hardening (ack-gating,
   atomic-save coalescing, large-tree guard) · **11** terrain voxel sync (`naht-core` blob engine +
@@ -32,12 +32,12 @@ file records what shipped; the per-stage detail lives in git history. Design con
 **v1 is shipped and tagged `v0.1.0`**: live bidirectional sync, conflict-safe 3-way merge, persisted
 state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release pipeline.
 
-## Shipped — v0.2.0 (merged)
+## Shipped: v0.2.0 (merged)
 
-- **`GET /activity`** — a read-only endpoint exposing live sync activity to an external consumer: a
+- **`GET /activity`** is a read-only endpoint exposing live sync activity to an external consumer: a
   `pending` count (unacked FS→Studio text patches) plus a bounded in-memory ring buffer (256) of
   recent *completed* sync events `{seq, unix_ms, path, direction, kind, outcome}`, with a `since`
-  cursor (1-based seqs, strictly-greater filter — a consumer never re-sees its last event, and
+  cursor (1-based seqs, strictly-greater filter: a consumer never re-sees its last event, and
   `buffer_start_seq` signals an eviction gap). Additive: no existing message shape changed,
   `PROTOCOL_VERSION` stays `1`. The Neublox adapter that consumes it lives outside this repo.
 
@@ -45,4 +45,4 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
 
 ## Permanently out of scope
 - roblox-ts authoring of the plugin (hand-written Luau is the decision).
-- Any Neublox-specific integration — the Neublox adapter lives outside this repo.
+- Any Neublox-specific integration: the Neublox adapter lives outside this repo.

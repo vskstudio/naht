@@ -13,7 +13,7 @@ export const meta = {
 const target = (args && args.target) || 'core/src/modules/raffle'
 const conventions =
     (args && args.conventions) ||
-    'Read CODING_CONVENTIONS.md at the repo root first — it is the source of truth. Key rules: HEXA/DDD/SOLID layering (domain=pure no-I/O, application=usecases, infrastructure=repositories, presentation=routes/commands; dependencies point inward). HARD RULE: never `export function` / `export const = () =>` — all exported behavior on classes as `public static`/instance methods; numeric consts → `public static readonly`; types/interfaces may stay free. No useless comments (explain WHY not WHAT; no commented-out code, no stale/redundant JSDoc). No `any` (use `unknown` + guards). CI gate (tsc+eslint+biome+vitest) must stay green. Biome 4-space indent, 100-col. Prisma via repository pattern + `$transaction` arrays.'
+    'Read CODING_CONVENTIONS.md at the repo root first: it is the source of truth. Key rules: HEXA/DDD/SOLID layering (domain=pure no-I/O, application=usecases, infrastructure=repositories, presentation=routes/commands; dependencies point inward). HARD RULE: never `export function` / `export const = () =>`. All exported behavior on classes as `public static`/instance methods; numeric consts → `public static readonly`; types/interfaces may stay free. No useless comments (explain WHY not WHAT; no commented-out code, no stale/redundant JSDoc). No `any` (use `unknown` + guards). CI gate (tsc+eslint+biome+vitest) must stay green. Biome 4-space indent, 100-col. Prisma via repository pattern + `$transaction` arrays.'
 
 const FINDING_SCHEMA = {
     type: 'object',

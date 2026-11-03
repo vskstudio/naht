@@ -1,6 +1,6 @@
 --!strict
 -- The HTTP client for the daemon. The plugin must initiate every exchange (HttpService is
--- request/response only — no server push), so the patch feed is a long-poll the connection loop
+-- request/response only, with no server push), so the patch feed is a long-poll the connection loop
 -- repeats. Bodies are MessagePack.
 
 local HttpService = game:GetService("HttpService")

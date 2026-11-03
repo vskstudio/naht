@@ -76,7 +76,7 @@ Enfin, active HTTP pour que le plugin puisse atteindre le démon :
 **Game Settings → Security → Allow HTTP Requests** doit être activé. Le plugin parle au démon via
 `http://localhost`, et Studio bloque tout HTTP tant que tu ne l'as pas activé.
 `HttpService.HttpEnabled` est verrouillé pour des raisons de sécurité et *ne peut pas* être basculé
-par un plugin — toi seul le peux, ici.
+par un plugin : toi seul le peux, ici.
 
 </Callout>
 
@@ -89,5 +89,5 @@ signale plutôt que de synchroniser avec un pair incompatible. Voir la
 
 ## Suite
 
-Tu es prêt pour le [Démarrage rapide](#/docs/quickstart) — `init`, `serve`, connecter Studio, et ta
+Tu es prêt pour le [Démarrage rapide](#/docs/quickstart) : `init`, `serve`, connecter Studio, et ta
 première modification aller-retour.

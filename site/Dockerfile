@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 # ---------------------------------------------------------------------------
-# naht.dev — static documentation site (build-only image).
+# naht.dev: static documentation site (build-only image).
 #
 # There is NO runtime server in this image anymore. The edge reverse proxy
 # (separate repo, EDGE_SITE=white) serves the built `dist/` straight from disk
-# — no per-site nginx, no long-lived container, zero idle RAM. This image only
+# with no per-site nginx, no long-lived container, zero idle RAM. This image only
 # produces the artifacts; the compose service copies them onto the host and
 # exits (see docker-compose.yml).
 #

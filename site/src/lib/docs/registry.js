@@ -1,5 +1,5 @@
 // Compile-time registry of every doc page. Each page is an mdsvex .svx file under
-// src/content/<locale>/<slug>.svx — imported both as a Svelte component (for rendering)
+// src/content/<locale>/<slug>.svx: imported both as a Svelte component (for rendering)
 // and as raw text (for the search index). Frontmatter is exposed as `metadata`.
 
 const components = import.meta.glob('../../content/**/*.svx', { eager: true })
@@ -27,7 +27,7 @@ export function getDoc(locale, slug) {
   return registry[locale]?.[slug] ?? registry[FALLBACK]?.[slug] ?? null
 }
 
-// Metadata only (title/icon/accent/desc) — used by the sidebar before render.
+// Metadata only (title/icon/accent/desc): used by the sidebar before render.
 export function getMeta(locale, slug) {
   return getDoc(locale, slug)?.metadata ?? {}
 }

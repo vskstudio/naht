@@ -22,9 +22,9 @@ permission, Naht existe pour rendre cela impossible.
 
 ## La couture
 
-Imagine deux surfaces vivantes : ton **système de fichiers** — où vivent ton éditeur, ton historique
-git et ta CI — et le **DataModel de Studio** — où vivent le moteur, la physique et tes
-collaborateurs. La plupart des outils choisissent l'un comme source de vérité et poussent vers
+Imagine deux surfaces vivantes : ton **système de fichiers** (où vivent ton éditeur, ton historique
+git et ta CI) et le **DataModel de Studio** (où vivent le moteur, la physique et tes
+collaborateurs). La plupart des outils choisissent l'un comme source de vérité et poussent vers
 l'autre. Naht les traite comme des **pairs symétriques** cousus le long d'une couture : les
 modifications circulent dans le sens où elles ont été faites, et la couture tient même quand les deux
 côtés bougent en même temps.
@@ -32,7 +32,7 @@ côtés bougent en même temps.
 <Callout type="note">
 
 La couture n'est pas un tuyau. Un tuyau oublie tout dès que les données le traversent. Naht **se
-souvient** du dernier état sur lequel les deux côtés étaient d'accord — la *base persistée* — et
+souvient** du dernier état sur lequel les deux côtés étaient d'accord (la *base persistée*) et
 chaque décision est prise par rapport à elle.
 
 </Callout>
@@ -41,12 +41,12 @@ chaque décision est prise par rapport à elle.
 
 | Garantie | Comment Naht la tient |
 |---|---|
-| **Jamais destructeur** | Aucun `unwrap()`/`expect()` sur le système de fichiers ou le réseau dans la boucle de synchronisation. Une écriture échouée met en pause *un seul chemin* et fait remonter l'erreur — elle ne tue jamais la session ni ne jette ta modification. |
+| **Jamais destructeur** | Aucun `unwrap()`/`expect()` sur le système de fichiers ou le réseau dans la boucle de synchronisation. Une écriture échouée met en pause *un seul chemin* et fait remonter l'erreur. Elle ne tue jamais la session ni ne jette ta modification. |
 | **Réellement bidirectionnel** | FS ↔ Studio sont des pairs, pas un primaire et un miroir. Le bidirectionnel est le cœur du moteur, pas une bascule expérimentale. |
-| **Sûr face aux conflits** | Une base de dernière synchronisation persistée permet une vraie fusion textuelle à 3 voies. Les modifications non fusionnables reçoivent des marqueurs façon git et le chemin *gèle* jusqu'à ce que tu le résolves — aucun côté n'est choisi automatiquement. |
-| **Survit aux redémarrages** | La base vit dans SQLite (`.naht/state.db`). Redémarre le démon, reconnecte Studio — Naht re-diffe par rapport à l'état réel au lieu de tout réécraser. |
+| **Sûr face aux conflits** | Une base de dernière synchronisation persistée permet une vraie fusion textuelle à 3 voies. Les modifications non fusionnables reçoivent des marqueurs façon git et le chemin *gèle* jusqu'à ce que tu le résolves. Aucun côté n'est choisi automatiquement. |
+| **Survit aux redémarrages** | La base vit dans SQLite (`.naht/state.db`). Redémarre le démon, reconnecte Studio. Naht re-diffe par rapport à l'état réel au lieu de tout réécraser. |
 | **Convention plutôt que configuration** | Zéro configuration pour le cas courant. Un `naht.toml` optionnel ne porte que les exceptions, superposé à une configuration propre à chaque machine. |
-| **Honnête sur ses limites** | Le terrain, le CSG, les références d'assets et les propriétés verrouillées pour des raisons de sécurité sont **détectés et signalés** avec des conseils — jamais abandonnés silencieusement. |
+| **Honnête sur ses limites** | Le terrain, le CSG, les références d'assets et les propriétés verrouillées pour des raisons de sécurité sont **détectés et signalés** avec des conseils, sans jamais être abandonnés silencieusement. |
 
 ## Quand utiliser Naht
 
@@ -57,11 +57,11 @@ chaque décision est prise par rapport à elle.
 
 ## Comment la documentation est organisée
 
-- **Premiers pas** — installe Naht et obtiens une synchronisation aller-retour confirmée.
-- **Concepts fondamentaux** — le modèle mental : la couture, la base persistée, le moteur de synchronisation, les conflits.
-- **Configuration** — la correspondance fichier→instance, `naht.toml`, et la migration depuis Rojo.
-- **Référence** — la CLI exhaustive, le protocole localhost et les limites de l'API Studio.
-- **Projet** — le dépannage de la couture quand quelque chose tourne mal.
+- **Premiers pas** : installe Naht et obtiens une synchronisation aller-retour confirmée.
+- **Concepts fondamentaux** : le modèle mental : la couture, la base persistée, le moteur de synchronisation, les conflits.
+- **Configuration** : la correspondance fichier→instance, `naht.toml`, et la migration depuis Rojo.
+- **Référence** : la CLI exhaustive, le protocole localhost et les limites de l'API Studio.
+- **Projet** : le dépannage de la couture quand quelque chose tourne mal.
 
-Nouveau ici ? Va directement au [Démarrage rapide](#/docs/quickstart) — de zéro à une synchronisation
+Nouveau ici ? Va directement au [Démarrage rapide](#/docs/quickstart) pour passer de zéro à une synchronisation
 bidirectionnelle confirmée en cinq minutes.

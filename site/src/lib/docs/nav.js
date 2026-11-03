@@ -1,6 +1,6 @@
 // Documentation structure: ordered sections and their pages. Page titles + descriptions
 // come from each .svx file's frontmatter (per locale); here we keep only the locale-independent
-// shape — icon, accent colour, and reading order. Section titles are translated below.
+// shape: icon, accent colour, and reading order. Section titles are translated below.
 
 export const sections = [
   {

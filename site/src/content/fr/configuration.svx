@@ -2,7 +2,7 @@
 title: Configuration
 icon: settings
 accent: studio
-desc: "La référence complète de naht.toml — la config en couches et les sections [project], [serve], [assets] et [[tree]]."
+desc: "La référence complète de naht.toml : la config en couches et les sections [project], [serve], [assets] et [[tree]]."
 ---
 
 <script>
@@ -25,7 +25,7 @@ built-in defaults  →  ~/.naht/config.toml  (per-machine)  →  ./naht.toml  (p
 
 Tu peux ainsi définir un défaut à l'échelle de la machine (par exemple un port préféré) et laisser
 chaque projet n'écraser que ce dont il a besoin. Les clés inconnues sont rejetées
-(`deny_unknown_fields`) — une faute de frappe échoue bruyamment au lieu d'être ignorée silencieusement.
+(`deny_unknown_fields`) : une faute de frappe échoue bruyamment au lieu d'être ignorée silencieusement.
 
 ## `[project]`
 
@@ -56,7 +56,7 @@ terrain_sync = false # opt into live terrain blob sync
 <Callout type="important">
 
 **`place_id` est un garde-fou peu coûteux et à forte valeur.** Une fois défini, un place id qui ne
-correspond pas est rejeté à la poignée de main — tu ne peux donc pas verser accidentellement la source
+correspond pas est rejeté à la poignée de main, ce qui t'empêche de verser accidentellement la source
 d'un jeu dans un autre. Définis-le sur tout projet destiné à être publié.
 
 </Callout>
@@ -80,7 +80,7 @@ api_key_env = "ROBLOX_OPEN_CLOUD_KEY"   # NAME of the env var, never the key its
 <Callout type="warning">
 
 `api_key_env` contient le *nom d'une variable d'environnement*, pas la clé. Naht ne lit jamais une clé
-littérale depuis la config — pour garder les secrets hors des fichiers que tu pourrais committer.
+littérale depuis la config, afin de garder les secrets hors des fichiers que tu pourrais committer.
 
 </Callout>
 
@@ -107,10 +107,10 @@ Archivable = false
 | `properties` | table | Les propriétés non par défaut de ce nœud. |
 
 Celles-ci sont écrites automatiquement par `naht init --from-rojo` pour les véritables exceptions d'un
-projet migré — voir [Migrer depuis Rojo](#/docs/migrating).
+projet migré : voir [Migrer depuis Rojo](#/docs/migrating).
 
 ## Minimal vs. explicite
 
-Un tout nouveau `naht init` n'écrit pratiquement rien d'autre qu'un nom — la convention gère le reste.
+Un tout nouveau `naht init` n'écrit pratiquement rien d'autre qu'un nom. La convention gère le reste.
 Recours à `naht.toml` uniquement quand tu as besoin d'un port non par défaut, d'un garde place-id, de
 l'upload d'assets, ou d'un nœud de tree que la convention ne peut pas représenter.

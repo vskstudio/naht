@@ -27,7 +27,7 @@ Each release also ships `naht-plugin.rbxmx`. (From a source checkout, produce it
 
 1. In Studio, right-click in the Explorer and **Insert from File…**, or drop the `.rbxmx` into your
    local Plugins folder, to install it as a local plugin.
-2. Enable **Game Settings → Security → Allow HTTP Requests** — the plugin talks to the daemon over
+2. Enable **Game Settings → Security → Allow HTTP Requests**: the plugin talks to the daemon over
    `localhost` HTTP.
 
 ## 3. Create a project
@@ -56,7 +56,7 @@ Click **Naht Sync** in the toolbar. The status widget walks `Connecting → Conn
 project's source appears under `ServerStorage/Naht`.
 
 > If you set `[serve] place_id` in `naht.toml`, the daemon only connects to the Studio session whose
-> place id matches — a guard against syncing source into the wrong game. A mismatch is rejected at
+> place id matches: a guard against syncing source into the wrong game. A mismatch is rejected at
 > the handshake.
 
 ## 6. Edit on both sides
@@ -66,7 +66,7 @@ project's source appears under `ServerStorage/Naht`.
 
 **Studio → disk.** Edit that `ModuleScript`'s source in Studio. The file on disk updates to match.
 
-That is the seam working in both directions at once — no manual push or pull.
+That is the seam working in both directions at once, with no manual push or pull.
 
 ## 7. Read and resolve a conflict
 
@@ -90,5 +90,5 @@ Sync resumes for that path once it is resolved.
 ## Where to next
 
 - The full command list is in the [README](../README.md#usage).
-- The exact manual scenarios that exercise the live loop — including terrain sync and reconnect — are
+- The exact manual scenarios that exercise the live loop, including terrain sync and reconnect, are
   in the [Studio validation checklist](../plugin/README.md#studio-validation-checklist).

@@ -44,7 +44,7 @@
           btn.innerHTML = CHECK
           btn.classList.add('copied')
           setTimeout(() => { btn.innerHTML = COPY; btn.classList.remove('copied') }, 1400)
-        } catch { /* clipboard blocked — no-op */ }
+        } catch { /* clipboard blocked: no-op */ }
       }
       btn.addEventListener('click', onClick)
       pre.appendChild(btn)

@@ -2,7 +2,7 @@
 title: Configuration
 icon: settings
 accent: studio
-desc: "The full naht.toml reference — layered config and the [project], [serve], [assets], and [[tree]] sections."
+desc: "The full naht.toml reference: layered config and the [project], [serve], [assets], and [[tree]] sections."
 ---
 
 <script>
@@ -22,7 +22,7 @@ built-in defaults  →  ~/.naht/config.toml  (per-machine)  →  ./naht.toml  (p
 ```
 
 So you can set a machine-wide default (say, a preferred port) and let individual projects override
-only what they need. Unknown keys are rejected (`deny_unknown_fields`) — a typo fails loudly instead
+only what they need. Unknown keys are rejected (`deny_unknown_fields`): a typo fails loudly instead
 of being silently ignored.
 
 ## `[project]`
@@ -54,7 +54,7 @@ terrain_sync = false # opt into live terrain blob sync
 <Callout type="important">
 
 **`place_id` is a cheap, high-value safety guard.** With it set, a mismatched place id is rejected at
-the handshake — so you can't accidentally pour one game's source into another. Set it on any project
+the handshake, so you can't accidentally pour one game's source into another. Set it on any project
 that ships.
 
 </Callout>
@@ -78,7 +78,7 @@ api_key_env = "ROBLOX_OPEN_CLOUD_KEY"   # NAME of the env var, never the key its
 <Callout type="warning">
 
 `api_key_env` holds the *name of an environment variable*, not the key. Naht never reads a literal key
-from config — keeping secrets out of files you might commit.
+from config, keeping secrets out of files you might commit.
 
 </Callout>
 
@@ -104,10 +104,10 @@ Archivable = false
 | `properties` | table | Non-default properties for this node. |
 
 These are written automatically by `naht init --from-rojo` for the genuine exceptions in a migrated
-project — see [Migrating from Rojo](#/docs/migrating).
+project: see [Migrating from Rojo](#/docs/migrating).
 
 ## Minimal vs. explicit
 
-A brand-new `naht init` writes essentially nothing but a name — convention handles the rest. Reach for
+A brand-new `naht init` writes essentially nothing but a name. Convention handles the rest. Reach for
 `naht.toml` only when you need a non-default port, a place-id guard, asset upload, or a tree node
 convention can't represent.
