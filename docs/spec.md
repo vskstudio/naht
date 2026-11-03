@@ -41,6 +41,21 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   `buffer_start_seq` signals an eviction gap). Additive: no existing message shape changed,
   `PROTOCOL_VERSION` stays `1`. The Neublox adapter that consumes it lives outside this repo.
 
+## Shipped: v0.3.0 (merged)
+
+- **Workspace on the VSK Rust book** (#39): `naht-core` split into modules under 500 lines, typed
+  `thiserror` errors per layer that keep their source, no panic outside tests, rustdoc as the only
+  comment, typed protocol payloads, the full exemplar lint table in `Cargo.toml` and `clippy.toml`.
+- **Daemon hardening**: graceful shutdown on SIGINT and SIGTERM, request body limits, HTTP errors
+  that no longer leak internals, a watcher that ignores its own writes and access events, exit code
+  78 for a bad configuration.
+- **Dependencies on latest** (#61): rbx 3, reqwest 0.13, toml 1, tower-http 0.7, rusqlite 0.41 and
+  toolchain 1.99.1. Place and model output is byte-identical to v0.2.0, held by golden fixtures. A
+  `naht.toml` with a duplicate key is now rejected (exit 78).
+- **CI enforces everything** through `scripts/check.sh`: fmt, the 500-line limit, no plain comments,
+  no em or en dash (#63), clippy with warnings denied, tests, rustdoc with warnings denied, full
+  `cargo deny` and workspace `cargo machete`.
+
 ---
 
 ## Permanently out of scope
