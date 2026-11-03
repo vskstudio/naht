@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use notify_debouncer_full::notify::{self, RecursiveMode};
+use notify_debouncer_full::notify::{self, EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
 use thiserror::Error;
 
@@ -68,7 +68,8 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, Wat
 
 fn is_project_event(root: &Path, event: &DebouncedEvent) -> bool {
     let internal = root.join(INTERNAL_DIR);
-    event.paths.iter().any(|path| !path.starts_with(&internal))
+    !matches!(event.kind, EventKind::Access(_))
+        && event.paths.iter().any(|path| !path.starts_with(&internal))
 }
 
 #[cfg(test)]
@@ -76,13 +77,54 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Instant;
 
-    use notify_debouncer_full::notify::{Event, EventKind};
+    use naht_core::state::StateStore;
+    use notify_debouncer_full::notify::Event;
+    use notify_debouncer_full::notify::event::{AccessKind, AccessMode};
 
     use super::*;
+    use crate::config::Config;
+    use crate::session::Session;
 
     fn event_at(path: &str) -> DebouncedEvent {
-        let event = Event::new(EventKind::Any).add_path(PathBuf::from(path));
+        event_of(EventKind::Any, path)
+    }
+
+    fn event_of(kind: EventKind, path: &str) -> DebouncedEvent {
+        let event = Event::new(kind).add_path(PathBuf::from(path));
         DebouncedEvent::new(event, Instant::now())
+    }
+
+    #[test]
+    fn a_read_of_the_tree_is_not_a_project_event() {
+        let event = event_of(
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            "/project/src/Main.luau",
+        );
+        assert!(!is_project_event(Path::new("/project"), &event));
+    }
+
+    #[tokio::test]
+    async fn an_idle_daemon_emits_no_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        crate::commands::init(&root, false).unwrap();
+        let config = Config::load(&root).unwrap();
+        let store = StateStore::open(&root.join(INTERNAL_DIR).join("state.db")).unwrap();
+        let session = Session::new(
+            root.clone(),
+            store,
+            config.project_name(&root),
+            config.serve.place_id,
+            config.terrain_sync(),
+        );
+        let state = AppState::new(session, Duration::from_secs(1));
+        state.session_lock().await.rescan().unwrap();
+        let _watch = spawn(&root, state.clone()).unwrap();
+        state.session_lock().await.rescan().unwrap();
+        let (cursor, _) = state.session_lock().await.take_patches(0);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let (after, _) = state.session_lock().await.take_patches(0);
+        assert_eq!(cursor, after);
     }
 
     #[test]

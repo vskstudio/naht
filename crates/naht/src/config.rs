@@ -127,6 +127,8 @@ impl Config {
         Self::load_from(home_config_path().as_deref(), root)
     }
 
+    /// The layered load with an explicit per-machine config path, so tests need not touch the real
+    /// home directory.
     fn load_from(home_config: Option<&Path>, root: &Path) -> Result<Self, ConfigError> {
         let mut config = Config::default();
         if let Some(home) = home_config {
@@ -136,6 +138,7 @@ impl Config {
         Ok(config)
     }
 
+    /// Overlay `other` onto `self`, with `other`'s present fields winning.
     fn overlay(&mut self, other: Config) {
         if other.project.name.is_some() {
             self.project.name = other.project.name;
@@ -155,12 +158,8 @@ impl Config {
         if other.assets.api_key_env.is_some() {
             self.assets.api_key_env = other.assets.api_key_env;
         }
-        self.replace_tree(other.tree);
-    }
-
-    fn replace_tree(&mut self, tree: Vec<TreeNode>) {
-        if !tree.is_empty() {
-            self.tree = tree;
+        if !other.tree.is_empty() {
+            self.tree = other.tree;
         }
     }
 
@@ -195,6 +194,7 @@ impl Config {
     }
 }
 
+/// Parse one config file; an absent file is an empty layer, not an error.
 fn read_layer(path: &Path) -> Result<Config, ConfigError> {
     match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text).map_err(|source| ConfigError::Parse {
@@ -209,6 +209,7 @@ fn read_layer(path: &Path) -> Result<Config, ConfigError> {
     }
 }
 
+/// The per-machine config path, `~/.naht/config.toml`, if a home directory is known.
 fn home_config_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
