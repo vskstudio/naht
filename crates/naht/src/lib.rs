@@ -12,5 +12,6 @@ pub mod logging;
 pub mod output;
 pub mod server;
 pub mod session;
+pub mod shutdown;
 pub mod uploader;
 pub mod watcher;

@@ -331,8 +331,11 @@ pub async fn serve<Out: Write, Err: Write>(
         config.terrain_sync(),
     );
     let state = AppState::new(session, LONG_POLL);
+    state
+        .tasks()
+        .spawn(crate::shutdown::cancel_on_signal(state.shutdown().clone()));
 
-    let _watcher = crate::watcher::spawn(&root, state.clone())?;
+    let watcher = crate::watcher::spawn(&root, state.clone())?;
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let listener = tokio::net::TcpListener::bind(addr)
@@ -344,9 +347,13 @@ pub async fn serve<Out: Write, Err: Write>(
         root.display()
     ))
     .map_err(CommandError::Output)?;
-    crate::server::serve(listener, state)
+    let served = crate::server::serve(listener, state.clone())
         .await
-        .map_err(CommandError::Serve)
+        .map_err(CommandError::Serve);
+    drop(watcher);
+    state.tasks().close();
+    state.tasks().wait().await;
+    served
 }
 
 /// Package the Studio plugin under `src` into a single installable `.rbxmx` model at `output`.

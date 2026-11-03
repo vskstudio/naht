@@ -33,15 +33,23 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, Wat
             Ok(events) => {
                 tracing::debug!(target: "naht::watcher", batch = events.len(), "filesystem batch");
                 let state = state.clone();
-                runtime.spawn(async move {
-                    let mut session = state.session_lock().await;
-                    if let Err(error) = session.rescan() {
-                        tracing::warn!(target: "naht::watcher", %error, "rescan failed");
-                    }
-                    drop(session);
-                    state.notify_patches();
-                    state.notify_blobs();
-                });
+                let tasks = state.tasks().clone();
+                tasks.spawn_on(
+                    async move {
+                        match state.with_session(|session| session.rescan()).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                tracing::warn!(target: "naht::watcher", %error, "rescan failed");
+                            }
+                            Err(error) => {
+                                tracing::warn!(target: "naht::watcher", %error, "rescan task failed");
+                            }
+                        }
+                        state.notify_patches();
+                        state.notify_blobs();
+                    },
+                    &runtime,
+                );
             }
             Err(errors) => {
                 tracing::warn!(target: "naht::watcher", count = errors.len(), "watch error batch");
