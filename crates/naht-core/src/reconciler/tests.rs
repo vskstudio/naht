@@ -98,9 +98,21 @@ fn non_overlapping_both_changed_auto_merges() {
     )
     .unwrap();
 
-    assert!(patches.iter().any(|p| p.direction == Direction::ToFs));
-    assert!(patches.iter().any(|p| p.direction == Direction::ToStudio));
-    assert!(patches.iter().all(|p| p.content.as_deref() == Some(merged)));
+    assert!(
+        patches
+            .iter()
+            .any(|patch| patch.direction == Direction::ToFs)
+    );
+    assert!(
+        patches
+            .iter()
+            .any(|patch| patch.direction == Direction::ToStudio)
+    );
+    assert!(
+        patches
+            .iter()
+            .all(|patch| patch.content.as_deref() == Some(merged))
+    );
     assert_eq!(vfs.read(Path::new("m")).unwrap(), merged.as_bytes());
     assert_eq!(
         store.get("m").unwrap().unwrap().base_content,
@@ -208,12 +220,12 @@ fn new_fs_file_creates_in_studio() {
 
 #[test]
 fn reconcile_scales_to_a_large_tree_without_quadratic_blowup() {
-    const N: usize = 5_000;
+    const ITERATIONS: usize = 5_000;
     let mut vfs = MemoryVfs::new();
     let mut fs = BTreeMap::new();
-    for i in 0..N {
-        let path = format!("m{i}.luau");
-        let content = format!("return {i}");
+    for index in 0..ITERATIONS {
+        let path = format!("m{index}.luau");
+        let content = format!("return {index}");
         vfs = vfs.with_file(&path, content.clone());
         fs.insert(path.clone(), TextInstance::new(path, CLASS, content));
     }
@@ -222,19 +234,19 @@ fn reconcile_scales_to_a_large_tree_without_quadratic_blowup() {
     let start = Instant::now();
     let patches = reconcile(&mut vfs, &store, &fs, &BTreeMap::new()).unwrap();
     let create_elapsed = start.elapsed();
-    assert_eq!(patches.len(), N);
+    assert_eq!(patches.len(), ITERATIONS);
     assert!(
         create_elapsed < Duration::from_secs(10),
         "initial reconcile too slow: {create_elapsed:?}"
     );
 
-    let start = Instant::now();
-    let patches = reconcile(&mut vfs, &store, &fs, &fs).unwrap();
-    assert!(patches.is_empty());
+    let steady_start = Instant::now();
+    let steady_patches = reconcile(&mut vfs, &store, &fs, &fs).unwrap();
+    assert!(steady_patches.is_empty());
     assert!(
-        start.elapsed() < Duration::from_secs(10),
+        steady_start.elapsed() < Duration::from_secs(10),
         "steady-state reconcile too slow: {:?}",
-        start.elapsed()
+        steady_start.elapsed()
     );
 }
 
@@ -251,7 +263,13 @@ fn scan_collects_source_files_as_text_instances_and_skips_the_rest() {
 
     let mut got: Vec<(&str, &str, &str)> = scanned
         .values()
-        .map(|t| (t.path.as_str(), t.class.as_str(), t.content.as_str()))
+        .map(|entry| {
+            (
+                entry.path.as_str(),
+                entry.class.as_str(),
+                entry.content.as_str(),
+            )
+        })
         .collect();
     got.sort();
     assert_eq!(

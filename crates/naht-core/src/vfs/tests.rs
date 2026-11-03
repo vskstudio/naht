@@ -23,7 +23,7 @@ fn list_returns_sorted_immediate_children_only() {
         .with_file("proj/sub/b.luau", "b")
         .with_dir("proj/empty");
     let entries = vfs.list(Path::new("proj")).unwrap();
-    let names: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
+    let names: Vec<_> = entries.iter().map(|entry| entry.path.clone()).collect();
     assert_eq!(
         names,
         vec![

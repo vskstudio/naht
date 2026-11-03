@@ -19,18 +19,18 @@ fn serve_warning_honors_the_terrain_sync_config_flag() {
     let enabled = Config::load(enabled_dir.path()).unwrap();
     let reasons: Vec<_> = commands::serve_warnings(&enabled, &tree)
         .into_iter()
-        .map(|w| w.reason)
+        .map(|warning| warning.reason)
         .collect();
     assert!(!reasons.contains(&Reason::Terrain));
     assert!(reasons.contains(&Reason::MeshBinary));
 
     let disabled_dir = tempfile::tempdir().unwrap();
     let disabled = Config::load(disabled_dir.path()).unwrap();
-    let reasons: Vec<_> = commands::serve_warnings(&disabled, &tree)
+    let disabled_reasons: Vec<_> = commands::serve_warnings(&disabled, &tree)
         .into_iter()
-        .map(|w| w.reason)
+        .map(|warning| warning.reason)
         .collect();
-    assert!(reasons.contains(&Reason::Terrain));
+    assert!(disabled_reasons.contains(&Reason::Terrain));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

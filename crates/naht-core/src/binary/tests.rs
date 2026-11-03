@@ -29,7 +29,7 @@ fn base_with(store: &StateStore, path: &str, content: &[u8]) {
 
 #[test]
 fn scan_blobs_collects_only_terrain_files_with_exact_bytes() {
-    let blob: Vec<u8> = (0u16..300).map(|i| (i % 256) as u8).collect();
+    let blob: Vec<u8> = (0u16..300).map(|index| (index % 256) as u8).collect();
     let vfs = MemoryVfs::new()
         .with_file("Workspace/Terrain.terrain", blob.clone())
         .with_file("Workspace/Main.luau", b"return 1".to_vec())
@@ -46,7 +46,7 @@ fn scan_blobs_collects_only_terrain_files_with_exact_bytes() {
 
 #[test]
 fn a_blob_round_trips_each_way_without_byte_loss() {
-    let blob: Vec<u8> = (0u16..512).map(|i| (i % 256) as u8).collect();
+    let blob: Vec<u8> = (0u16..512).map(|index| (index % 256) as u8).collect();
 
     let mut vfs = MemoryVfs::new();
     let store = StateStore::open_in_memory().unwrap();
@@ -61,16 +61,19 @@ fn a_blob_round_trips_each_way_without_byte_loss() {
     assert_eq!(patches[0].direction, Direction::ToStudio);
     assert_eq!(patches[0].content.as_deref(), Some(blob.as_slice()));
 
-    let mut vfs = MemoryVfs::new();
-    let store = StateStore::open_in_memory().unwrap();
+    let mut terrain_vfs = MemoryVfs::new();
+    let terrain_store = StateStore::open_in_memory().unwrap();
     reconcile_blobs(
-        &mut vfs,
-        &store,
+        &mut terrain_vfs,
+        &terrain_store,
         &BTreeMap::new(),
         &blobs(&[("Terrain.terrain", &blob)]),
     )
     .unwrap();
-    assert_eq!(vfs.read(Path::new("Terrain.terrain")).unwrap(), blob);
+    assert_eq!(
+        terrain_vfs.read(Path::new("Terrain.terrain")).unwrap(),
+        blob
+    );
 }
 
 #[test]

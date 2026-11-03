@@ -55,7 +55,7 @@ impl Vfs for DiskVfs {
                 kind,
             });
         }
-        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(entries)
     }
 

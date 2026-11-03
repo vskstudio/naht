@@ -144,7 +144,11 @@ impl Harness {
     }
 
     pub async fn ack_all(&self, batch: &PatchBatch) {
-        let paths = batch.patches.iter().map(|p| p.path.clone()).collect();
+        let paths = batch
+            .patches
+            .iter()
+            .map(|patch| patch.path.clone())
+            .collect();
         assert!(self.ack(paths).await.is_success());
     }
 }

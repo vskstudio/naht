@@ -73,7 +73,10 @@ pub fn resolve_asset_ref(
         return Ok(None);
     }
     let content = vfs.read(path)?;
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(value);
+    let name = path
+        .file_name()
+        .and_then(|os_name| os_name.to_str())
+        .unwrap_or(value);
     Ok(Some(resolve_asset(uploader, store, name, &content)?))
 }
 
@@ -288,8 +291,8 @@ mod tests {
         let mesh_id = |name: &str| {
             root.children
                 .iter()
-                .find(|c| c.name == name)
-                .and_then(|c| c.properties.get("MeshId"))
+                .find(|child| child.name == name)
+                .and_then(|child| child.properties.get("MeshId"))
                 .cloned()
         };
         assert_eq!(mesh_id("A"), Some(Variant::String("a.obj".to_owned())));

@@ -7,12 +7,12 @@ use std::fs;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fs_change_appears_via_patches() {
-    let h = Harness::start(None).await;
-    h.write("Greeter.luau", "return 1");
+    let harness = Harness::start(None).await;
+    harness.write("Greeter.luau", "return 1");
 
-    assert!(h.info(None).await.status().is_success());
+    assert!(harness.info(None).await.status().is_success());
 
-    let batch = h.patches(0).await;
+    let batch = harness.patches(0).await;
     assert_eq!(batch.patches.len(), 1);
     let patch = &batch.patches[0];
     assert_eq!(patch.path, "Greeter.luau");
@@ -24,9 +24,9 @@ async fn fs_change_appears_via_patches() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn post_changes_writes_the_file() {
-    let h = Harness::start(None).await;
+    let harness = Harness::start(None).await;
 
-    let status = h
+    let status = harness
         .post_changes(vec![Change::Upsert {
             path: "New.luau".to_owned(),
             class: "ModuleScript".to_owned(),
@@ -35,18 +35,18 @@ async fn post_changes_writes_the_file() {
         .await;
 
     assert!(status.is_success());
-    assert_eq!(h.read("New.luau"), "return 5");
+    assert_eq!(harness.read("New.luau"), "return 5");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn post_changes_rejects_paths_that_escape_the_project_root() {
-    let h = Harness::start(None).await;
+    let harness = Harness::start(None).await;
     let sentinel = format!(
         "outside-{}.luau",
-        h.root.file_name().unwrap().to_string_lossy()
+        harness.root.file_name().unwrap().to_string_lossy()
     );
 
-    let status = h
+    let status = harness
         .post_changes(vec![Change::Upsert {
             path: format!("../{sentinel}"),
             class: "ModuleScript".to_owned(),
@@ -55,7 +55,7 @@ async fn post_changes_rejects_paths_that_escape_the_project_root() {
         .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(!h.root.parent().unwrap().join(sentinel).exists());
+    assert!(!harness.root.parent().unwrap().join(sentinel).exists());
 }
 
 #[cfg(unix)]
@@ -63,15 +63,15 @@ async fn post_changes_rejects_paths_that_escape_the_project_root() {
 async fn post_changes_rejects_symlink_paths_that_escape_the_project_root() {
     use std::os::unix::fs::symlink;
 
-    let h = Harness::start(None).await;
-    let outside = h.root.parent().unwrap().join(format!(
+    let harness = Harness::start(None).await;
+    let outside = harness.root.parent().unwrap().join(format!(
         "outside-link-{}",
-        h.root.file_name().unwrap().to_string_lossy()
+        harness.root.file_name().unwrap().to_string_lossy()
     ));
     fs::write(&outside, "original").unwrap();
-    symlink(&outside, h.root.join("linked.luau")).unwrap();
+    symlink(&outside, harness.root.join("linked.luau")).unwrap();
 
-    let status = h
+    let status = harness
         .post_changes(vec![Change::Upsert {
             path: "linked.luau".to_owned(),
             class: "ModuleScript".to_owned(),
@@ -85,14 +85,14 @@ async fn post_changes_rejects_symlink_paths_that_escape_the_project_root() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn conflicting_change_over_the_wire_writes_markers_and_freezes() {
-    let h = Harness::start(None).await;
+    let harness = Harness::start(None).await;
 
-    h.write("m.luau", "local a = 1\n");
-    h.info(None).await;
-    let _drain = h.patches(0).await;
+    harness.write("m.luau", "local a = 1\n");
+    harness.info(None).await;
+    let _drain = harness.patches(0).await;
 
-    h.write("m.luau", "local a = 11\n");
-    let status = h
+    harness.write("m.luau", "local a = 11\n");
+    let status = harness
         .post_changes(vec![Change::Upsert {
             path: "m.luau".to_owned(),
             class: "ModuleScript".to_owned(),
@@ -101,7 +101,7 @@ async fn conflicting_change_over_the_wire_writes_markers_and_freezes() {
         .await;
     assert!(status.is_success());
 
-    let on_disk = h.read("m.luau");
+    let on_disk = harness.read("m.luau");
     assert!(
         on_disk.contains("<<<<<<<"),
         "expected markers, got: {on_disk}"
@@ -109,41 +109,45 @@ async fn conflicting_change_over_the_wire_writes_markers_and_freezes() {
     assert!(on_disk.contains("local a = 11"));
     assert!(on_disk.contains("local a = 22"));
 
-    let cursor = h.patches(0).await.cursor;
-    h.write("m.luau", "local a = 33\n");
-    h.info(None).await;
-    assert!(h.patches(cursor).await.patches.is_empty());
+    let cursor = harness.patches(0).await.cursor;
+    harness.write("m.luau", "local a = 33\n");
+    harness.info(None).await;
+    assert!(harness.patches(cursor).await.patches.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconnect_rediffs_without_clobbering() {
-    let h = Harness::start(None).await;
-    h.write("a.luau", "v1");
+    let harness = Harness::start(None).await;
+    harness.write("a.luau", "v1");
 
-    h.info(None).await;
-    let first = h.patches(0).await;
+    harness.info(None).await;
+    let first = harness.patches(0).await;
     assert_eq!(first.patches.len(), 1);
-    h.ack_all(&first).await;
+    harness.ack_all(&first).await;
 
-    h.info(None).await;
-    assert!(h.patches(first.cursor).await.patches.is_empty());
-    assert_eq!(h.read("a.luau"), "v1");
+    harness.info(None).await;
+    assert!(harness.patches(first.cursor).await.patches.is_empty());
+    assert_eq!(harness.read("a.luau"), "v1");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_half_acked_batch_re_emits_only_the_unacked_path() {
-    let h = Harness::start(None).await;
-    h.write("A.luau", "return 1");
-    h.write("B.luau", "return 2");
+    let harness = Harness::start(None).await;
+    harness.write("A.luau", "return 1");
+    harness.write("B.luau", "return 2");
 
-    h.info(None).await;
-    let first = h.patches(0).await;
+    harness.info(None).await;
+    let first = harness.patches(0).await;
     assert_eq!(first.patches.len(), 2);
 
-    assert!(h.ack(vec!["A.luau".to_owned()]).await.is_success());
+    assert!(harness.ack(vec!["A.luau".to_owned()]).await.is_success());
 
-    h.info(None).await;
-    let again = h.patches(first.cursor).await;
-    let paths: Vec<_> = again.patches.iter().map(|p| p.path.as_str()).collect();
+    harness.info(None).await;
+    let again = harness.patches(first.cursor).await;
+    let paths: Vec<_> = again
+        .patches
+        .iter()
+        .map(|patch| patch.path.as_str())
+        .collect();
     assert_eq!(paths, vec!["B.luau"]);
 }

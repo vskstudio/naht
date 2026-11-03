@@ -22,7 +22,7 @@ enum GoldenError {
 }
 
 fn hex(out: &mut impl Write, label: &str, bytes: &[u8]) -> io::Result<()> {
-    let encoded: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let encoded: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
     writeln!(out, "{label} {encoded}")
 }
 

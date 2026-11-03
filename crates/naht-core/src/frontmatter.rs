@@ -64,11 +64,11 @@ pub fn render(properties: &BTreeMap<String, Variant>) -> Option<String> {
     Some(format!("{PREFIX} {{ {body} }}\n"))
 }
 
-fn parse_table(s: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError> {
-    let inner = s
+fn parse_table(body: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError> {
+    let inner = body
         .strip_prefix('{')
-        .and_then(|s| s.strip_suffix('}'))
-        .ok_or_else(|| FrontmatterError::NotATable(s.to_owned()))?
+        .and_then(|text| text.strip_suffix('}'))
+        .ok_or_else(|| FrontmatterError::NotATable(body.to_owned()))?
         .trim();
     let mut props = BTreeMap::new();
     if inner.is_empty() {
@@ -93,71 +93,78 @@ fn parse_table(s: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError> {
     Ok(props)
 }
 
-fn split_top_level(s: &str, delim: char) -> Vec<String> {
+fn split_top_level(input: &str, delim: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
     let mut depth = 0u32;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
+    let mut chars = input.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
             '"' => {
                 in_quotes = !in_quotes;
-                current.push(c);
+                current.push(character);
             }
             '\\' if in_quotes => {
-                current.push(c);
+                current.push(character);
                 if let Some(next) = chars.next() {
                     current.push(next);
                 }
             }
             '(' | '{' if !in_quotes => {
                 depth += 1;
-                current.push(c);
+                current.push(character);
             }
             ')' | '}' if !in_quotes => {
                 depth = depth.saturating_sub(1);
-                current.push(c);
+                current.push(character);
             }
-            c if c == delim && !in_quotes && depth == 0 => {
+            character if character == delim && !in_quotes && depth == 0 => {
                 parts.push(current.clone());
                 current.clear();
             }
-            c => current.push(c),
+            character => current.push(character),
         }
     }
     parts.push(current);
     parts
 }
 
-fn parse_value(s: &str) -> Result<Variant, FrontmatterError> {
-    match s {
+fn parse_value(raw: &str) -> Result<Variant, FrontmatterError> {
+    match raw {
         "true" => return Ok(Variant::Bool(true)),
         "false" => return Ok(Variant::Bool(false)),
         _ => {}
     }
-    if let Some(text) = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+    if let Some(text) = raw
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+    {
         return Ok(Variant::String(unescape(text)));
     }
-    if let Some(args) = call_args(s, "Color3") {
-        let [r, g, b] = floats(s, args)?;
-        return Ok(Variant::Color3(Color3::new(r, g, b)));
+    if let Some(args) = call_args(raw, "Color3") {
+        let [red, green, blue] = floats(raw, args)?;
+        return Ok(Variant::Color3(Color3::new(red, green, blue)));
     }
-    if let Some(args) = call_args(s, "Vector3") {
-        let [x, y, z] = floats(s, args)?;
-        return Ok(Variant::Vector3(Vector3::new(x, y, z)));
+    if let Some(args) = call_args(raw, "Vector3") {
+        let [x_component, y_component, z_component] = floats(raw, args)?;
+        return Ok(Variant::Vector3(Vector3::new(
+            x_component,
+            y_component,
+            z_component,
+        )));
     }
-    if let Some(args) = call_args(s, "Enum") {
+    if let Some(args) = call_args(raw, "Enum") {
         let value = args
             .trim()
             .parse::<u32>()
-            .map_err(|_| FrontmatterError::BadValue(s.to_owned()))?;
+            .map_err(|_| FrontmatterError::BadValue(raw.to_owned()))?;
         return Ok(Variant::Enum(Enum::from_u32(value)));
     }
-    if let Some(args) = call_args(s, "Tags") {
+    if let Some(args) = call_args(raw, "Tags") {
         return Ok(Variant::Tags(parse_tags(args)?));
     }
-    if let Some(args) = call_args(s, "Attributes") {
+    if let Some(args) = call_args(raw, "Attributes") {
         let table = parse_table(args.trim())?;
         let mut attributes = Attributes::new();
         for (key, value) in table {
@@ -165,17 +172,20 @@ fn parse_value(s: &str) -> Result<Variant, FrontmatterError> {
         }
         return Ok(Variant::Attributes(attributes));
     }
-    if let Ok(int) = s.parse::<i64>() {
+    if let Ok(int) = raw.parse::<i64>() {
         return Ok(Variant::Int64(int));
     }
-    if let Ok(float) = s.parse::<f64>() {
+    if let Ok(float) = raw.parse::<f64>() {
         return Ok(Variant::Float64(float));
     }
-    Err(FrontmatterError::BadValue(s.to_owned()))
+    Err(FrontmatterError::BadValue(raw.to_owned()))
 }
 
-fn call_args<'a>(s: &'a str, name: &str) -> Option<&'a str> {
-    s.strip_prefix(name)?.strip_prefix('(')?.strip_suffix(')')
+fn call_args<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+    source
+        .strip_prefix(name)?
+        .strip_prefix('(')?
+        .strip_suffix(')')
 }
 
 fn floats<const N: usize>(whole: &str, args: &str) -> Result<[f32; N], FrontmatterError> {
@@ -202,7 +212,7 @@ fn parse_tags(args: &str) -> Result<Tags, FrontmatterError> {
         }
         let text = part
             .strip_prefix('"')
-            .and_then(|p| p.strip_suffix('"'))
+            .and_then(|candidate| candidate.strip_suffix('"'))
             .ok_or_else(|| FrontmatterError::BadValue(part.to_owned()))?;
         tags.push(unescape(text));
     }
@@ -211,21 +221,26 @@ fn parse_tags(args: &str) -> Result<Tags, FrontmatterError> {
 
 fn render_value(value: &Variant) -> String {
     match value {
-        Variant::Bool(b) => b.to_string(),
-        Variant::Int64(i) => i.to_string(),
+        Variant::Bool(flag) => flag.to_string(),
+        Variant::Int64(number) => number.to_string(),
         Variant::Float64(f) => format!("{f:?}"),
-        Variant::String(s) => format!("\"{}\"", escape(s)),
-        Variant::Color3(c) => format!("Color3({:?}, {:?}, {:?})", c.r, c.g, c.b),
-        Variant::Vector3(v) => format!("Vector3({:?}, {:?}, {:?})", v.x, v.y, v.z),
-        Variant::Enum(e) => format!("Enum({})", e.to_u32()),
+        Variant::String(text) => format!("\"{}\"", escape(text)),
+        Variant::Color3(color) => format!("Color3({:?}, {:?}, {:?})", color.r, color.g, color.b),
+        Variant::Vector3(vector) => {
+            format!("Vector3({:?}, {:?}, {:?})", vector.x, vector.y, vector.z)
+        }
+        Variant::Enum(enum_value) => format!("Enum({})", enum_value.to_u32()),
         Variant::Tags(tags) => {
-            let items: Vec<String> = tags.iter().map(|t| format!("\"{}\"", escape(t))).collect();
+            let items: Vec<String> = tags
+                .iter()
+                .map(|tag| format!("\"{}\"", escape(tag)))
+                .collect();
             format!("Tags({})", items.join(", "))
         }
         Variant::Attributes(attributes) => {
             let items: Vec<String> = attributes
                 .iter()
-                .map(|(key, value)| format!("{key} = {}", render_value(value)))
+                .map(|(key, variant)| format!("{key} = {}", render_value(variant)))
                 .collect();
             format!("Attributes({{ {} }})", items.join(", "))
         }
@@ -233,15 +248,15 @@ fn render_value(value: &Variant) -> String {
     }
 }
 
-fn escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn unescape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(character) = chars.next() {
+        if character == '\\' {
             match chars.next() {
                 Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
@@ -252,7 +267,7 @@ fn unescape(s: &str) -> String {
                 None => out.push('\\'),
             }
         } else {
-            out.push(c);
+            out.push(character);
         }
     }
     out

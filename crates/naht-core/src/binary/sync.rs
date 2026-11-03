@@ -222,8 +222,8 @@ fn class_of(
     base: Option<&InstanceRecord>,
 ) -> String {
     fs.or(studio)
-        .map(|b| b.class.clone())
-        .or_else(|| base.map(|r| r.class.clone()))
+        .map(|current| current.class.clone())
+        .or_else(|| base.map(|base_entry| base_entry.class.clone()))
         .unwrap_or_default()
 }
 

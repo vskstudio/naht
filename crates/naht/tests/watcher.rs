@@ -39,8 +39,8 @@ async fn a_new_file_becomes_a_queued_patch() {
     let mut found = None;
     for _ in 0..100 {
         {
-            let session = state.session_lock().await;
-            let (_, patches) = session.take_patches(0);
+            let locked_session = state.session_lock().await;
+            let (_, patches) = locked_session.take_patches(0);
             if let Some(patch) = patches.into_iter().next() {
                 found = Some(patch);
                 break;

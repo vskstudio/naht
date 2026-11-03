@@ -155,7 +155,10 @@ mod tests {
         let tree = Snapshot::new("Folder", "proj")
             .with_child(Snapshot::new("Terrain", "Terrain"))
             .with_child(Snapshot::new("MeshPart", "Rock"));
-        let reasons: Vec<_> = scan(&tree).into_iter().map(|w| w.reason).collect();
+        let reasons: Vec<_> = scan(&tree)
+            .into_iter()
+            .map(|warning| warning.reason)
+            .collect();
         assert!(reasons.contains(&Reason::Terrain));
         assert!(reasons.contains(&Reason::MeshBinary));
     }
@@ -168,7 +171,7 @@ mod tests {
         let options = Options { terrain_sync: true };
         let reasons: Vec<_> = scan_with(&tree, options)
             .into_iter()
-            .map(|w| w.reason)
+            .map(|warning| warning.reason)
             .collect();
         assert!(!reasons.contains(&Reason::Terrain));
         assert!(reasons.contains(&Reason::MeshBinary));

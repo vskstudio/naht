@@ -44,8 +44,8 @@ fn from_rojo_migrates_the_tree_so_the_build_matches_rojo() {
     let mut mapped: Vec<(String, String)> = common
         .children()
         .iter()
-        .map(|r| dom.get_by_ref(*r).unwrap())
-        .map(|i| (i.name.clone(), i.class.as_str().to_owned()))
+        .map(|reference| dom.get_by_ref(*reference).unwrap())
+        .map(|instance| (instance.name.clone(), instance.class.as_str().to_owned()))
         .collect();
     mapped.sort();
     assert_eq!(
@@ -119,13 +119,13 @@ fn from_rojo_reports_what_it_cannot_represent() {
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("Size") && w.contains("cannot be represented")),
+            .any(|warning| warning.contains("Size") && warning.contains("cannot be represented")),
         "expected a warning about the unrepresentable Vector3 property, got: {warnings:?}"
     );
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("$ignoreUnknownInstances")),
+            .any(|warning| warning.contains("$ignoreUnknownInstances")),
         "expected a warning about the unsupported directive, got: {warnings:?}"
     );
 }

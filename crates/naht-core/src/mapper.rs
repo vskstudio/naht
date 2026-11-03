@@ -64,7 +64,8 @@ pub fn snapshot_dir(vfs: &impl Vfs, dir: &Path) -> Result<Snapshot, MapError> {
         match entry.kind {
             EntryKind::Dir => snapshot.push_child(snapshot_dir(vfs, &entry.path)?),
             EntryKind::File => {
-                let Some(file_name) = entry.path.file_name().and_then(|n| n.to_str()) else {
+                let Some(file_name) = entry.path.file_name().and_then(|os_name| os_name.to_str())
+                else {
                     continue;
                 };
                 if let Some((class, child_name)) = script_class(file_name) {
@@ -180,7 +181,7 @@ fn init_file_name(class: &str) -> &'static str {
 
 fn file_name(path: &Path) -> Result<String, MapError> {
     path.file_name()
-        .and_then(|n| n.to_str())
+        .and_then(|os_name| os_name.to_str())
         .map(str::to_owned)
         .ok_or_else(|| MapError::NoFileName(path.to_path_buf()))
 }
@@ -209,7 +210,7 @@ mod tests {
         snapshot
             .children
             .iter()
-            .find(|c| c.name == name)
+            .find(|child| child.name == name)
             .unwrap_or_else(|| panic!("missing child {name}"))
     }
 
@@ -232,7 +233,7 @@ mod tests {
     fn non_source_file_is_skipped() {
         let vfs = fixture();
         let tree = snapshot_dir(&vfs, Path::new("proj")).unwrap();
-        assert!(tree.children.iter().all(|c| c.name != "README.md"));
+        assert!(tree.children.iter().all(|child| child.name != "README.md"));
     }
 
     #[test]
