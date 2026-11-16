@@ -56,6 +56,10 @@ bidirectional sync between the daemon and Studio requires the plugin (Stage 6).
 - [`docs/spec.md`](docs/spec.md): the staged implementation spec (one stage = one PR)
 - [`site/`](site/): an animated Svelte documentation site (`cd site && npm install && npm run dev`)
 
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

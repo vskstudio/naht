@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in Naht does not work as documented.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest project and the exact commands that show the problem.
+      placeholder: |
+        1. naht init demo
+        2. naht serve demo
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Output of `naht serve -vv` around the failure, and the Studio output window if the plugin is involved.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Naht version
+      description: Output of `naht --version`.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, macOS 15, Arch Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: data-loss
+    attributes:
+      label: Was any work lost or overwritten?
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
