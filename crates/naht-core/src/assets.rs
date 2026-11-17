@@ -109,7 +109,7 @@ pub fn resolve_asset(
 ///
 /// Returns `Some(asset_id)` when `value` points to an existing file in `vfs` (so the caller rewrites
 /// the property), or `None` when it is already an asset id or not a local file (left unchanged). This
-/// is the rewrite hook the build/sync pipeline calls when `[assets]` is enabled.
+/// is the rewrite hook the build pipeline calls when `[assets]` is enabled.
 ///
 /// # Errors
 ///
@@ -156,7 +156,7 @@ pub struct AssetFailure {
 /// Rewrite every local asset reference in a snapshot to its uploaded asset id.
 ///
 /// Uploads once and caches each file. Properties that are already asset ids, or are not local
-/// files, are left untouched. The build/sync pipeline calls this when `[assets]` is enabled.
+/// files, are left untouched. The build pipeline calls this when `[assets]` is enabled.
 ///
 /// A single asset that fails to resolve does **not** abort the walk: that property
 /// is left at its original reference and recorded in the returned failures, while every other asset
