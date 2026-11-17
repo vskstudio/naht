@@ -100,6 +100,15 @@ pub enum ReconcileError {
     /// `resolve` was refused because the file still has conflict markers.
     #[error("conflict markers remain at {}", .0.display())]
     MarkersRemain(PathBuf),
+    /// `resolve --keep disk` was refused because the disk copy of the blob is missing.
+    #[error("cannot keep the disk copy of {}: the file is missing", .0.display())]
+    MissingOnDisk(PathBuf),
+    /// A frozen binary conflict was resolved without choosing a side.
+    #[error("{} is a binary conflict; choose a side with --keep disk or --keep studio", .0.display())]
+    KeepRequired(PathBuf),
+    /// `--keep` was given for a path that is not a frozen binary conflict.
+    #[error("--keep applies only to a frozen binary conflict, not {}", .0.display())]
+    KeepNotBinary(PathBuf),
 }
 
 pub(super) fn patch(

@@ -58,7 +58,10 @@ impl From<&CommandError> for Exit {
             | CommandError::Reconcile(
                 ReconcileError::NonUtf8 { .. }
                 | ReconcileError::NotConflicted(_)
-                | ReconcileError::MarkersRemain(_),
+                | ReconcileError::MarkersRemain(_)
+                | ReconcileError::MissingOnDisk(_)
+                | ReconcileError::KeepRequired(_)
+                | ReconcileError::KeepNotBinary(_),
             ) => Self::DataError,
             CommandError::RenderConfig(_) => Self::Software,
             CommandError::Reconcile(ReconcileError::State(_) | ReconcileError::Vfs(_))

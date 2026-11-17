@@ -174,6 +174,7 @@ instances only the hash is stored (no merge base).
   (`_serveBlobs` in `plugin/src/Connection.luau`) runs apart from it: a failed `GET /blobs` poll, or a
   batch that does not apply, is retried at the same cursor after a wait that starts at 2 s, doubles, and
   caps at 60 s. A cleanly applied batch resets that wait to 2 s. The `/blobs` cursor is the ack: the daemon drops each queued blob patch below the cursor a poll sends, and the plugin keeps its blob cursor across a reconnect to the same daemon session. After five consecutive undecodable
+- **A frozen blob is cleared by `naht resolve --keep disk|studio`.** A freeze stores the Studio hash as the base, so the record names what Studio holds. `--keep disk` clears the flag, and the next reconcile pushes the disk bytes to Studio; it is refused when the disk file is missing. `--keep studio` records the disk hash as the base, so the next reconcile writes the Studio bytes over the file; when the file is missing, the record is dropped and the next reconcile recreates the file from Studio. A binary conflict needs `--keep`, and a text file refuses it (`a_binary_conflict_needs_a_side_and_a_text_file_refuses_one`).
   responses the blob channel shows a `keeps failing to decode, still retrying` Warning, and it keeps
   retrying: it never gives up while the connection runs.
 - **Long-poll wake-ups never race the queue.** A parked `/patches` or `/blobs` request enrols its
@@ -236,7 +237,6 @@ not a v1 blocker.
   account's processes. Either one closes the gap for shared machines.
 - **The place guard is a safety check (open).** `servePlaceId` stops a session bound to the wrong place
   from syncing, but the place id is a value the client sends, so it is not a credential.
-- **Frozen binary paths have no unfreeze (C8).** When both sides change a blob, its path freezes, and the resolve API has no way to clear that freeze. Choosing which side wins on resolve is a decision still open, and the fix touches the persist layer (`reconciler/persist.rs`).
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.

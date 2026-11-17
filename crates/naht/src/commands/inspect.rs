@@ -3,10 +3,12 @@ use super::files::{open_store, rooted};
 use crate::config::Config;
 use crate::uploader::OpenCloudUploader;
 use naht_core::assets;
+use naht_core::binary::{self, Keep};
+use naht_core::reconciler::ReconcileError;
 use naht_core::snapshot::Snapshot;
 use naht_core::vfs::{DiskVfs, RootedVfs};
 use naht_core::{limits, reconciler};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The project's conflict state: the paths frozen pending `resolve`.
 ///
@@ -18,15 +20,25 @@ pub fn status(root: &Path) -> Result<reconciler::Status, CommandError> {
     Ok(reconciler::status(&store)?)
 }
 
-/// Clear a conflict at `path` once its markers have been removed by hand.
+/// Clear a conflict at `path`: a text conflict once its markers are removed by hand, or a frozen
+/// binary conflict once `keep` names the side to keep.
 ///
 /// # Errors
 ///
-/// Returns [`CommandError`] when `path` cannot be resolved.
-pub fn resolve(root: &Path, path: &str) -> Result<(), CommandError> {
+/// Returns [`CommandError`] when `path` cannot be resolved, or when `keep` is missing for a binary
+/// conflict or given for a text file.
+pub fn resolve(root: &Path, path: &str, keep: Option<Keep>) -> Result<(), CommandError> {
     let store = open_store(root)?;
     let vfs = rooted(root)?;
-    reconciler::resolve(&vfs, &store, path)?;
+    let frozen_binary = store
+        .get(path)?
+        .is_some_and(|record| record.conflicted && record.base_content.is_none());
+    match (frozen_binary, keep) {
+        (true, Some(keep)) => binary::resolve(&vfs, &store, path, keep)?,
+        (true, None) => return Err(ReconcileError::KeepRequired(PathBuf::from(path)).into()),
+        (false, None) => reconciler::resolve(&vfs, &store, path)?,
+        (false, Some(_)) => return Err(ReconcileError::KeepNotBinary(PathBuf::from(path)).into()),
+    }
     Ok(())
 }
 

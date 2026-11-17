@@ -120,6 +120,7 @@ fn a_change_on_both_sides_freezes_a_binary_conflict_without_overwriting() {
     let record = store.get("t.terrain").unwrap().unwrap();
     assert!(record.conflicted);
     assert_eq!(record.base_content, None);
+    assert_eq!(record.content_hash, content_hash(b"studio-edit"));
 
     let again = sync_blobs(
         &mut vfs,
@@ -129,6 +130,99 @@ fn a_change_on_both_sides_freezes_a_binary_conflict_without_overwriting() {
     )
     .unwrap();
     assert_eq!(again.len(), 0);
+}
+
+fn freeze_t(vfs: &mut MemoryVfs, store: &StateStore) {
+    vfs.write(Path::new("t.terrain"), b"fs-edit").unwrap();
+    sync_blobs(
+        vfs,
+        store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+}
+
+#[test]
+fn keep_disk_pushes_the_disk_bytes_to_studio_on_the_next_reconcile() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"base".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"base");
+    freeze_t(&mut vfs, &store);
+
+    resolve(&vfs, &store, "t.terrain", Keep::Disk).unwrap();
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].direction, Direction::ToStudio);
+    assert_eq!(patches[0].content.as_deref(), Some(&b"fs-edit"[..]));
+    assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"fs-edit");
+}
+
+#[test]
+fn keep_studio_writes_the_studio_bytes_to_disk_on_the_next_reconcile() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"base".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"base");
+    freeze_t(&mut vfs, &store);
+
+    resolve(&vfs, &store, "t.terrain", Keep::Studio).unwrap();
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].direction, Direction::ToFs);
+    assert_eq!(patches[0].content.as_deref(), Some(&b"studio-edit"[..]));
+    assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"studio-edit");
+}
+
+#[test]
+fn keep_studio_with_the_disk_file_gone_leaves_the_next_reconcile_to_recreate_it() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"base".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"base");
+    freeze_t(&mut vfs, &store);
+    vfs.remove(Path::new("t.terrain")).unwrap();
+
+    resolve(&vfs, &store, "t.terrain", Keep::Studio).unwrap();
+    assert!(store.get("t.terrain").unwrap().is_none());
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].kind, PatchKind::Create);
+    assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"studio-edit");
+}
+
+#[test]
+fn keep_disk_refuses_a_disk_copy_that_is_missing() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"base".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"base");
+    freeze_t(&mut vfs, &store);
+    vfs.remove(Path::new("t.terrain")).unwrap();
+
+    assert!(matches!(
+        resolve(&vfs, &store, "t.terrain", Keep::Disk),
+        Err(ReconcileError::MissingOnDisk(_))
+    ));
+    assert!(store.get("t.terrain").unwrap().unwrap().conflicted);
 }
 
 #[test]

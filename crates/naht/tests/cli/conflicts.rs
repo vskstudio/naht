@@ -40,9 +40,9 @@ fn status_and_resolve_reflect_the_conflict_state() {
 
     commands::status(&root).unwrap();
 
-    assert!(commands::resolve(&root, rel).is_err());
+    assert!(commands::resolve(&root, rel, None).is_err());
     fs::write(root.join("src").join("m.luau"), "local a = 99\n").unwrap();
-    commands::resolve(&root, rel).unwrap();
+    commands::resolve(&root, rel, None).unwrap();
 
     let resolved_store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     assert_eq!(

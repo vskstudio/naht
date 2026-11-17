@@ -105,13 +105,13 @@ impl<V: Vfs> Pass<'_, V> {
                                 ));
                                 advance(self.store, path, &class, &studio.content)?;
                             }
-                            (true, true) => self.freeze(path, &class, base_hash)?,
+                            (true, true) => self.freeze(path, &class, &studio_hash)?,
                         }
                     }
                     None if fs_hash == studio_hash => {
                         advance(self.store, path, &class, &fs.content)?;
                     }
-                    None => self.freeze(path, &class, &fs_hash)?,
+                    None => self.freeze(path, &class, &studio_hash)?,
                 }
             }
             (Some(fs), None) => {

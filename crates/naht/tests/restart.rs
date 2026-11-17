@@ -214,7 +214,7 @@ fn a_resolved_conflict_reaches_studio_on_the_next_reconcile() {
     let (cursor, _) = patches_of(&session, 0);
 
     fs::write(root.join(FILE), "local a = 99\n").unwrap();
-    commands::resolve(root, FILE).unwrap();
+    commands::resolve(root, FILE, None).unwrap();
     session.rescan().unwrap();
 
     let (_, patches) = patches_of(&session, cursor);
@@ -249,7 +249,7 @@ fn a_studio_edit_made_while_frozen_survives_a_restart() {
     restarted.rescan().unwrap();
     patches_of(&restarted, 0);
     fs::write(root.join(FILE), "local a = 99\n").unwrap();
-    commands::resolve(root, FILE).unwrap();
+    commands::resolve(root, FILE, None).unwrap();
 
     let mut resolved = open(root, false);
     resolved.rescan().unwrap();
@@ -290,7 +290,7 @@ fn a_resolved_conflict_reaches_studio_after_a_restart() {
     drop(restarted);
 
     fs::write(root.join(FILE), "local a = 99\n").unwrap();
-    commands::resolve(root, FILE).unwrap();
+    commands::resolve(root, FILE, None).unwrap();
 
     let mut resolved = open(root, false);
     resolved.rescan().unwrap();

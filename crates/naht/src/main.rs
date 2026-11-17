@@ -24,7 +24,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use naht::commands;
 use naht::config::Config;
@@ -34,6 +34,7 @@ use crate::exit::Exit;
 use crate::failure::Failure;
 use naht::logging;
 use naht::shutdown;
+use naht_core::binary::Keep;
 
 /// Bidirectional, conflict-safe filesystem sync for Roblox Studio.
 #[derive(Parser)]
@@ -44,6 +45,21 @@ struct Cli {
     verbose: u8,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum KeepSide {
+    Disk,
+    Studio,
+}
+
+impl From<KeepSide> for Keep {
+    fn from(side: KeepSide) -> Self {
+        match side {
+            KeepSide::Disk => Self::Disk,
+            KeepSide::Studio => Self::Studio,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -94,6 +110,9 @@ enum Command {
     Resolve {
         /// The conflicted path, as listed by `status`.
         path: String,
+        /// For a frozen binary file: the side to keep. Required for binary, refused for text.
+        #[arg(long, value_enum)]
+        keep: Option<KeepSide>,
         /// The project directory; defaults to the current directory.
         #[arg(long, default_value = ".")]
         project: PathBuf,
@@ -175,8 +194,12 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
             let status = commands::status(&path)?;
             out.status(&status)?;
         }
-        Command::Resolve { path, project } => {
-            commands::resolve(&project, &path)?;
+        Command::Resolve {
+            path,
+            keep,
+            project,
+        } => {
+            commands::resolve(&project, &path, keep.map(Keep::from))?;
             match commands::resync_running(&project).await {
                 commands::ResyncOutcome::Resynced => {
                     out.say(format_args!("resolved {path}, daemon re-synced"))?;

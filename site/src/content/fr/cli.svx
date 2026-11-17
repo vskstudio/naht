@@ -93,17 +93,19 @@ naht status
 
 ## `naht resolve <path>`
 
-Lève un conflit une fois ses marqueurs disparus. **Refuse tant que des marqueurs de conflit subsistent.**
+Lève un conflit. Un conflit de texte se lève une fois ses marqueurs disparus, et **refuse tant que des marqueurs de conflit subsistent**. Un fichier binaire gelé (comme le terrain) n'a pas de marqueurs : indique le côté à garder avec `--keep`, obligatoire pour lui et refusé pour du texte.
 
 Ensuite, il demande au daemon enregistré dans `.naht/daemon.port` de re-synchroniser, sans attendre plus de 2 secondes. Il affiche `daemon re-synced` quand ça marche, rien de plus si aucun daemon ne tourne, et sinon la raison (par exemple, le daemon n'a pas répondu à temps). Le fichier est résolu dans tous les cas, et le code de sortie reste 0. Un échec de la relance ne fait jamais échouer la commande : seul le message change. C'est aussi le cas quand le port enregistré appartient à un autre projet.
 
 ```sh
 naht resolve src/Hello.luau
 naht resolve src/Hello.luau --project ../demo   # scope to another project dir
+naht resolve src/Map.terrain --keep studio      # garde la copie Studio d'un binaire gelé
 ```
 
 | Flag | Rôle |
 |---|---|
+| `--keep <disk\|studio>` | Le côté que garde un conflit binaire gelé. Obligatoire pour un binaire, refusé pour du texte. `disk` envoie le fichier vers Studio ; `studio` écrit la copie Studio par-dessus le fichier. |
 | `--project <DIR>` | Le répertoire du projet (défaut à `.`). |
 
 Voir [Conflits](#/docs/conflicts) pour le workflow de résolution complet.
