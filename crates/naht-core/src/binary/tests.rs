@@ -355,3 +355,79 @@ fn keep_studio_on_a_legacy_record_writes_the_studio_bytes_to_disk() {
     assert_eq!(patches[0].content.as_deref(), Some(&b"studio-edit"[..]));
     assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"studio-edit");
 }
+
+#[test]
+fn a_studio_edit_after_keep_disk_and_one_reconcile_reaches_the_disk() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"base".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"base");
+    freeze_t(&mut vfs, &store);
+    resolve(&vfs, &store, "t.terrain", Keep::Disk).unwrap();
+    sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-later")])),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].direction, Direction::ToFs);
+    assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"studio-later");
+}
+
+#[test]
+fn keep_disk_with_matching_studio_bytes_pushes_nothing() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"base".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"base");
+    freeze_t(&mut vfs, &store);
+    resolve(&vfs, &store, "t.terrain", Keep::Disk).unwrap();
+
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"fs-edit")])),
+    )
+    .unwrap();
+
+    assert!(patches.is_empty());
+}
+
+#[test]
+fn a_legacy_empty_base_hash_still_keeps_the_disk_bytes() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"fs-edit".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    store
+        .upsert(&InstanceRecord {
+            guid: "t.terrain".to_owned(),
+            path: "t.terrain".to_owned(),
+            class: CLASS.to_owned(),
+            content_hash: String::new(),
+            base_content: None,
+            mtime: 0,
+            conflicted: false,
+        })
+        .unwrap();
+
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].direction, Direction::ToStudio);
+    assert_eq!(patches[0].content.as_deref(), Some(&b"fs-edit"[..]));
+}

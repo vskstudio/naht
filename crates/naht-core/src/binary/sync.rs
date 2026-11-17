@@ -10,7 +10,7 @@ use crate::vfs::Vfs;
 use crate::walk::Unseen;
 
 use super::model::{BlobInstance, BlobPatch, patch};
-use super::persist::KEEP_DISK_MARKER;
+use super::persist::Base;
 
 /// Reconciles blobs only once Studio has reported its complete blob snapshot.
 ///
@@ -72,15 +72,15 @@ impl<V: Vfs> Pass<'_, V> {
         if is_frozen(base) {
             return Ok(());
         }
-        let base_hash = base.map(|record| record.content_hash.as_str());
+        let base_state = base.map(Base::of);
         let class = class_of(fs, studio, base);
 
         match (fs, studio) {
             (Some(fs), Some(studio)) => {
                 let fs_hash = content_hash(&fs.content);
                 let studio_hash = content_hash(&studio.content);
-                match base_hash {
-                    Some(KEEP_DISK_MARKER) => {
+                match &base_state {
+                    Some(Base::KeepDisk) => {
                         if fs_hash != studio_hash {
                             self.patches.push(patch(
                                 path,
@@ -92,9 +92,9 @@ impl<V: Vfs> Pass<'_, V> {
                         }
                         advance(self.store, path, &class, &fs.content)?;
                     }
-                    Some(base_hash) => {
-                        let changed_fs = fs_hash != base_hash;
-                        let changed_studio = studio_hash != base_hash;
+                    Some(Base::Synced(base_hash)) => {
+                        let changed_fs = fs_hash != *base_hash;
+                        let changed_studio = studio_hash != *base_hash;
                         match (changed_fs, changed_studio) {
                             (false, false) => {}
                             (true, false) => {
@@ -128,10 +128,10 @@ impl<V: Vfs> Pass<'_, V> {
                 }
             }
             (Some(fs), None) => {
-                self.reconcile_one_side(path, &class, &fs.content, base_hash, Side::Fs)?;
+                self.reconcile_one_side(path, &class, &fs.content, base_state.as_ref(), Side::Fs)?;
             }
             (None, Some(studio)) => {
-                self.reconcile_one_side(path, &class, &studio.content, base_hash, Side::Studio)?;
+                self.reconcile_one_side(path, &class, &studio.content, base_state.as_ref(), Side::Studio)?;
             }
             (None, None) => {}
         }
@@ -143,12 +143,12 @@ impl<V: Vfs> Pass<'_, V> {
         path: &str,
         class: &str,
         content: &[u8],
-        base_hash: Option<&str>,
+        base: Option<&Base>,
         present: Side,
     ) -> Result<(), ReconcileError> {
         let (toward_missing, toward_present) = present.directions();
-        match base_hash {
-            Some(base_hash) if content_hash(content) == base_hash => {
+        match base {
+            Some(Base::Synced(base_hash)) if content_hash(content) == *base_hash => {
                 remove_fs_copy(self.vfs, path, present)?;
                 self.patches
                     .push(patch(path, class, toward_present, PatchKind::Delete, None));

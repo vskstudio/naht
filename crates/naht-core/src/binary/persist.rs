@@ -14,7 +14,30 @@ pub enum Keep {
     Studio,
 }
 
-pub(super) const KEEP_DISK_MARKER: &str = "";
+const LEGACY_KEEP_DISK_HASH: &str = "";
+const KEEP_DISK_TOKEN: &str = "keep-disk";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Base {
+    Synced(String),
+    KeepDisk,
+}
+
+impl Base {
+    pub(super) fn of(record: &InstanceRecord) -> Self {
+        match record.content_hash.as_str() {
+            LEGACY_KEEP_DISK_HASH | KEEP_DISK_TOKEN => Self::KeepDisk,
+            hash => Self::Synced(hash.to_owned()),
+        }
+    }
+
+    fn stored(&self) -> &str {
+        match self {
+            Self::Synced(hash) => hash,
+            Self::KeepDisk => KEEP_DISK_TOKEN,
+        }
+    }
+}
 
 /// Clears a frozen binary conflict by choosing the side to keep.
 ///
@@ -43,7 +66,7 @@ pub fn resolve(
         (Keep::Disk, false) => Err(ReconcileError::MissingOnDisk(PathBuf::from(path))),
         (Keep::Disk, true) => {
             store.upsert(&InstanceRecord {
-                content_hash: KEEP_DISK_MARKER.to_owned(),
+                content_hash: Base::KeepDisk.stored().to_owned(),
                 conflicted: false,
                 ..record
             })?;
