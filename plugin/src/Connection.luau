@@ -92,6 +92,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		studioConnections = nil,
 		skippedPaths = {},
 		warnings = {},
+		conflicts = {},
 		projectName = "",
 	}, Connection)
 end
@@ -109,17 +110,40 @@ function Connection._clearWarning(self, source: string)
 	self:_refreshState()
 end
 
-function Connection._refreshState(self)
-	local sources = {}
-	for source in self.warnings do
-		table.insert(sources, source)
-	end
-	if #sources == 0 then
-		self.onState("Connected", self.projectName)
+function Connection._setConflict(self, path: string)
+	self.conflicts[path] = true
+	self:_refreshState()
+end
+
+function Connection._clearConflict(self, path: string)
+	if self.conflicts[path] == nil then
 		return
 	end
-	table.sort(sources)
-	self.onState("Warning", self.warnings[sources[1]])
+	self.conflicts[path] = nil
+	self:_refreshState()
+end
+
+function Connection._sortedKeys(map: { [string]: any }): { string }
+	local keys = {}
+	for key in map do
+		table.insert(keys, key)
+	end
+	table.sort(keys)
+	return keys
+end
+
+function Connection._refreshState(self)
+	local warningSources = Connection._sortedKeys(self.warnings)
+	if #warningSources > 0 then
+		self.onState("Warning", self.warnings[warningSources[1]])
+		return
+	end
+	local conflictPaths = Connection._sortedKeys(self.conflicts)
+	if #conflictPaths > 0 then
+		self.onState("Conflict", conflictPaths[1])
+		return
+	end
+	self.onState("Connected", self.projectName)
 end
 
 function Connection.nextBlobBackoff(current: number): number
@@ -215,6 +239,7 @@ function Connection._run(self, session: number)
 				return
 			end
 			self.projectName = info.project_name
+			self.conflicts = {}
 			self:_refreshState()
 			self.cursor = 0
 			self.blobCursor = 0
@@ -266,7 +291,9 @@ function Connection._serve(self, session: number)
 					table.insert(applied, patch.path)
 					self:_clearWarning(source)
 					if patch.kind == "Conflict" then
-						self.onState("Conflict", patch.path)
+						self:_setConflict(patch.path)
+					else
+						self:_clearConflict(patch.path)
 					end
 				else
 					self:_setWarning(source, string.format("patch rejected: %s: %s", patch.path, tostring(err)))
@@ -312,12 +339,14 @@ function Connection._applyBlobBatch(self, epoch: number, batch: any)
 			return
 		end
 		if patch.kind == "Conflict" then
-			self.onState("Conflict", patch.path)
+			self:_setConflict(patch.path)
 		elseif patch.direction == "ToStudio" and patch.content ~= nil then
 			local applied, err = pcall(function()
 				self:_applyBlob(patch.content)
 			end)
-			if not applied then
+			if applied then
+				self:_clearConflict(patch.path)
+			else
 				allApplied = false
 				rejection = tostring(err)
 			end

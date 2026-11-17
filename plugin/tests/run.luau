@@ -1155,6 +1155,83 @@ end
 
 do
 	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	lockedSource(tree, "Bad", 1)
+	local polls = 0
+	local connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return {
+						cursor = 1,
+						patches = {
+							{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+							{ kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" },
+							{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+						},
+					}
+				end
+				error("stop")
+			end,
+			postAck = function(_, _paths) end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	pcall(connection._serve, connection, 1)
+	check(
+		"a conflict plus a success in one batch ends in Conflict",
+		lastStateOf(log) == "Conflict" and log[#log].detail == "C.luau",
+		lastStateOf(log)
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local polls = 0
+	local connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return {
+						cursor = 1,
+						patches = { { kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" } },
+					}
+				end
+				if polls == 2 then
+					return {
+						cursor = 2,
+						patches = { { kind = "Upsert", direction = "ToStudio", path = "C.luau", class = "ModuleScript", content = "C" } },
+					}
+				end
+				error("stop")
+			end,
+			postAck = function(_, _paths) end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	pcall(connection._serve, connection, 1)
+	check(
+		"a later success on the conflicted path ends the Conflict",
+		lastStateOf(log) == "Connected",
+		lastStateOf(log)
+	)
+end
+
+do
+	local log, onState = stateLog()
 	local calls = 0
 	local tree, root = studioWorld(true)
 	local connection: any = nil
