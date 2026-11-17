@@ -2764,6 +2764,86 @@ do
 	)
 end
 
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local attempts = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, _changes)
+				attempts += 1
+				error({ status = 500, message = "naht: /changes returned 500", refused = {} })
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(1.5)
+	connection.running = false
+	check(
+		"a /changes 500 that keeps recurring is dropped after a bounded number of attempts",
+		attempts == 3 and next(connection.pendingPush) == nil,
+		string.format("attempts %d", attempts)
+	)
+	check(
+		"the batch dropped after repeated 500s is named in a Warning",
+		string.find(table.concat(warningsOf(log), "\n"), "not synced, the daemon kept failing on Bad.luau", 1, true) ~= nil,
+		table.concat(warningsOf(log), "\n")
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local statuses = { 500, 503, 500, 500 }
+	local attempts = 0
+	local accepted: { string } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				attempts += 1
+				local status = statuses[attempts]
+				if status ~= nil then
+					error({ status = status, message = "naht: /changes returned " .. status, refused = {} })
+				end
+				table.insert(accepted, changes[1].path)
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(1.5)
+	connection.running = false
+	check(
+		"a 503 is retried without a bound and a 500 count restarts after a different failure",
+		attempts == 5 and #accepted == 1,
+		string.format("attempts %d, accepted %d", attempts, #accepted)
+	)
+	check(
+		"no batch is dropped while its failures are transient",
+		string.find(table.concat(warningsOf(log), "\n"), "not synced", 1, true) == nil,
+		table.concat(warningsOf(log), "\n")
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end

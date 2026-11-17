@@ -17,6 +17,7 @@ local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
 local DECODE_FAILURE_LIMIT = 5
 local ACK_BACKOFF_START = 2
 local RETRY_BACKOFF_MAX = 60
+local SERVER_ERROR_LIMIT = 3
 local sharedPushGate = { inFlight = false }
 
 local CLASS_SUFFIX = {
@@ -47,6 +48,10 @@ local function failureMessage(err: any): string
 		return tostring(err.message)
 	end
 	return tostring(err)
+end
+
+local function isServerError(err: any): boolean
+	return type(err) == "table" and err.status == 500
 end
 
 local function isUndecodableFailure(err: any): boolean
@@ -141,6 +146,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		blobBackoff = BLOB_BACKOFF_START,
 		terrainBackoff = TERRAIN_BACKOFF_START,
 		pushBackoff = PUSH_RETRY,
+		pushServerErrors = 0,
 		ackBackoff = ACK_BACKOFF_START,
 		terrainInFlight = false,
 		cursor = 0,
@@ -231,6 +237,7 @@ function Connection.stop(self)
 	self.epoch += 1
 	self.pendingPush = {}
 	self.pushScheduled = false
+	self.pushServerErrors = 0
 	self.warnings = {}
 	self.conflicts = {}
 	self:_detachStudio()
@@ -651,11 +658,7 @@ function Connection._flushPush(self, session: number)
 			return
 		end
 		if isTransientFailure(err) then
-			self:_setWarning("push", "push failed: " .. failureMessage(err))
-			self:_restorePending(remaining)
-			local delay = self.pushBackoff
-			self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
-			self:_schedulePush(delay)
+			self:_retryPush(remaining, err)
 			return
 		end
 		if next(namedInBatch(remaining, err)) == nil and countKeys(remaining) > 1 then
@@ -667,6 +670,30 @@ function Connection._flushPush(self, session: number)
 		end
 		remaining = self:_takePending(remaining)
 	end
+end
+
+function Connection._retryPush(self, remaining: { [string]: any }, err: any)
+	if isServerError(err) then
+		self.pushServerErrors += 1
+	else
+		self.pushServerErrors = 0
+	end
+	if self.pushServerErrors >= SERVER_ERROR_LIMIT then
+		self.pushServerErrors = 0
+		self:_clearWarning("push")
+		for path in remaining do
+			self:_setWarning("refused:" .. path, "not synced, the daemon kept failing on " .. path .. ": " .. failureMessage(err))
+		end
+		if next(self.pendingPush) ~= nil then
+			self:_schedulePush()
+		end
+		return
+	end
+	self:_setWarning("push", "push failed: " .. failureMessage(err))
+	self:_restorePending(remaining)
+	local delay = self.pushBackoff
+	self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+	self:_schedulePush(delay)
 end
 
 function Connection._postChanges(self, changes: { any }): (boolean, any)
@@ -689,11 +716,7 @@ function Connection._postEach(self, session: number, remaining: { [string]: any 
 			remaining[path] = nil
 			self:_clearWarning("push")
 		elseif isTransientFailure(err) then
-			self:_setWarning("push", "push failed: " .. failureMessage(err))
-			self:_restorePending(remaining)
-			local delay = self.pushBackoff
-			self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
-			self:_schedulePush(delay)
+			self:_retryPush(remaining, err)
 			return false
 		else
 			remaining[path] = nil
