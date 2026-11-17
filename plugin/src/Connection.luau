@@ -369,7 +369,12 @@ function Connection._ack(self, session: number, paths: { string }): { string }
 		self:_clearWarning("ack")
 		return {}
 	end
-	self:_setWarning("ack", "ack failed: " .. tostring(err))
+	if not isTransientFailure(err) then
+		self:_setWarning("refused:ack", "ack refused: " .. failureMessage(err))
+		self.ackBackoff = ACK_BACKOFF_START
+		return {}
+	end
+	self:_setWarning("ack", "ack failed: " .. failureMessage(err))
 	local delay = self.ackBackoff
 	self.ackBackoff = doubled(delay, RETRY_BACKOFF_MAX)
 	task.wait(delay)

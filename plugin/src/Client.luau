@@ -84,7 +84,10 @@ function Client.postAck(self: Client, paths: { string })
 		Body = Protocol.encodeAck(paths),
 	})
 	if not response.Success then
-		error("naht: /ack returned " .. tostring(response.StatusCode))
+		error({
+			status = response.StatusCode,
+			message = "naht: /ack returned " .. tostring(response.StatusCode),
+		})
 	end
 end
 

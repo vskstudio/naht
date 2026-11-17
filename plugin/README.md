@@ -82,8 +82,10 @@ Behaviour notes:
   `not synced, the daemon refused <path>`, while the rest of the batch is sent. A refusal that names no path
   drops the whole batch with `push refused, batch not synced: <reason>`. Dropped edits are never merged back,
   and their Warnings stay until Stop.
-- An ack the daemon refuses is retried the same way with `ack failed: <reason>`, and its paths stay unacked
-  until the ack succeeds.
+- An ack that fails transiently (the same statuses as a push, or a network failure) is retried the same way with
+  `ack failed: <reason>`, and its paths stay unacked until the ack succeeds. An ack the daemon refuses with any
+  other status is not retried: the widget shows `Warning` with `ack refused: <reason>` until Stop, and those
+  paths are dropped from the unacked list.
 
 ## Tests
 

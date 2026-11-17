@@ -2500,6 +2500,99 @@ do
 	)
 end
 
+do
+	local log, onState = stateLog()
+	local ackAttempts = 0
+	local patchCalls = 0
+	local tree, root = studioWorld(true)
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				patchCalls += 1
+				if patchCalls == 1 then
+					return {
+						cursor = 1,
+						patches = {
+							{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+						},
+					}
+				end
+				if patchCalls == 2 then
+					return { cursor = 1, patches = {} }
+				end
+				error("stop")
+			end,
+			postAck = function(_, _paths)
+				ackAttempts += 1
+				error({ status = 400, message = "naht: /ack returned 400", refused = {} })
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.ackBackoff = 0.01
+	pcall(connection._serve, connection, 1)
+	check("a refused ack is not retried", ackAttempts == 1, string.format("attempts %d", ackAttempts))
+	local refusedText = table.concat(warningsOf(log), "\n")
+	check(
+		"a refused ack sets a Warning naming the refusal",
+		string.find(refusedText, "ack refused: naht: /ack returned 400", 1, true) ~= nil,
+		refusedText
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local ackAttempts = 0
+	local patchCalls = 0
+	local lengths: { number } = {}
+	local tree, root = studioWorld(true)
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				patchCalls += 1
+				if patchCalls == 1 then
+					local same = { kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" }
+					return { cursor = 1, patches = { same, same } }
+				end
+				if patchCalls == 2 or patchCalls == 3 then
+					return { cursor = 1, patches = {} }
+				end
+				error("stop")
+			end,
+			postAck = function(_, paths)
+				ackAttempts += 1
+				table.insert(lengths, #paths)
+				if ackAttempts <= 2 then
+					error({ status = 503, message = "naht: /ack returned 503", refused = {} })
+				end
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.ackBackoff = 0.01
+	pcall(connection._serve, connection, 1)
+	check(
+		"a transient ack failure retries one entry per path",
+		ackAttempts == 3 and lengths[1] == 1 and lengths[2] == 1 and lengths[3] == 1,
+		table.concat(lengths, ",")
+	)
+	check("a transient ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end
