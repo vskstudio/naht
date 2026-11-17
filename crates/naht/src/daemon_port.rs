@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process;
 
 const FILE: &str = "daemon.port";
 
@@ -9,7 +10,12 @@ pub(crate) fn path(root: &Path) -> PathBuf {
 }
 
 pub(crate) fn write(root: &Path, port: u16) -> io::Result<()> {
-    fs::write(path(root), port.to_string())
+    let target = path(root);
+    let temp = root
+        .join(".naht")
+        .join(format!("{FILE}.tmp-{}", process::id()));
+    fs::write(&temp, port.to_string())?;
+    fs::rename(&temp, &target).inspect_err(|_| drop(fs::remove_file(&temp)))
 }
 
 pub(crate) fn read(root: &Path) -> Option<u16> {
@@ -21,5 +27,27 @@ pub(crate) fn remove(root: &Path) -> io::Result<()> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read, write};
+    use std::ffi::OsString;
+    use std::fs;
+
+    #[test]
+    fn a_rewrite_replaces_the_port_and_leaves_no_temp_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".naht")).unwrap();
+        write(dir.path(), 40000).unwrap();
+        write(dir.path(), 40001).unwrap();
+
+        assert_eq!(read(dir.path()), Some(40001));
+        let names: Vec<OsString> = fs::read_dir(dir.path().join(".naht"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![OsString::from("daemon.port")]);
     }
 }
