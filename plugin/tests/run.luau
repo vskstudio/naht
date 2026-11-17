@@ -1278,6 +1278,18 @@ end
 
 do
 	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.epoch = 1
+	connection:_applyBlobBatch(1, { cursor = 1, patches = { { kind = "Conflict", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain" } } })
+	check("a blob Conflict is reported", lastStateOf(log) == "Conflict", lastStateOf(log))
+	connection:_applyBlobBatch(1, { cursor = 2, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } })
+	check("a later blob success on the same path ends the blob Conflict", lastStateOf(log) == "Connected", lastStateOf(log))
+end
+
+do
+	local log, onState = stateLog()
 	local region = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 1024, Y = 256, Z = 1024 } }
 	local posts = 0
 	local tree, root = studioWorld(true)
