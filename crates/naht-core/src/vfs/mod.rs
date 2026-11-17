@@ -16,7 +16,9 @@ mod tests;
 
 pub use disk::{DiskVfs, remove_stale_temp_files};
 pub use memory::MemoryVfs;
-pub use project_path::{ProjectPathError, validate_project_path};
+pub use project_path::{
+    ProjectPathError, validate_blob_path, validate_project_path, validate_source_path,
+};
 pub use rooted::RootedVfs;
 
 /// Errors raised by a [`Vfs`] implementation.

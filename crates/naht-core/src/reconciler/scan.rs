@@ -76,7 +76,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use crate::vfs::DiskVfs;
+    use crate::vfs::{DiskVfs, RootedVfs};
 
     use super::scan_text;
 
@@ -117,6 +117,29 @@ mod tests {
         assert_eq!(scan.instances.len(), 1);
         assert_eq!(scan.skipped.len(), 1);
         assert_eq!(scan.skipped[0].path, dir.path().join("Gone.luau"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_live_symlink_out_of_the_root_is_skipped_and_never_read_through() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write(root.path(), "Main.luau", b"return 1");
+        write(outside.path(), "Secret.luau", b"return 'outside'");
+        symlink(
+            outside.path().join("Secret.luau"),
+            root.path().join("Linked.luau"),
+        )
+        .unwrap();
+        let vfs = RootedVfs::new(root.path().to_path_buf(), DiskVfs::new());
+
+        let scan = scan_text(&vfs, Path::new("")).unwrap();
+
+        assert_eq!(scan.instances.len(), 1);
+        assert!(scan.instances.contains_key("Main.luau"));
+        assert_eq!(scan.skipped.len(), 1);
+        assert_eq!(scan.skipped[0].path, Path::new("Linked.luau"));
     }
 
     #[test]
