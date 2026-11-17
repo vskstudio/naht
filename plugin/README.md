@@ -94,11 +94,14 @@ Behaviour notes:
 - Dropped edits are never merged back. Each one's `Warning` clears when a later edit to the same path is accepted,
   and otherwise stays until Stop. Stop also discards any edit still waiting to be pushed.
 - A push waits for any earlier push still in flight, including one from a connection that was stopped and started
-  again. A post that gets no reply for 30 seconds is treated as abandoned: the widget shows `Warning` with
-  `push abandoned: no reply for 30 s, the batch in flight may not be synced`, its batch is not retried, and the next
-  push goes out. Stop does not release a post in flight; only a reply or this bound does. A late reply from an
-  abandoned post is ignored by the plugin's state, but it may still land on the daemon after a newer post, so the
-  daemon can end up holding the older content for that path until the next edit to it.
+  again. Each post starts a 30-second watchdog that does not depend on any later edit. A post that gets no reply
+  before it fires is abandoned: the widget shows `Warning` with `push abandoned: no reply for 30 s, the batch is sent
+  again`, the batch of that post is merged back into the pending edits, and a push is scheduled straight away. An
+  edit made since then for the same path wins over the restored one. A post that keeps hanging is re-sent once per
+  30 seconds, with the same Warning each time. Stop does not cancel a post in flight; only a reply or the watchdog
+  does. A late reply from an abandoned post is ignored by the plugin's state, and the re-sent batch is an idempotent
+  duplicate of it. A late reply can still land on the daemon after a newer post for the same path, so the daemon can
+  end up holding the older content for that path until the next edit to it.
 - An ack that fails transiently (the same statuses as a push, or a network failure) is retried the same way with
   `ack failed: <reason>`, and its paths stay unacked until the ack succeeds. An ack the daemon refuses with any
   other status is not retried: the widget shows `Warning` with `ack refused: <reason>` until Stop, and those

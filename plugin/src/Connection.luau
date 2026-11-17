@@ -111,7 +111,7 @@ export type Applier = {
 	apply: (self: Applier, patch: any) -> (),
 }
 
-export type PushFlight = { token: number, startedAt: number }
+export type PushFlight = { token: number, batch: { [string]: any } }
 export type PushGate = { issued: number, flight: PushFlight? }
 
 export type Deps = {
@@ -130,7 +130,7 @@ export type Deps = {
 	},
 	warn: ((string) -> ())?,
 	pushGate: PushGate?,
-	now: (() -> number)?,
+	delay: ((number, () -> ()) -> ())?,
 }
 
 function Connection.new(client: any, root: Instance, placeId: number, onState: (State, string?) -> (), deps: Deps)
@@ -162,7 +162,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		pendingPush = {},
 		pushScheduled = false,
 		pushGate = deps.pushGate or sharedPushGate,
-		now = deps.now or os.time,
+		delay = deps.delay or task.delay,
 		studioConnections = nil,
 		skippedPaths = {},
 		warnings = {},
@@ -640,31 +640,29 @@ function Connection._restorePending(self, remaining: { [string]: any })
 	end
 end
 
-function Connection._pushGateFree(self): boolean
-	local flight = self.pushGate.flight
-	if flight == nil then
-		return true
+function Connection._abandonFlight(self, token: number, session: number)
+	local gate = self.pushGate
+	local flight = gate.flight
+	if flight == nil or flight.token ~= token then
+		return
 	end
-	if self.now() - flight.startedAt < PUSH_ABANDON_AFTER then
-		return false
+	gate.flight = nil
+	if not self:_isCurrent(session) then
+		return
 	end
-	self.pushGate.flight = nil
-	self:_setWarning("push", string.format("push abandoned: no reply for %d s, the batch in flight may not be synced", PUSH_ABANDON_AFTER))
-	return true
+	self:_setWarning("push", string.format("push abandoned: no reply for %d s, the batch is sent again", PUSH_ABANDON_AFTER))
+	self:_restorePending(flight.batch)
+	self:_schedulePush()
 end
 
 function Connection._flushPush(self, session: number)
-	if not self:_pushGateFree() then
+	if self.pushGate.flight ~= nil then
 		self:_schedulePush(PUSH_DEBOUNCE)
 		return
 	end
 	local remaining = self:_takePending({})
 	while next(remaining) ~= nil do
-		local changes = {}
-		for _, change in remaining do
-			table.insert(changes, change)
-		end
-		local ok, err, owns = self:_postChanges(changes)
+		local ok, err, owns = self:_postChanges(remaining)
 		if not owns or not self:_isCurrent(session) then
 			return
 		end
@@ -721,11 +719,19 @@ function Connection._clearRefused(self, path: string)
 	self:_clearWarning("refused:" .. path)
 end
 
-function Connection._postChanges(self, changes: { any }): (boolean, any, boolean)
+function Connection._postChanges(self, batch: { [string]: any }): (boolean, any, boolean)
 	local gate = self.pushGate
 	gate.issued += 1
 	local token = gate.issued
-	gate.flight = { token = token, startedAt = self.now() }
+	local session = self.session
+	gate.flight = { token = token, batch = batch }
+	self.delay(PUSH_ABANDON_AFTER, function()
+		self:_abandonFlight(token, session)
+	end)
+	local changes = {}
+	for _, change in batch do
+		table.insert(changes, change)
+	end
 	local ok, err = pcall(function()
 		self.client:postChanges(changes)
 	end)
@@ -739,7 +745,7 @@ end
 function Connection._postEach(self, session: number, remaining: { [string]: any }): boolean
 	for _, path in Connection._sortedKeys(remaining) do
 		local change = remaining[path]
-		local ok, err, owns = self:_postChanges({ change })
+		local ok, err, owns = self:_postChanges({ [path] = change })
 		if not owns or not self:_isCurrent(session) then
 			return false
 		end

@@ -2812,7 +2812,7 @@ end
 do
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
-	local statuses = { 503, 503, 503, 503 }
+	local statuses = { 503, 503, 503, 503, 503, 503, 503, 503, 503, 503 }
 	local attempts = 0
 	local accepted: { string } = {}
 	local connection: any = nil
@@ -2835,14 +2835,14 @@ do
 	connection.running = true
 	connection.session = 1
 	connection.epoch = 1
-	connection.pushBackoff = 0.01
+	connection.pushBackoff = 0.001
 	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
 	connection:_schedulePush()
-	task.wait(1.5)
+	task.wait(2)
 	connection.running = false
 	check(
-		"a 503 is retried without a bound and is never dropped",
-		attempts == 5 and #accepted == 1,
+		"ten 503s in a row are each retried and the batch is still accepted after them",
+		attempts == 11 and #accepted == 1,
 		string.format("attempts %d, accepted %d", attempts, #accepted)
 	)
 	check(
@@ -2950,28 +2950,79 @@ end
 do
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
-	local clock = { now = 0 }
+	local watchdogs = {}
 	local gate = { issued = 0, flight = nil }
 	local released = false
-	local calls = 0
-	local accepted = {}
+	local posts = {}
 	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
 	hungDeps.pushGate = gate
-	hungDeps.now = function()
-		return clock.now
+	hungDeps.delay = function(_, fire)
+		table.insert(watchdogs, fire)
 	end
 	local connection: any = nil
 	connection = Connection.new(
 		{
 			postChanges = function(_, changes)
-				calls += 1
-				if changes[1].path == "A.luau" then
+				table.insert(posts, changes[1])
+				if #posts == 1 then
 					while not released do
 						task.wait(0.05)
 					end
-					return
 				end
-				table.insert(accepted, changes[1].path)
+			end,
+		},
+		root,
+		1,
+		onState,
+		hungDeps
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	local first = Protocol.upsert("A.luau", "ModuleScript", "A")
+	connection.pendingPush["A.luau"] = first
+	connection:_schedulePush()
+	task.wait(0.5)
+	watchdogs[1]()
+	task.wait(0.5)
+	released = true
+	task.wait(0.2)
+	connection.running = false
+	check(
+		"a hung post with no later edit is abandoned by the watchdog and its batch is sent again",
+		#posts == 2 and rawequal(posts[1], first) and rawequal(posts[2], first),
+		string.format("posts %d", #posts)
+	)
+	check(
+		"the abandoned post is named in a Warning",
+		string.find(table.concat(warningsOf(log), "\n"), "push abandoned", 1, true) ~= nil,
+		table.concat(warningsOf(log), "\n")
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local watchdogs = {}
+	local gate = { issued = 0, flight = nil }
+	local released = false
+	local posts = {}
+	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
+	hungDeps.pushGate = gate
+	hungDeps.delay = function(_, fire)
+		table.insert(watchdogs, fire)
+	end
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				table.insert(posts, changes[1])
+				if #posts == 1 then
+					while not released do
+						task.wait(0.05)
+					end
+				end
 			end,
 		},
 		root,
@@ -2986,37 +3037,32 @@ do
 	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
 	connection:_schedulePush()
 	task.wait(0.5)
-	clock.now = 31
-	connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(1)
+	local newer = Protocol.upsert("A.luau", "ModuleScript", "A2")
+	connection.pendingPush["A.luau"] = newer
+	watchdogs[1]()
+	task.wait(0.5)
 	released = true
 	task.wait(0.2)
 	connection.running = false
 	check(
-		"a post with no reply past the bound is abandoned and the next push is sent",
-		table.concat(accepted, ",") == "B.luau" and calls == 2,
-		string.format("calls %d, accepted: %s", calls, table.concat(accepted, ","))
-	)
-	check(
-		"the abandoned post is named in a Warning",
-		string.find(table.concat(warningsOf(log), "\n"), "push abandoned", 1, true) ~= nil,
-		table.concat(warningsOf(log), "\n")
+		"a newer pending edit to a path wins over the batch restored from an abandoned post",
+		#posts == 2 and rawequal(posts[2], newer),
+		string.format("posts %d", #posts)
 	)
 end
 
 do
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
-	local clock = { now = 0 }
+	local watchdogs = {}
 	local gate = { issued = 0, flight = nil }
 	local releasedFirst = false
 	local releasedSecond = false
 	local calls = 0
 	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
 	hungDeps.pushGate = gate
-	hungDeps.now = function()
-		return clock.now
+	hungDeps.delay = function(_, fire)
+		table.insert(watchdogs, fire)
 	end
 	local connection: any = nil
 	connection = Connection.new(
@@ -3047,9 +3093,7 @@ do
 	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
 	connection:_schedulePush()
 	task.wait(0.5)
-	clock.now = 31
-	connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
-	connection:_schedulePush()
+	watchdogs[1]()
 	task.wait(0.5)
 	local newerToken = gate.flight and gate.flight.token
 	releasedFirst = true
