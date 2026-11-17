@@ -35,7 +35,7 @@ fn scan_blobs_collects_only_terrain_files_with_exact_bytes() {
         .with_file("Workspace/Main.luau", b"return 1".to_vec())
         .with_file("README.md", b"not an instance".to_vec());
 
-    let found = scan_blobs(&vfs, Path::new("")).unwrap();
+    let found = scan_blobs(&vfs, Path::new("")).unwrap().instances;
 
     let keys: Vec<&String> = found.keys().collect();
     assert_eq!(keys, vec!["Workspace/Terrain.terrain"]);

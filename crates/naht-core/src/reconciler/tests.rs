@@ -259,7 +259,7 @@ fn scan_collects_source_files_as_text_instances_and_skips_the_rest() {
         .with_file("proj/folder/init.luau", "return {}")
         .with_file("proj/README.md", "not an instance");
 
-    let scanned = scan_text(&vfs, Path::new("proj")).unwrap();
+    let scanned = scan_text(&vfs, Path::new("proj")).unwrap().instances;
 
     let mut got: Vec<(&str, &str, &str)> = scanned
         .values()

@@ -12,9 +12,9 @@ use notify_debouncer_full::notify::{self, EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
 use thiserror::Error;
 
-use crate::config::INTERNAL_DIR;
 use crate::server::AppState;
 use crate::session::Session;
+use naht_core::walk::is_ignored_name;
 use tokio::runtime::Handle;
 
 /// Why the filesystem watcher could not start watching the project.
@@ -73,9 +73,19 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, Wat
 }
 
 fn is_project_event(root: &Path, event: &DebouncedEvent) -> bool {
-    let internal = root.join(INTERNAL_DIR);
     !matches!(event.kind, EventKind::Access(_))
-        && event.paths.iter().any(|path| !path.starts_with(&internal))
+        && event
+            .paths
+            .iter()
+            .any(|path| !is_under_ignored_entry(root, path))
+}
+
+fn is_under_ignored_entry(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        relative
+            .components()
+            .any(|component| component.as_os_str().to_str().is_some_and(is_ignored_name))
+    })
 }
 
 #[cfg(test)]
@@ -90,7 +100,7 @@ mod tests {
 
     use super::*;
     use crate::commands;
-    use crate::config::Config;
+    use crate::config::{Config, INTERNAL_DIR};
     use tokio::time;
 
     fn event_at(path: &str) -> DebouncedEvent {
@@ -158,8 +168,23 @@ mod tests {
     }
 
     #[test]
-    fn a_sibling_named_like_the_internal_dir_is_a_project_event() {
-        let event = event_at("/project/.naht-notes/todo.txt");
+    fn a_write_under_a_vcs_dependency_or_build_dir_is_not_a_project_event() {
+        for path in [
+            "/project/.git/index",
+            "/project/node_modules/pkg/index.js",
+            "/project/target/debug/naht",
+            "/project/src/.cache/Main.luau",
+        ] {
+            assert!(
+                !is_project_event(Path::new("/project"), &event_at(path)),
+                "{path} should be ignored"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sibling_named_like_the_internal_dir_without_the_dot_is_a_project_event() {
+        let event = event_at("/project/naht-notes/todo.txt");
         assert!(is_project_event(Path::new("/project"), &event));
     }
 }

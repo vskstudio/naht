@@ -33,7 +33,8 @@ impl Session {
             }
         }
         let pre_base = self.base_snapshot()?;
-        let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
+        let fs =
+            super::rescan::readable(reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?);
         let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
         self.absorb(patches, &pre_base)?;
         if self.terrain_sync {
