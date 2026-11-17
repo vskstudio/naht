@@ -62,7 +62,7 @@ pub struct Session {
     /// The last-known Studio side of binary blobs (terrain), keyed by path. Blobs are last-writer-wins
     /// (architecture §9), so, unlike the ack-gated text mirror, this advances as soon as a patch is
     /// emitted rather than on a plugin ack.
-    studio_blobs: BTreeMap<String, BlobInstance>,
+    studio_blobs: Option<BTreeMap<String, BlobInstance>>,
     /// Queued filesystem → Studio blob patches, on their own sequence/cursor (a separate `/blobs`
     /// channel), keyed by path so a re-diff replaces rather than appends.
     blob_queue: BTreeMap<String, (u64, BlobPatch)>,

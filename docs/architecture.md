@@ -81,8 +81,23 @@ All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on f
 - **Text:** 3-way merge with the last-sync content as the base. Clean merge → written, base advanced.
 - **Unmergeable text:** git-style markers (`<<<<<<< FS` / `=======` / `>>>>>>> Studio`) written into
   the file, the path marked *conflicted* in SQLite, and sync for that path **frozen** until
-  `naht resolve` confirms the markers are gone.
+  `naht resolve` confirms the markers are gone. The base of a frozen path holds the Studio content
+  at freeze time, so `naht resolve` only lifts the freeze and then asks the running daemon, found through
+  `.naht/daemon.port`, to reconcile (`GET /info`, 2 s timeout): the resolved file is sent to Studio as an
+  update at once, and the stale Studio text is never written back over it. With no daemon running, or one
+  that does not answer in time, the next sync event does it. Studio edits
+  that arrive while the path is frozen are kept in `studio_sides`, so the next reconcile after a
+  resolve (even after a restart) merges against the latest Studio text, or conflicts again, and never
+  overwrites it.
 - **Binary:** file-level conflict, never auto-merged.
+- **Restart:** a session opens with its Studio mirror seeded from the persisted text bases, overridden
+  by the tracked Studio sides of frozen paths. An unchanged file is therefore not read as a Studio
+  deletion, and an edit made while the daemon was down is sent to Studio as an update. Blobs are never
+  seeded from the filesystem: nothing is reconciled until Studio reports its blob snapshot (on plugin
+  connect), and a base whose path that snapshot omits is dropped first, so a blob re-created on disk is
+  created in Studio, never matched against an old base. A blob deleted on disk while the daemon was down
+  keeps its base until Studio reports, so when Studio sends its copy back the path is a Studio-bound
+  delete, not a resurrected file.
 
 ## 5. State store (SQLite)
 
@@ -96,12 +111,22 @@ Per instance, keyed by stable GUID:
 | `path` | filesystem path it maps to |
 | `class` | Roblox class name |
 | `content_hash` | fast change detection |
-| `base_content` (BLOB) | last-synced content: the **base** for 3-way text merge (text only) |
+| `base_content` (BLOB) | last-synced content: the **base** for 3-way text merge (text only); for a frozen path, the Studio content |
 | `mtime` | filesystem modification time |
 | `conflicted` | whether this path is frozen pending resolution |
 
+A `studio_sides` table (`path`, `class`, `content`) holds the latest Studio side of a path that is
+frozen or was frozen and not yet re-based; `content` is `NULL` when Studio deleted the instance, and
+`class` is then the class the base recorded. It seeds the Studio mirror on restart and is cleared as
+soon as the base advances.
+
 A `meta` table holds the schema version and project identity. Writes are transactional. For binary
 instances only the hash is stored (no merge base).
+
+While it runs, `naht serve` also writes its bound port to `.naht/daemon.port` (plain text, next to
+`state.db`) and removes the file on a clean shutdown. `naht resolve` reads that port to ask the daemon
+to re-sync, so `--port` is honoured and `naht.toml` is not used for the nudge. A file left behind by a
+crashed daemon points at a closed port, and the nudge then does nothing.
 
 ## 6. Configuration
 
@@ -193,3 +218,13 @@ not a v1 blocker.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.
 - **Directory with `init.luau` (N13).** On the daemon side a directory holding an `init.luau` is one `ModuleScript` with children. The plugin does not apply that shape yet: it creates a `Folder` for the directory and a `ModuleScript` named `init` inside it, so Studio's tree differs from the daemon's. Applying it needs the directory node to become the module itself, which `plugin/src/Apply.luau` does not do. The same holds for `init.server.luau` and `init.client.luau`.
+- **Wiped checkout while the daemon is down.** If the project directory is emptied or moved while
+  `naht serve` is stopped, the restart re-diffs every synced file as deleted on disk, and each one
+  becomes a Studio delete (30 files gone on disk means 30 Studio deletes). Live sync does the same.
+  Not changed yet. Proposed guard: hold any batch of deletions above a threshold (for example 10 or
+  a quarter of the synced paths, whichever is larger), leave those paths untouched, and surface them
+  in `naht status` until the user confirms the deletion through an explicit command (not yet designed).
+- **A Studio edit made while the plugin is disconnected is not tracked for frozen paths.** `studio_sides`
+  only records Studio edits that arrive over the wire. An edit made in Studio while the plugin is
+  disconnected never reaches it, so the stored Studio side of a frozen path can be stale, and the next
+  reconcile after a restart merges against the older Studio text. Not changed yet.

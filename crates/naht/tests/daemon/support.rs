@@ -7,12 +7,14 @@ use naht::server::AppState;
 use naht::session::Session;
 use naht_core::binary::BlobInstance;
 use naht_core::protocol::{
-    self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, SyncActivity,
+    self, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, SyncActivity,
 };
 use naht_core::state::StateStore;
-use serde::de::DeserializeOwned;
 use std::fs;
 use tokio::net::TcpListener;
+
+use crate::wire;
+pub(crate) use crate::wire::decode;
 
 pub(crate) struct Harness {
     pub base: String,
@@ -33,7 +35,8 @@ impl Harness {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-        let session = Session::new(root.clone(), store, "demo", serve_place_id, terrain_sync);
+        let session =
+            Session::new(root.clone(), store, "demo", serve_place_id, terrain_sync).unwrap();
         let state = AppState::new(session, Duration::from_millis(300));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -85,11 +88,7 @@ impl Harness {
     }
 
     pub(crate) async fn info(&self, place_id: Option<u64>) -> reqwest::Response {
-        let mut req = self.client.get(format!("{}/info", self.base));
-        if let Some(id) = place_id {
-            req = req.query(&[("place_id", id.to_string())]);
-        }
-        req.send().await.unwrap()
+        wire::info(&self.client, &self.base, place_id).await
     }
 
     pub(crate) async fn patches(&self, cursor: u64) -> PatchBatch {
@@ -115,13 +114,7 @@ impl Harness {
     }
 
     pub(crate) async fn heartbeat(&self) -> Pong {
-        let resp = self
-            .client
-            .get(format!("{}/heartbeat", self.base))
-            .send()
-            .await
-            .unwrap();
-        decode(resp).await
+        decode(wire::heartbeat(&self.client, &self.base).await.unwrap()).await
     }
 
     pub(crate) async fn activity(&self, since: u64) -> SyncActivity {
@@ -136,14 +129,7 @@ impl Harness {
     }
 
     pub(crate) async fn ack(&self, paths: Vec<String>) -> reqwest::StatusCode {
-        let body = protocol::to_msgpack(&Ack { paths }).unwrap();
-        self.client
-            .post(format!("{}/ack", self.base))
-            .body(body)
-            .send()
-            .await
-            .unwrap()
-            .status()
+        wire::ack(&self.client, &self.base, paths).await
     }
 
     pub(crate) async fn ack_all(&self, batch: &PatchBatch) {
@@ -154,9 +140,4 @@ impl Harness {
             .collect();
         assert!(self.ack(paths).await.is_success());
     }
-}
-
-pub(crate) async fn decode<T: DeserializeOwned>(resp: reqwest::Response) -> T {
-    let bytes = resp.bytes().await.unwrap();
-    protocol::from_msgpack(&bytes).unwrap()
 }

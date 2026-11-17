@@ -58,7 +58,7 @@ Naht a gelé un fichier parce que les deux côtés l'ont modifié et que le chan
 1. `naht status` : vois quels chemins sont gelés.
 2. Ouvre chaque fichier ; résous les marqueurs `<<<<<<<` / `=======` / `>>>>>>>` à la main.
 3. `naht resolve <path>` : il **refuse tant qu'il reste des marqueurs**, donc un fichier à moitié résolu ne peut pas passer
-   au travers.
+   au travers. Si le daemon tourne, le fichier résolu part vers Studio tout de suite. Si un daemon est enregistré mais ne répond pas dans les 2 secondes, la commande le dit et le fichier attend le prochain événement de synchro.
 
 ## Les éditions ont cessé de se synchroniser après une déconnexion
 

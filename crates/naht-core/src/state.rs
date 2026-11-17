@@ -13,6 +13,12 @@ use std::fs;
 use std::io;
 use std::num::ParseIntError;
 
+#[cfg(test)]
+mod schema_tests;
+mod studio_side;
+
+pub use studio_side::StudioSide;
+
 const SCHEMA_VERSION: i64 = 1;
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -117,6 +123,11 @@ impl StateStore {
              CREATE TABLE IF NOT EXISTS assets (
                  content_hash TEXT PRIMARY KEY,
                  asset_id     TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS studio_sides (
+                 path    TEXT PRIMARY KEY,
+                 class   TEXT NOT NULL,
+                 content TEXT
              );
              DELETE FROM assets WHERE content_hash NOT LIKE 'blake3:%';",
         )?;
@@ -223,6 +234,10 @@ impl StateStore {
     ///
     /// Returns an error when the record cannot be deleted.
     pub fn remove(&self, guid: &str) -> Result<(), StateError> {
+        self.conn.execute(
+            "DELETE FROM studio_sides WHERE path = (SELECT path FROM instances WHERE guid = ?1)",
+            [guid],
+        )?;
         self.conn
             .execute("DELETE FROM instances WHERE guid = ?1", [guid])?;
         Ok(())

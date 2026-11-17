@@ -1,4 +1,5 @@
 use crate::config::ConfigError;
+use crate::session::SessionError;
 use crate::uploader::UploaderError;
 use crate::watcher::WatchError;
 use naht_core::build::BuildError;
@@ -109,6 +110,9 @@ pub enum CommandError {
     /// A reconcile step failed.
     #[error(transparent)]
     Reconcile(#[from] ReconcileError),
+    /// The sync session could not be opened from the persisted state.
+    #[error(transparent)]
+    Session(#[from] SessionError),
     /// The layered configuration is invalid.
     #[error(transparent)]
     Config(#[from] ConfigError),

@@ -1,6 +1,7 @@
 use super::Session;
 use super::{SessionError, new_session_id};
 use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
+use naht_core::reconciler;
 use naht_core::state::{InstanceRecord, StateStore};
 use naht_core::vfs::{DiskVfs, RootedVfs, VfsError, remove_stale_temp_files};
 use std::collections::{BTreeMap, VecDeque};
@@ -9,13 +10,17 @@ use std::path::PathBuf;
 impl Session {
     /// Open a session rooted at `root`, owning `store`. `serve_place_id` guards which Studio place
     /// may connect (`None` leaves it unguarded).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] when the persisted bases or the terrain blobs cannot be read.
     pub fn new(
         root: impl Into<PathBuf>,
         store: StateStore,
         project_name: impl Into<String>,
         serve_place_id: Option<u64>,
         terrain_sync: bool,
-    ) -> Self {
+    ) -> Result<Self, SessionError> {
         let root = root.into();
         if let Err(error) = remove_stale_temp_files(&root) {
             tracing::warn!(
@@ -25,14 +30,16 @@ impl Session {
                 "could not remove stale temp files"
             );
         }
-        Self {
-            vfs: RootedVfs::new(root, DiskVfs::new()),
+        let vfs = RootedVfs::new(root, DiskVfs::new());
+        let studio = reconciler::studio_at_base(&store)?;
+        Ok(Self {
+            vfs,
             store,
-            studio: BTreeMap::new(),
+            studio,
             queue: BTreeMap::new(),
             unacked: BTreeMap::new(),
             next_seq: 0,
-            studio_blobs: BTreeMap::new(),
+            studio_blobs: None,
             blob_queue: BTreeMap::new(),
             blob_next_seq: 0,
             activity: VecDeque::new(),
@@ -41,7 +48,7 @@ impl Session {
             id: new_session_id(),
             serve_place_id,
             terrain_sync,
-        }
+        })
     }
 
     /// The identity payload used by heartbeats, without the conflicted list.
@@ -125,7 +132,7 @@ mod tests {
         store.upsert(&record("Frozen.luau", true)).unwrap();
         store.upsert(&record("Clean.luau", false)).unwrap();
         let root = tempfile::tempdir().unwrap();
-        let session = Session::new(root.path(), store, "demo", None, false);
+        let session = Session::new(root.path(), store, "demo", None, false).unwrap();
 
         assert_eq!(
             session.handshake_info().unwrap().conflicted,

@@ -89,6 +89,8 @@ naht status
 
 Lève un conflit une fois ses marqueurs disparus. **Refuse tant que des marqueurs de conflit subsistent.**
 
+Ensuite, il demande au daemon enregistré dans `.naht/daemon.port` de re-synchroniser, sans attendre plus de 2 secondes. Il affiche `daemon re-synced` quand ça marche, rien de plus si aucun daemon ne tourne, et sinon la raison (par exemple, le daemon n'a pas répondu à temps). Le fichier est résolu dans tous les cas, et le code de sortie reste 0.
+
 ```sh
 naht resolve src/Hello.luau
 naht resolve src/Hello.luau --project ../demo   # scope to another project dir

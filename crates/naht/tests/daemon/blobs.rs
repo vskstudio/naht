@@ -50,6 +50,7 @@ async fn terrain_blob_syncs_both_ways_byte_for_byte() {
     let harness = Harness::start(None).await;
     let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(400).collect();
 
+    assert!(harness.post_blobs(vec![]).await.is_success());
     harness.write("Terrain.terrain", &blob);
     assert!(harness.info(None).await.status().is_success());
     let batch = harness.blobs(0).await;
@@ -103,6 +104,7 @@ async fn a_studio_text_edit_drives_the_blob_reconcile() {
     let harness = Harness::start(None).await;
     let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(300).collect();
 
+    assert!(harness.post_blobs(vec![]).await.is_success());
     harness.write("Zone.terrain", &blob);
     let status = harness
         .post_changes(vec![Change::Upsert {

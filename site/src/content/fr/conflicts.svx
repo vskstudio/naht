@@ -56,7 +56,8 @@ naht resolve src/Hello.luau # clears the freeze ; refuses while markers remain
 
 `naht resolve` est volontairement strict : il **refuse tant qu'il reste des marqueurs**, donc tu ne
 peux pas committer accidentellement un fichier à moitié résolu. Une fois les marqueurs partis et le
-chemin libéré, la sync reprend automatiquement pour ce chemin.
+chemin libéré, la sync reprend automatiquement pour ce chemin. Si le daemon tourne, `naht resolve` le
+relance aussitôt : le fichier résolu part vers Studio sans autre action.
 
 <Callout type="warning">
 

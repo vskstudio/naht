@@ -134,7 +134,8 @@ mod tests {
             config.project_name(&root),
             config.serve.place_id,
             config.terrain_sync(),
-        );
+        )
+        .unwrap();
         let state = AppState::new(session, Duration::from_secs(1));
         state.session_lock().await.rescan().unwrap();
         let _watch = spawn(&root, Arc::clone(&state)).unwrap();

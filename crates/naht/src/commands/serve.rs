@@ -2,6 +2,7 @@ use super::error::CommandError;
 use super::files::{canonical, open_store};
 use super::inspect::{serve_warnings, unsyncable_lines};
 use crate::config::Config;
+use crate::daemon_port;
 use crate::output::Output;
 use crate::server;
 use crate::server::AppState;
@@ -57,7 +58,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         config.project_name(&root),
         config.serve.place_id,
         config.terrain_sync(),
-    );
+    )?;
     let state = AppState::new(session, LONG_POLL);
     state
         .tasks()
@@ -69,6 +70,10 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|source| CommandError::Bind { addr, source })?;
+    daemon_port::write(&root, port).map_err(|source| CommandError::Write {
+        path: daemon_port::path(&root),
+        source,
+    })?;
     tracing::info!(target: "naht::server", %addr, root = %root.display(), "naht serving");
     out.say(format_args!(
         "naht serving {} on http://{addr}",
@@ -78,11 +83,15 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     let served = server::serve(listener, Arc::clone(&state))
         .await
         .map_err(CommandError::Serve);
+    let unpublished = daemon_port::remove(&root).map_err(|source| CommandError::Write {
+        path: daemon_port::path(&root),
+        source,
+    });
     state.shutdown().cancel();
     drop(watcher);
     state.tasks().close();
     state.tasks().wait().await;
-    served
+    served.and(unpublished)
 }
 
 #[cfg(test)]

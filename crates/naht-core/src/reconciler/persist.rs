@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::hash::content_hash;
@@ -5,8 +6,73 @@ use crate::merge;
 use crate::state::{InstanceRecord, StateStore};
 use crate::vfs::Vfs;
 
-use super::model::{ReconcileError, Status};
+use super::model::{ReconcileError, Status, TextInstance};
 use super::scan::decode;
+
+/// The Studio content each persisted text base implies, to seed a session's Studio mirror on open.
+///
+/// # Errors
+///
+/// Returns an error when the state store cannot be read or a base is not UTF-8.
+pub fn studio_at_base(
+    store: &StateStore,
+) -> Result<BTreeMap<String, TextInstance>, ReconcileError> {
+    let mut mirror = BTreeMap::new();
+    for record in store.all()? {
+        let Some(bytes) = record.base_content.as_deref() else {
+            continue;
+        };
+        let text = decode(&record.path, bytes)?;
+        mirror.insert(
+            record.path.clone(),
+            TextInstance::new(record.path, record.class, text),
+        );
+    }
+    for side in store.studio_sides()? {
+        match side.content {
+            Some(text) => {
+                mirror.insert(
+                    side.path.clone(),
+                    TextInstance::new(side.path, side.class, text),
+                );
+            }
+            None => {
+                mirror.remove(&side.path);
+            }
+        }
+    }
+    Ok(mirror)
+}
+
+/// Track the latest Studio side of a frozen or already tracked path, `None` for a Studio deletion.
+///
+/// # Errors
+///
+/// Returns an error when the state store cannot be read or written.
+pub fn record_studio_side(
+    store: &StateStore,
+    path: &str,
+    class: &str,
+    content: Option<&str>,
+) -> Result<(), ReconcileError> {
+    let frozen = store.get(path)?.is_some_and(|record| record.conflicted);
+    if frozen || store.studio_side(path)?.is_some() {
+        store.set_studio_side(path, class, content)?;
+    }
+    Ok(())
+}
+
+/// Track a Studio deletion of a frozen or already tracked path, under the class its base records.
+///
+/// # Errors
+///
+/// Returns an error when the state store cannot be read or written.
+pub fn record_studio_deletion(store: &StateStore, path: &str) -> Result<(), ReconcileError> {
+    let Some(record) = store.get(path)? else {
+        return Ok(());
+    };
+    record_studio_side(store, path, &record.class, None)
+}
 
 /// List the frozen (conflicted) paths.
 ///
@@ -25,8 +91,9 @@ pub fn status(store: &StateStore) -> Result<Status, ReconcileError> {
 
 /// Clear a conflict once the user has removed the markers from the file.
 ///
-/// Refuses while any marker remains; on success the resolved file content becomes the new base and
-/// the path unfreezes.
+/// Refuses while any marker remains. On success the path unfreezes without moving its base: the base
+/// still holds the Studio content the conflict was frozen against, so the next reconcile sees the
+/// resolved file as a filesystem change and pushes it to Studio.
 ///
 /// # Errors
 ///
@@ -42,7 +109,7 @@ pub fn resolve(vfs: &impl Vfs, store: &StateStore, path: &str) -> Result<(), Rec
     if merge::has_conflict_markers(&text) {
         return Err(ReconcileError::MarkersRemain(PathBuf::from(path)));
     }
-    advance_base(store, &record.path, &record.class, &text)?;
+    store.set_conflicted(&record.guid, false)?;
     Ok(())
 }
 
@@ -71,6 +138,7 @@ pub(super) fn advance_base(
     content: &str,
 ) -> Result<(), ReconcileError> {
     store.upsert(&base_record(path, class, content, false))?;
+    store.clear_studio_side(path)?;
     Ok(())
 }
 
@@ -78,9 +146,10 @@ pub(super) fn freeze(
     store: &StateStore,
     path: &str,
     class: &str,
-    base: &str,
+    studio: &str,
 ) -> Result<(), ReconcileError> {
-    store.upsert(&base_record(path, class, base, true))?;
+    store.upsert(&base_record(path, class, studio, true))?;
+    store.clear_studio_side(path)?;
     Ok(())
 }
 

@@ -58,7 +58,7 @@ impl Session {
             &mut self.vfs,
             &self.store,
             &scan.instances,
-            &self.studio_blobs,
+            self.studio_blobs.as_ref(),
             &scan.unseen(),
         )?;
         self.absorb_blobs(patches);

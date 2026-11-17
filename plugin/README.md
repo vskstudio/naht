@@ -144,7 +144,9 @@ Setup: `naht init demo`, `naht serve` in the project, install the plugin, enable
    in neither; edit the file and the Studio instance to different content quickly).
    - *Expected:* the file gets git-style conflict markers, the widget shows `Conflict` with the path,
      `naht status` lists it, and neither side is overwritten. `naht resolve <path>` (after removing
-     the markers) clears it and sync resumes.
+     the markers) clears the freeze and asks a running daemon to re-sync, so the resolved file reaches
+     Studio at once. If the daemon does not answer within 2 seconds, `naht resolve` says the file was not
+     re-synced.
 5. **Terrain sync** (with `[serve] terrain_sync = true` in `naht.toml`). Sculpt terrain in Studio,
    then change the synced `.terrain` blob on disk.
    - *Expected:* terrain changes propagate each way as an opaque voxel blob; a change on both sides

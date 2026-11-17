@@ -432,7 +432,7 @@ mod tests {
 
     fn test_state() -> Arc<AppState> {
         let store = StateStore::open_in_memory().unwrap();
-        let session = Session::new(PathBuf::from("."), store, "demo", None, false);
+        let session = Session::new(PathBuf::from("."), store, "demo", None, false).unwrap();
         AppState::new(session, Duration::from_secs(1))
     }
 

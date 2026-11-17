@@ -89,6 +89,8 @@ naht status
 
 Clear a conflict once its markers are gone. **Refuses while any conflict markers remain.**
 
+Once cleared, it asks the daemon recorded in `.naht/daemon.port` to re-sync, and never waits more than 2 seconds for it. It prints `daemon re-synced` when that works, nothing extra when no daemon is running, and the reason otherwise (for example, the daemon did not answer in time). The file is resolved in every case, and the exit status stays 0.
+
 ```sh
 naht resolve src/Hello.luau
 naht resolve src/Hello.luau --project ../demo   # scope to another project dir

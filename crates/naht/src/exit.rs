@@ -66,6 +66,7 @@ impl From<&CommandError> for Exit {
             | CommandError::Write { .. }
             | CommandError::StateOpen { .. }
             | CommandError::State(_)
+            | CommandError::Session(_)
             | CommandError::Serve(_)
             | CommandError::Output(_) => Self::IoError,
             CommandError::Config(_) | CommandError::Uploader(_) => Self::Config,

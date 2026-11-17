@@ -147,7 +147,7 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
         }
         Command::Pull { path } => {
             let config = Config::load(&path)?;
-            commands::pull(&config).await?;
+            commands::pull(&path, &config).await?;
             out.say("pulled, daemon re-synced")?;
         }
         Command::Build {
@@ -177,7 +177,19 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
         }
         Command::Resolve { path, project } => {
             commands::resolve(&project, &path)?;
-            out.say(format_args!("resolved {path}"))?;
+            match commands::resync_running(&project).await {
+                commands::ResyncOutcome::Resynced => {
+                    out.say(format_args!("resolved {path}, daemon re-synced"))?;
+                }
+                commands::ResyncOutcome::NotRunning => {
+                    out.say(format_args!("resolved {path}"))?;
+                }
+                commands::ResyncOutcome::Failed(reason) => {
+                    out.say(format_args!(
+                        "resolved {path}, but the running daemon {reason}, so it was not re-synced"
+                    ))?;
+                }
+            }
         }
         Command::PackagePlugin { src, output } => {
             commands::package_plugin(&src, &output)?;
