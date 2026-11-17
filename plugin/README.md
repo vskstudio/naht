@@ -47,6 +47,8 @@ Behaviour notes:
   is replaced (its children move to the new script). A same-named non-script (a `Folder`, for example)
   blocks the patch: nothing is written and the patch is not acknowledged. A folder and a script with the
   same name cannot both be synced.
+- Folders on the way to a file are matched only against non-script containers. A `Script` named `Foo`
+  never hides a `Folder` named `Foo`: `Foo/Bar.luau` goes under the folder.
 - Instance names containing `/`, `\` or NUL are not synced, because they would split into extra
   folders on disk. A `ModuleScript` whose name ends in `.server`, `.client` or `.luau` is not synced
   either, because its file name would be ambiguous. The plugin warns once per affected path.
@@ -55,8 +57,12 @@ Behaviour notes:
   `Warning` with `terrain blob rejected: <reason>`, and the blob is retried with an exponential backoff
   from 2 seconds up to a cap of 60 seconds; the cursor advances only once every blob in a batch has been
   applied.
+- A text patch that cannot be applied sets the widget to `Warning` with `patch rejected: <path>: <reason>`.
+  It is not acknowledged, so the daemon resends it only after a reconnect. A later patch to the same path that
+  applies clears the Warning. When every Warning has cleared, the widget returns to `Connected`.
 - Terrain larger than 1,048,576 voxels at 4-stud resolution is not pushed live. The widget shows
-  `Warning` with `terrain too large for live push, use naht build`.
+  `Warning` with `terrain too large for live push, use naht build`, and the widget returns to `Connected`
+  once a push fits under the cap.
 - The reconnect backoff restarts (from 1 second) only after a poll completes, so a daemon that
   answers `/info` and then fails on `/patches` keeps backing off.
 
