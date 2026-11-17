@@ -17,7 +17,7 @@ d'abandonner en silence, et traiter les cas binaires aussi proprement que l'API 
 
 | Cas | Statut | Approche |
 |---|---|---|
-| **`MeshId` / images** | upload (opt-in) | La chaîne asset-id se synchronise comme n'importe quelle propriété. Avec `[assets]` activé, un fichier mesh/image *local* est uploadé une fois via Open Cloud, mis en cache par hash de contenu, et sa propriété réécrite en `rbxassetid://…`. Désactivé par défaut. |
+| **`MeshId` / images** | upload (opt-in, `naht build` seulement) | La chaîne asset-id se synchronise comme n'importe quelle propriété. Avec `[assets]` activé, seul `naht build` uploade un fichier mesh/image *local* une fois via Open Cloud, le met en cache par hash de contenu et réécrit sa propriété en `rbxassetid://…`. `sync` et `serve` n'uploadent jamais. Désactivé par défaut. |
 | **Terrain** | synchronisable (opt-in) | Lu/écrit via `ReadVoxels`/`WriteVoxels` et synchronisé comme un blob voxel binaire opaque (comparé par hash, last-writer-wins ; un changement des deux côtés **gèle**). Piloté par le canal `/blobs` quand `[serve] terrain_sync` est activé. |
 | **CSG / Unions** | aller-retour binaire | La géométrie binaire générée par le moteur ne peut pas être reconstruite depuis du texte, mais fait l'aller-retour dans les fichiers modèle `rbxm` (opaque, au niveau fichier). |
 | **`HttpEnabled` & propriétés verrouillées par sécurité** | blocage dur | Non réglables par scripts/plugins par conception. Naht avertit et renvoie vers les Game Settings ; propose un repli par fichier de place. |
@@ -56,13 +56,16 @@ enabled = true
 api_key_env = "ROBLOX_OPEN_CLOUD_KEY"
 ```
 
-Avec ceci activé, un fichier mesh ou image *local* est uploadé une fois via **Open Cloud**, mis en cache par empreinte BLAKE3
-de ses octets (un fichier inchangé n'est pas ré-uploadé), et sa propriété est réécrite vers le `rbxassetid://…` résultant.
+Avec `[assets]` activé, **seul `naht build` uploade**. Il envoie un fichier mesh ou image *local* une fois vers
+**Open Cloud**, le met en cache par empreinte BLAKE3 de ses octets (un fichier inchangé n'est pas ré-uploadé), et réécrit
+sa propriété vers le `rbxassetid://…` résultant. `naht sync` et `naht serve` n'uploadent jamais : ils laissent les
+références d'assets exactement telles qu'elles sont dans ta source, donc un chemin local reste un chemin local là-bas.
+
 Seules les propriétés que Roblox déclare comme contenu (par exemple `MeshId`, `TextureId` ou `ColorMap`) sont uploadées. Un
 chemin de fichier local sous une autre propriété est signalé et laissé tel quel. Les lignes de cache des anciennes
 versions, indexées par l'ancien hash 64 bits, sont supprimées à l'ouverture de la base d'état : ces fichiers sont donc
-uploadés une fois de plus. Un échec d'upload
-est **isolé au chemin en échec** : il ne fait jamais tomber la session.
+uploadés une fois de plus. Un échec d'upload est **isolé au chemin en échec** : le build le signale comme avertissement
+et continue avec tous les autres assets.
 
 <Callout type="warning">
 

@@ -169,7 +169,7 @@ lives in the final stage of [`spec.md`](spec.md).
 
 | Case | Status | Approach |
 |---|---|---|
-| **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, a *local* mesh/image file is uploaded once via **Open Cloud**, cached by the BLAKE3 digest of its bytes, and its property rewritten to `rbxassetid://…`. Only properties that Roblox reflection types as Content are uploaded; a local file named by any other property is reported and left as written. Off by default. Stage 12. |
+| **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, `naht build` alone uploads a *local* mesh/image file once via **Open Cloud**, caches it by the BLAKE3 digest of its bytes, and rewrites its property to `rbxassetid://…`; `sync` and `serve` never upload and leave references as written. Only properties that Roblox reflection types as Content are uploaded; a local file named by any other property is reported and left as written. Off by default. Stage 12. |
 | **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob: hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on. Stages 11, 13. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
