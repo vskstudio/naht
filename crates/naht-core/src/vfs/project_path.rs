@@ -57,16 +57,25 @@ pub enum ProjectPathError {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_project_path;
+    use super::{validate_project_path, ProjectPathError};
 
-    const REFUSED_FOLDER_NAMES: [&str; 6] = ["Config: v2", "a:b", ":", ".", "..", "a\u{0}b"];
+    const FIXTURE: &str = include_str!("../../tests/fixtures/project_path_names.json");
 
-    const ACCEPTED_FOLDER_NAMES: [&str; 5] = ["Config v2", "v2.0", "a-b_c", ".x", "..x"];
+    fn fixture_names(key: &str) -> Vec<String> {
+        let fixture: serde_json::Value =
+            serde_json::from_str(FIXTURE).expect("fixture is valid JSON");
+        fixture[key]
+            .as_array()
+            .expect("fixture key is an array")
+            .iter()
+            .map(|name| name.as_str().expect("fixture name is a string").to_owned())
+            .collect()
+    }
 
     #[test]
     fn folder_names_the_daemon_refuses_are_refused_as_a_segment() {
-        for name in REFUSED_FOLDER_NAMES {
-            let path = format!("{name}/Leaf.luau");
+        for name in fixture_names("refused") {
+            let path = format!("Dir/{name}/Leaf.luau");
             assert!(
                 validate_project_path(&path).is_err(),
                 "daemon accepted {name:?}"
@@ -76,11 +85,23 @@ mod tests {
 
     #[test]
     fn folder_names_the_daemon_accepts_are_accepted_as_a_segment() {
-        for name in ACCEPTED_FOLDER_NAMES {
-            let path = format!("{name}/Leaf.luau");
+        for name in fixture_names("accepted") {
+            let path = format!("Dir/{name}/Leaf.luau");
             assert!(
                 validate_project_path(&path).is_ok(),
                 "daemon refused {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_middle_segments_are_refused_as_empty_components() {
+        for name in ["", "\\", "a//b"] {
+            let path = format!("Dir/{name}/Leaf.luau");
+            assert_eq!(
+                validate_project_path(&path),
+                Err(ProjectPathError::EmptyComponent),
+                "{name:?}"
             );
         }
     }

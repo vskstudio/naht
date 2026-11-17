@@ -14,6 +14,8 @@ local Apply = require("../src/Apply")
 local Terrain = require("../src/Terrain")
 local Protocol = require("../src/Protocol").new(MessagePack)
 local Connection = require("../src/Connection")
+local fs = require("@lune/fs")
+local serde = require("@lune/serde")
 
 local GOLDEN = {
 	server_info = "86b070726f746f636f6c5f76657273696f6e01ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263ae73657276655f706c6163655f69647baa636f6e666c696374656490",
@@ -2171,13 +2173,12 @@ end
 do
 	local tree, root = studioWorld(true)
 	local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
-	local refusedFolderNames = { "Config: v2", "a:b", ":", ".", "..", "", "a\0b" }
-	for _, name in refusedFolderNames do
+	local parityNames = serde.decode("json", fs.readFile("crates/naht-core/tests/fixtures/project_path_names.json"))
+	for _, name in parityNames.refused do
 		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, root))
 		check(string.format("path skips a folder named %q, as the daemon refuses it", name), connection:_pathOf(leaf) == nil)
 	end
-	local acceptedFolderNames = { "Config v2", "v2.0", "a-b_c", ".x", "..x" }
-	for _, name in acceptedFolderNames do
+	for _, name in parityNames.accepted do
 		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, root))
 		check(
 			string.format("path keeps a folder named %q, as the daemon accepts it", name),
@@ -2278,7 +2279,6 @@ do
 end
 
 local luau = require("@lune/luau")
-local fs = require("@lune/fs")
 for _, path in
 	{
 		"plugin/src/Protocol.luau",
