@@ -3952,6 +3952,67 @@ suite("an incompatible protocol version is terminal and names the side to update
 	)
 end)
 
+suite("an ack that failed is resent after a reconnect in the same session", function()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local polls = 0
+	local ackBodies: { { number } } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				return { project_name = "demo", session_id = "s1", conflicted = {} }
+			end,
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return {
+						cursor = 2,
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Pending.luau", class = "ModuleScript", content = "P" } },
+					}
+				end
+				if polls >= 4 then
+					connection:stop()
+				end
+				error({ status = 500, message = "naht: /patches returned 500" })
+			end,
+			blobs = function(_, _cursor)
+				task.wait(0.01)
+				return { cursor = 0, patches = {} }
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, seqs)
+				table.insert(ackBodies, seqs)
+				if #ackBodies == 1 then
+					error({ status = 500, message = "naht: /ack returned 500" })
+				end
+				connection:stop()
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.ackBackoff = 0.01
+	connection:_run(1)
+
+	check("the reconnect handshook again in the same session", infos >= 2, "handshakes " .. tostring(infos))
+	check(
+		"the first ack is refused, so seq 1 is still unacked",
+		ackBodies[1] ~= nil and ackBodies[1][1] == 1,
+		"acks " .. tostring(#ackBodies) .. " polls " .. tostring(polls)
+	)
+	check(
+		"the reconnect resends seq 1 before polling again",
+		ackBodies[2] ~= nil and ackBodies[2][1] == 1,
+		"acks " .. tostring(#ackBodies) .. " polls " .. tostring(polls)
+	)
+end)
+
 suite("a poll names the session it handshook with, and a 409 sends the plugin back to /info", function()
 	local tree, root = studioWorld(true)
 	local log, onState = stateLog()

@@ -326,7 +326,7 @@ async fn reconnect_rediffs_without_clobbering() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_half_acked_batch_re_emits_only_the_unacked_path() {
+async fn a_half_acked_batch_is_not_re_emitted_by_a_rescan_and_its_ack_settles_it() {
     let harness = Harness::start(None).await;
     harness.write("A.luau", "return 1");
     harness.write("B.luau", "return 2");
@@ -335,22 +335,23 @@ async fn a_half_acked_batch_re_emits_only_the_unacked_path() {
     let first = harness.patches(0).await;
     assert_eq!(first.patches.len(), 2);
 
-    let a_seq = first
-        .patches
-        .iter()
-        .find(|patch| patch.patch.path == "A.luau")
-        .unwrap()
-        .seq;
+    let seq_of = |path: &str| {
+        first
+            .patches
+            .iter()
+            .find(|patch| patch.patch.path == path)
+            .unwrap()
+            .seq
+    };
+    let a_seq = seq_of("A.luau");
+    let b_seq = seq_of("B.luau");
     assert!(harness.ack(vec![a_seq]).await.is_success());
 
     harness.info(None).await;
-    let again = harness.patches(first.cursor).await;
-    let paths: Vec<_> = again
-        .patches
-        .iter()
-        .map(|patch| patch.patch.path.as_str())
-        .collect();
-    assert_eq!(paths, vec!["B.luau"]);
+    assert_eq!(harness.patches(first.cursor).await.patches.len(), 0);
+
+    assert!(harness.ack(vec![b_seq]).await.is_success());
+    assert_eq!(harness.patches(0).await.patches.len(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

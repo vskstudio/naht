@@ -164,6 +164,7 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		terrainInFlight = false,
 		cursor = 0,
 		blobCursor = 0,
+		pendingAcks = {},
 		epoch = 0,
 		applying = false,
 		lastApplied = {},
@@ -342,6 +343,7 @@ function Connection._run(self, session: number)
 			if info.session_id ~= self.sessionId then
 				self.cursor = 0
 				self.blobCursor = 0
+				self.pendingAcks = {}
 				self.sessionId = info.session_id
 			end
 			self.epoch += 1
@@ -377,7 +379,12 @@ function Connection._run(self, session: number)
 end
 
 function Connection._serve(self, session: number, sessionId: string)
-	local unacked: { number } = {}
+	if #self.pendingAcks > 0 then
+		self.pendingAcks = self:_ack(session, self.pendingAcks)
+		if not self:_isCurrent(session) then
+			return
+		end
+	end
 	while self:_isCurrent(session) do
 		local batch = self.client:patches(self.cursor, sessionId)
 		self.applying = true
@@ -393,8 +400,8 @@ function Connection._serve(self, session: number, sessionId: string)
 			end)
 			local source = "patch:" .. patch.path
 			if ok then
-				if not table.find(unacked, patch.seq) then
-					table.insert(unacked, patch.seq)
+				if not table.find(self.pendingAcks, patch.seq) then
+					table.insert(self.pendingAcks, patch.seq)
 				end
 				self:_clearWarning(source)
 				if patch.kind == "Conflict" then
@@ -419,8 +426,8 @@ function Connection._serve(self, session: number, sessionId: string)
 		if not rejected then
 			self.rejectedBackoff = REJECTED_PATCH_START
 		end
-		if #unacked > 0 then
-			unacked = self:_ack(session, unacked)
+		if #self.pendingAcks > 0 then
+			self.pendingAcks = self:_ack(session, self.pendingAcks)
 			if not self:_isCurrent(session) then
 				return
 			end
