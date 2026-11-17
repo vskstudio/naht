@@ -97,7 +97,6 @@ function Connection.stop(self)
 	self.onState("Disconnected", nil)
 end
 
--- The project-relative path for an instance under `root`, mirroring the daemon's file conventions.
 function Connection._pathOf(self, instance: Instance): string?
 	local suffix = CLASS_SUFFIX[instance.ClassName]
 	if suffix == nil then
