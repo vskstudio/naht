@@ -140,6 +140,37 @@ pub enum CommandError {
         /// The status the daemon returned.
         status: StatusCode,
     },
+    /// The port recorded for this project belongs to a daemon of another project.
+    #[error(
+        "no daemon is running for this project: the recorded port {port} belongs to another project (`{project}`)"
+    )]
+    ForeignDaemon {
+        /// The port that answered.
+        port: u16,
+        /// The project name the answering daemon reports.
+        project: String,
+    },
+    /// Something answers at the daemon address, but not with naht's handshake.
+    #[error("`{url}` did not answer with naht's handshake")]
+    NotNahtDaemon {
+        /// The address that was tried.
+        url: String,
+    },
+    /// A daemon is already serving this project, so a second one must not start.
+    #[error("`naht serve` is already running for `{}` (see `.naht/daemon.lock`)", path.display())]
+    AlreadyRunning {
+        /// The project directory whose lock is held.
+        path: PathBuf,
+    },
+    /// The single-instance lock could not be taken for a reason other than contention.
+    #[error("cannot take the daemon lock `{}`", path.display())]
+    Lock {
+        /// The lock file.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
     /// The daemon's port could not be bound.
     #[error("cannot bind {addr}")]
     Bind {

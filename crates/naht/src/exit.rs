@@ -68,11 +68,15 @@ impl From<&CommandError> for Exit {
             | CommandError::State(_)
             | CommandError::Session(_)
             | CommandError::Serve(_)
-            | CommandError::Output(_) => Self::IoError,
+            | CommandError::Output(_)
+            | CommandError::Lock { .. } => Self::IoError,
             CommandError::Config(_) | CommandError::Uploader(_) => Self::Config,
             CommandError::Watch(_) => Self::OsError,
             CommandError::DaemonUnreachable { .. }
             | CommandError::DaemonStatus { .. }
+            | CommandError::ForeignDaemon { .. }
+            | CommandError::NotNahtDaemon { .. }
+            | CommandError::AlreadyRunning { .. }
             | CommandError::Bind { .. } => Self::Unavailable,
         }
     }

@@ -184,6 +184,11 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
                 commands::ResyncOutcome::NotRunning => {
                     out.say(format_args!("resolved {path}"))?;
                 }
+                commands::ResyncOutcome::ForeignDaemon { project } => {
+                    out.say(format_args!(
+                        "resolved {path}, but the recorded port belongs to another project ({project}), so it was not re-synced"
+                    ))?;
+                }
                 commands::ResyncOutcome::Failed(reason) => {
                     out.say(format_args!(
                         "resolved {path}, but the running daemon {reason}, so it was not re-synced"
