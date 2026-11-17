@@ -10,6 +10,7 @@ use crate::vfs::Vfs;
 use crate::walk::Unseen;
 
 use super::model::{BlobInstance, BlobPatch, patch};
+use super::persist::KEEP_DISK_MARKER;
 
 /// Reconciles blobs only once Studio has reported its complete blob snapshot.
 ///
@@ -79,6 +80,18 @@ impl<V: Vfs> Pass<'_, V> {
                 let fs_hash = content_hash(&fs.content);
                 let studio_hash = content_hash(&studio.content);
                 match base_hash {
+                    Some(KEEP_DISK_MARKER) => {
+                        if fs_hash != studio_hash {
+                            self.patches.push(patch(
+                                path,
+                                &class,
+                                Direction::ToStudio,
+                                PatchKind::Update,
+                                Some(&fs.content),
+                            ));
+                        }
+                        advance(self.store, path, &class, &fs.content)?;
+                    }
                     Some(base_hash) => {
                         let changed_fs = fs_hash != base_hash;
                         let changed_studio = studio_hash != base_hash;

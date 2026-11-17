@@ -299,3 +299,59 @@ fn an_unseen_path_missing_from_the_studio_report_keeps_its_base() {
     assert_eq!(patches.len(), 0);
     assert!(store.get("t.terrain").unwrap().is_some());
 }
+
+fn legacy_frozen_t(store: &StateStore, disk_hash: &[u8]) {
+    store
+        .upsert(&crate::state::InstanceRecord {
+            guid: "t.terrain".to_owned(),
+            path: "t.terrain".to_owned(),
+            class: CLASS.to_owned(),
+            content_hash: content_hash(disk_hash),
+            base_content: None,
+            mtime: 0,
+            conflicted: true,
+        })
+        .unwrap();
+}
+
+#[test]
+fn keep_disk_on_a_legacy_record_pushes_the_disk_bytes_not_studio() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"fs-edit".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    legacy_frozen_t(&store, b"fs-edit");
+
+    resolve(&vfs, &store, "t.terrain", Keep::Disk).unwrap();
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].direction, Direction::ToStudio);
+    assert_eq!(patches[0].content.as_deref(), Some(&b"fs-edit"[..]));
+    assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"fs-edit");
+}
+
+#[test]
+fn keep_studio_on_a_legacy_record_writes_the_studio_bytes_to_disk() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"fs-edit".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    legacy_frozen_t(&store, b"fs-edit");
+
+    resolve(&vfs, &store, "t.terrain", Keep::Studio).unwrap();
+    let patches = sync_blobs(
+        &mut vfs,
+        &store,
+        &blobs(&[("t.terrain", b"fs-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].direction, Direction::ToFs);
+    assert_eq!(patches[0].content.as_deref(), Some(&b"studio-edit"[..]));
+    assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"studio-edit");
+}

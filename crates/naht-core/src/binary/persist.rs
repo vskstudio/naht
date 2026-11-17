@@ -14,12 +14,15 @@ pub enum Keep {
     Studio,
 }
 
+pub(super) const KEEP_DISK_MARKER: &str = "";
+
 /// Clears a frozen binary conflict by choosing the side to keep.
 ///
-/// Only the persisted record changes here. Keeping the disk clears the flag, so the next reconcile
-/// sees the disk bytes as a change to push. Keeping the Studio side records the disk hash as the
-/// base, so the next reconcile sees the Studio bytes as a change to write; when the disk copy is
-/// gone, the record is dropped and the next reconcile recreates the file from Studio.
+/// Only the persisted record changes here. Keeping the disk stores the keep-disk marker as the base,
+/// whatever hash the record held before, so the next reconcile pushes the disk bytes to Studio.
+/// Keeping the Studio side records the disk hash as the base, so the next reconcile sees the Studio
+/// bytes as a change to write; when the disk copy is gone, the record is dropped and the next
+/// reconcile recreates the file from Studio.
 ///
 /// # Errors
 ///
@@ -39,7 +42,11 @@ pub fn resolve(
     match (keep, on_disk) {
         (Keep::Disk, false) => Err(ReconcileError::MissingOnDisk(PathBuf::from(path))),
         (Keep::Disk, true) => {
-            store.set_conflicted(&record.guid, false)?;
+            store.upsert(&InstanceRecord {
+                content_hash: KEEP_DISK_MARKER.to_owned(),
+                conflicted: false,
+                ..record
+            })?;
             Ok(())
         }
         (Keep::Studio, true) => {
