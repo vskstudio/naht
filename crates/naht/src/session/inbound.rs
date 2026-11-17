@@ -62,7 +62,7 @@ impl Session {
         changes: Vec<Change>,
     ) -> Result<Vec<String>, SessionError> {
         let mut upserts = Vec::new();
-        let mut deletes = Vec::new();
+        let mut removals = Vec::new();
         for change in changes {
             match change {
                 Change::Upsert {
@@ -75,12 +75,12 @@ impl Session {
                 }
                 Change::Delete { path } => {
                     self.vfs.validate_path(&path)?;
-                    deletes.push(path);
+                    removals.push(path);
                 }
             }
         }
         let upserted: BTreeSet<String> = upserts.iter().map(|(path, _, _)| path.clone()).collect();
-        let deleted: BTreeSet<String> = deletes.iter().cloned().collect();
+        let deleted: BTreeSet<String> = removals.iter().cloned().collect();
         let mut resolved_upserts = BTreeSet::new();
         for (path, class, content) in upserts {
             let path = self.batch_target(&path, &upserted, &deleted);
@@ -89,8 +89,8 @@ impl Session {
             let instance = TextInstance::new(path.clone(), class, content);
             self.write_studio(path, Some(instance));
         }
-        let mut emptied = Vec::with_capacity(deletes.len());
-        for path in deletes {
+        let mut emptied = Vec::with_capacity(removals.len());
+        for path in removals {
             let path = self.batch_target(&path, &resolved_upserts, &deleted);
             if resolved_upserts.contains(&path) {
                 continue;
