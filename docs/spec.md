@@ -65,6 +65,10 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   The plugin holds its cursor at the first patch it rejected, so the next poll asks for it again.
 - **Blob cursor as ack**: the `/blobs` cursor is the plugin's ack. The plugin advances it only past a batch it
   applied in full, and the daemon drops every queued blob patch below the cursor a poll sends.
+- **Session on every ack and poll**: `GET /patches`, `GET /blobs` and `POST /ack` require a `session` query
+  parameter holding the session id from `GET /info`. A request without it is answered `400`. A request naming
+  another session is answered `409`, the plugin re-handshakes, and the request changes nothing; an ack from a
+  previous session settles no patch.
 
 - **`POST /changes` response**: a batch whose every change is accepted is answered `200` with an empty body.
   A batch with any refused change is refused whole: `400` with a JSON body `{"refused_paths": [...]}` naming

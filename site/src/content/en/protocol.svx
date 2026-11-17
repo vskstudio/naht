@@ -20,11 +20,11 @@ it needs HTTP/2, which `HttpService` does not support.
 | Method + path | Purpose |
 |---|---|
 | `GET /info` | Handshake: protocol/server version, project name, session id. Triggers a re-diff against persisted state on (re)connect. |
-| `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. |
+| `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. Needs the `session` query parameter. |
 | `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
-| `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. The cursor is the ack: queued blob patches below it are dropped. |
+| `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. The cursor is the ack: queued blob patches below it are dropped. Needs the `session` query parameter. |
 | `POST /blobs` | Studio → daemon blob changes (terrain voxels). |
-| `POST /ack` | The plugin confirms, by sequence number, which patches it actually applied. Gates the base advance. |
+| `POST /ack` | The plugin confirms, by sequence number, which patches it actually applied. Gates the base advance. Needs the `session` query parameter. |
 | `GET /heartbeat` | Liveness ping; drives the explicit connection state. |
 
 ## Access control
@@ -74,6 +74,18 @@ A mismatch fails on the first request. Nothing is written.
 
 </Callout>
 
+## Sessions
+
+Every `GET /patches`, `GET /blobs` and `POST /ack` names the session the plugin is attached to, with the
+session id it read from `GET /info` in a `session` query parameter (`?session=<id>`). The session id changes
+each time the daemon starts, so the parameter tells the daemon which run a poll or an ack belongs to:
+
+- a request without the `session` parameter is answered `400`;
+- a request naming a session other than the daemon's current one is answered `409`. The plugin re-handshakes
+  and resumes from the new session's cursor, and the stale request changes nothing;
+- `POST /ack` is checked the same way. An ack from a previous session settles no patch, so a patch the new
+  session never delivered is never confirmed by an old ack.
+
 ## Two long-poll channels
 
 Long-polling exists because `HttpService` is request/response only, so the daemon can never push. The
@@ -99,3 +111,7 @@ two halves can refuse to talk across an incompatible boundary instead of corrupt
 The client headers `x-naht-client` and `x-naht-place-id` are required on every request and came with
 version `2`. A plugin built for version `1` is refused on every route, and it reports that it is outdated
 and stops reconnecting. Upgrade the CLI and the plugin together.
+
+Protocol 3 changes the poll and ack routes. `GET /patches`, `GET /blobs` and `POST /ack` require the `session`
+query parameter, and a stale session is answered `409`. Upgrade the CLI, the daemon and the plugin
+together. A plugin built for another protocol version is refused at the handshake.

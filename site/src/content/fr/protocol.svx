@@ -20,11 +20,11 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 | Méthode + chemin | Rôle |
 |---|---|
 | `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Déclenche un re-diff contre l'état persisté à la (re)connexion. |
-| `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. |
+| `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. Exige le paramètre de requête `session`. |
 | `POST /changes` | Éditions Studio → système de fichiers (un lot d'upserts/deletes). |
-| `GET /blobs` | Long-poll pour le canal **blob terrain** (daemon → Studio). Gardé séparé de `/patches` parce que les blobs se synchronisent de façon opaque, sans diff/merge. Le curseur fait office d'acquittement : les patches de blob en file sous ce curseur sont retirés. |
+| `GET /blobs` | Long-poll pour le canal **blob terrain** (daemon → Studio). Gardé séparé de `/patches` parce que les blobs se synchronisent de façon opaque, sans diff/merge. Le curseur fait office d'acquittement : les patches de blob en file sous ce curseur sont retirés. Exige le paramètre de requête `session`. |
 | `POST /blobs` | Changements de blob Studio → daemon (voxels de terrain). |
-| `POST /ack` | Le plugin confirme, par numéro de séquence, quels patches il a réellement appliqués. Gate l'avancée de la base. |
+| `POST /ack` | Le plugin confirme, par numéro de séquence, quels patches il a réellement appliqués. Gate l'avancée de la base. Exige le paramètre de requête `session`. |
 | `GET /heartbeat` | Ping de vivacité ; pilote l'état de connexion explicite. |
 
 ## Contrôle d'accès
@@ -73,6 +73,18 @@ Un décalage échoue dès la première requête. Rien n'est écrit.
 
 </Callout>
 
+## Sessions
+
+Chaque `GET /patches`, `GET /blobs` et `POST /ack` nomme la session à laquelle le plugin est rattaché, avec l'id de
+session lu dans `GET /info`, dans un paramètre de requête `session` (`?session=<id>`). L'id de session change à chaque
+démarrage du daemon, donc ce paramètre indique au daemon à quelle exécution une requête ou un ack appartient :
+
+- une requête sans le paramètre `session` reçoit `400` ;
+- une requête qui nomme une autre session que la session courante du daemon reçoit `409`. Le plugin refait le
+  handshake et reprend depuis le curseur de la nouvelle session, et la requête périmée ne change rien ;
+- `POST /ack` est vérifié de la même façon. Un ack d'une session précédente ne règle aucun patch, donc un patch que la
+  nouvelle session n'a jamais livré n'est jamais confirmé par un ancien ack.
+
 ## Deux canaux long-poll
 
 Le long-polling existe parce que `HttpService` ne fait que requête/réponse, donc le daemon ne peut jamais pousser. Le
@@ -95,6 +107,7 @@ re-diffe et renvoie exactement ce qui manque, sans jamais supposer qu'un lot per
 Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `3`). Il fait partie du handshake pour que les
 deux moitiés puissent refuser de se parler à travers une frontière incompatible au lieu de corrompre l'état.
 
-Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur chaque requête et accompagnent la
-version `2`. Un plugin compilé pour la version `1` est refusé sur toutes les routes, et il signale qu'il est
-obsolète et cesse de se reconnecter. Mets à jour la CLI et le plugin ensemble.
+Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur chaque requête. Depuis la version `3`,
+`GET /patches`, `GET /blobs` et `POST /ack` exigent aussi le paramètre `session`, et une requête périmée reçoit `409`.
+Un plugin qui ne correspond pas à la version de protocole du daemon est refusé au handshake. Mets à jour la CLI,
+le plugin et le daemon ensemble.
