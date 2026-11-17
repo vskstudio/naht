@@ -631,6 +631,7 @@ do
 	)
 	connection.running = true
 	connection.session = 1
+	connection.epoch = 1
 	connection:_pushTerrain(1)
 	local last = log[#log]
 	check("terrain over the voxel cap is not read", reads == 0)
@@ -1133,7 +1134,8 @@ do
 	local log, onState = stateLog()
 	local calls = 0
 	local tree, root = studioWorld(true)
-	local connection = Connection.new(
+	local connection: any = nil
+	connection = Connection.new(
 		{
 			blobs = function(_, _cursor)
 				calls += 1
@@ -1143,7 +1145,8 @@ do
 				if calls == 2 then
 					return { cursor = 2, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } }
 				end
-				error("stop")
+				connection.epoch += 1
+				error("superseded")
 			end,
 		},
 		root,
@@ -1178,6 +1181,7 @@ do
 	)
 	connection.running = true
 	connection.session = 1
+	connection.epoch = 1
 	connection:_pushTerrain(1)
 	region.Size = { X = 8, Y = 8, Z = 8 }
 	connection:_pushTerrain(1)
@@ -1228,6 +1232,229 @@ do
 	connection:_serveBlobs(1)
 	check("a stop between blob poll and apply writes no blob", writes == 0, "writes " .. tostring(writes))
 	check("a stop between blob poll and apply keeps the blob cursor", connection.blobCursor == 0, "cursor " .. tostring(connection.blobCursor))
+end
+
+local function warningsOf(log: { { state: string, detail: string? } }): { string }
+	local found = {}
+	for _, entry in log do
+		if entry.state == "Warning" then
+			table.insert(found, entry.detail or "")
+		end
+	end
+	return found
+end
+
+local function terrainConnection(client: any, onState: (string, string?) -> (), terrain: any): any
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(client, root, 1, onState, deps(terrain, tree))
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	return connection
+end
+
+do
+	local attempts = 0
+	local accepted: { any } = {}
+	local connection = fakeConnection({
+		postBlobs = function(_, changes)
+			attempts += 1
+			if attempts == 1 then
+				error("daemon down")
+			end
+			table.insert(accepted, changes)
+		end,
+	}, extentsTerrainWith(extentsRegion))
+	connection.terrainBackoff = 0.01
+	connection:_pushTerrain(1)
+	check("a failed first terrain post is retried", attempts == 2, "attempts " .. tostring(attempts))
+	check("the retried terrain snapshot is accepted once", #accepted == 1, "accepted " .. tostring(#accepted))
+	check(
+		"the accepted snapshot is the terrain read from the region",
+		#accepted == 1 and accepted[1][1].content == Terrain.read(extentsTerrainWith(extentsRegion), extentsRegion, 4)
+	)
+	check("the terrain backoff returns to its start after acceptance", connection.terrainBackoff == 1, tostring(connection.terrainBackoff))
+end
+
+do
+	local attempts = 0
+	local log, onState = stateLog()
+	local connection: any = nil
+	connection = terrainConnection({
+		postBlobs = function(_, _changes)
+			attempts += 1
+			error("daemon down")
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection.terrainBackoff = 0.2
+	task.spawn(function()
+		task.wait(0.05)
+		connection:stop()
+	end)
+	connection:_pushTerrain(1)
+	check("a stop during the terrain retry wait posts no further attempt", attempts == 1, "attempts " .. tostring(attempts))
+	check("a stop during the terrain retry leaves Disconnected as the last state", lastStateOf(log) == "Disconnected", lastStateOf(log))
+end
+
+do
+	local log, onState = stateLog()
+	local connection: any = nil
+	connection = terrainConnection({
+		postBlobs = function(_, _changes)
+			connection:stop()
+			error("daemon down")
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection:_pushTerrain(1)
+	check(
+		"a terrain post that fails during stop sets no Warning",
+		#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
+		lastStateOf(log)
+	)
+end
+
+do
+	local attempts = 0
+	local log, onState = stateLog()
+	local connection: any = nil
+	connection = terrainConnection({
+		postBlobs = function(_, _changes)
+			attempts += 1
+			error("daemon down")
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection.terrainBackoff = 0.01
+	task.spawn(function()
+		task.wait(0.05)
+		connection:stop()
+	end)
+	connection:_pushTerrain(1)
+	local found = warningsOf(log)
+	check(
+		"a terrain post that keeps failing sets a Warning naming the reason",
+		#found >= 2
+			and string.find(found[1], "terrain push failed: ", 1, true) ~= nil
+			and string.find(found[1], "daemon down", 1, true) ~= nil,
+		"warnings " .. tostring(#found)
+	)
+end
+
+do
+	local attempts = 0
+	local log, onState = stateLog()
+	local connection = terrainConnection({
+		postBlobs = function(_, _changes)
+			attempts += 1
+			if attempts == 1 then
+				error("daemon down")
+			end
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection.terrainBackoff = 0.01
+	connection:_pushTerrain(1)
+	check("the failed terrain post raises one Warning", #warningsOf(log) == 1, "warnings " .. tostring(#warningsOf(log)))
+	check("a terrain post that succeeds clears the Warning", lastStateOf(log) == "Connected", lastStateOf(log))
+end
+
+do
+	local log, onState = stateLog()
+	local polls = 0
+	local connection = terrainConnection({
+		blobs = function(_, _cursor)
+			polls += 1
+			error("boom")
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection:_serveBlobs(1)
+	local last = log[#log]
+	check("a blob poll failure ends the blob loop", polls == 1, "polls " .. tostring(polls))
+	check(
+		"a blob poll failure while running sets a Warning naming the reason",
+		last ~= nil
+			and last.state == "Warning"
+			and last.detail ~= nil
+			and string.find(last.detail, "terrain blob poll failed: ", 1, true) ~= nil
+			and string.find(last.detail, "boom", 1, true) ~= nil,
+		lastStateOf(log)
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local connection: any = nil
+	connection = terrainConnection({
+		blobs = function(_, _cursor)
+			connection:stop()
+			error("boom")
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection:_serveBlobs(1)
+	check(
+		"a blob poll failure after stop sets no Warning",
+		#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
+		lastStateOf(log)
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local connection: any = nil
+	connection = terrainConnection({
+		blobs = function(_, _cursor)
+			connection.epoch += 1
+			error("boom")
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection:_serveBlobs(1)
+	check("a blob poll failure after a reconnect sets no Warning", #warningsOf(log) == 0, "warnings " .. tostring(#warningsOf(log)))
+end
+
+do
+	local log, onState = stateLog()
+	local connection: any = nil
+	connection = terrainConnection({
+		blobs = function(_, _cursor)
+			connection:stop()
+			return { cursor = 1, patches = {} }
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection:_serveBlobs(1)
+	check(
+		"a stop during a blob poll sets no Warning",
+		#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
+		lastStateOf(log)
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local connection: any = nil
+	local blob = terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)
+	connection = terrainConnection({
+		blobs = function(_, _cursor)
+			return { cursor = 1, patches = { blobPatchOf(blob) } }
+		end,
+	}, onState, extentsTerrainWith(extentsRegion, nil, function()
+		connection:stop()
+	end))
+	connection.warnings["blob"] = "terrain blob rejected: earlier"
+	connection:_serveBlobs(1)
+	check(
+		"a stop during a blob write leaves Disconnected as the last state, not a refreshed state",
+		lastStateOf(log) == "Disconnected",
+		lastStateOf(log)
+	)
+end
+
+do
+	local voxels = Terrain.voxelCount(1024, 1024, 64, 4)
+	local blob = string.pack("<i4i4i4fffffff", 256, 256, 16, 0, 0, 0, 1, 1, 1, 4) .. string.rep("\0", 6 * voxels)
+	local body = Protocol.encodeBlobs({ { path = "Terrain.terrain", class = "Terrain", content = blob } })
+	local daemonBodyLimit = 64 * 1024 * 1024
+	check("the largest region the cap admits is exactly MAX_VOXELS", voxels == Terrain.MAX_VOXELS, "voxels " .. tostring(voxels))
+	check("the worst-case blob is a 40-byte header plus 6 bytes per voxel", #blob == 40 + 6 * Terrain.MAX_VOXELS, "bytes " .. tostring(#blob))
+	check("the MessagePack envelope around the worst-case blob is under 256 bytes", #body - #blob < 256, "envelope " .. tostring(#body - #blob))
+	check("the worst-case terrain body is under the 64 MiB daemon body limit", #body < daemonBodyLimit, "body " .. tostring(#body))
 end
 
 local function echoConnection(syncEcho: boolean)

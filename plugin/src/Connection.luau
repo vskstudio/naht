@@ -9,6 +9,8 @@ local BLOB_BACKOFF_START = 2
 local BLOB_BACKOFF_MAX = 60
 local PUSH_DEBOUNCE = 0.3
 local PUSH_RETRY = 2
+local TERRAIN_BACKOFF_START = 1
+local TERRAIN_BACKOFF_MAX = 60
 local TERRAIN_RESOLUTION = 4
 local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
@@ -79,6 +81,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		session = 0,
 		backoff = BACKOFF_START,
 		blobBackoff = BLOB_BACKOFF_START,
+		terrainBackoff = TERRAIN_BACKOFF_START,
 		cursor = 0,
 		blobCursor = 0,
 		epoch = 0,
@@ -217,7 +220,9 @@ function Connection._run(self, session: number)
 			self.blobCursor = 0
 			self.epoch += 1
 			local epoch = self.epoch
-			self:_pushTerrain(session)
+			task.spawn(function()
+				self:_pushTerrain(epoch)
+			end)
 			if not self:_isCurrent(session) then
 				return
 			end
@@ -286,7 +291,13 @@ function Connection._serveBlobs(self, epoch: number)
 		local ok, batch = pcall(function()
 			return self.client:blobs(self.blobCursor)
 		end)
-		if not ok or not self:_isBlobCurrent(epoch) then
+		if not ok then
+			if self:_isBlobCurrent(epoch) then
+				self:_setWarning("blob", "terrain blob poll failed: " .. tostring(batch))
+			end
+			return
+		end
+		if not self:_isBlobCurrent(epoch) then
 			return
 		end
 		local allApplied = true
@@ -306,6 +317,9 @@ function Connection._serveBlobs(self, epoch: number)
 					rejection = tostring(err)
 				end
 			end
+		end
+		if not self:_isBlobCurrent(epoch) then
+			return
 		end
 		if allApplied then
 			self:_clearWarning("blob")
@@ -327,24 +341,38 @@ function Connection._applyBlob(self, blob: string)
 	self.terrainBlob.write(self.terrain, self:_terrainRegion(), blob)
 end
 
-function Connection._pushTerrain(self, session: number)
-	local regionOk, region = pcall(self._terrainRegion, self)
-	if not regionOk then
-		return
+function Connection._pushTerrain(self, epoch: number)
+	while self:_isBlobCurrent(epoch) do
+		local ok, posted = pcall(self._sendTerrain, self, epoch)
+		if not self:_isBlobCurrent(epoch) then
+			return
+		end
+		if not ok then
+			self:_setWarning("terrain", "terrain push failed: " .. tostring(posted))
+			task.wait(self.terrainBackoff)
+			self.terrainBackoff = math.min(self.terrainBackoff * 2, TERRAIN_BACKOFF_MAX)
+		elseif not posted then
+			self:_setWarning("terrain", TERRAIN_TOO_LARGE)
+			return
+		else
+			self:_clearWarning("terrain")
+			self.terrainBackoff = TERRAIN_BACKOFF_START
+			return
+		end
 	end
+end
+
+function Connection._sendTerrain(self, epoch: number): boolean
+	local region = self:_terrainRegion()
 	local size = region.Size
 	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainBlob.MAX_VOXELS then
-		self:_setWarning("terrain", TERRAIN_TOO_LARGE)
-		return
+		return false
 	end
-	self:_clearWarning("terrain")
-	local ok, blob = pcall(self.terrainBlob.read, self.terrain, region, TERRAIN_RESOLUTION)
-	if not ok or not self:_isCurrent(session) then
-		return
-	end
-	pcall(function()
+	local blob = self.terrainBlob.read(self.terrain, region, TERRAIN_RESOLUTION)
+	if self:_isBlobCurrent(epoch) then
 		self.client:postBlobs({ { path = TERRAIN_PATH, class = "Terrain", content = blob } })
-	end)
+	end
+	return true
 end
 
 function Connection._attachStudio(self)
