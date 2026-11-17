@@ -48,7 +48,7 @@ Studio. Laisse-le tourner pendant que tu travailles.
 
 ## `naht pull [path]`
 
-Demande à un daemon **en cours d'exécution** de re-synchroniser maintenant, plutôt que d'attendre le prochain événement du système de fichiers.
+Demande à un daemon **en cours d'exécution** de re-synchroniser maintenant, plutôt que d'attendre le prochain événement du système de fichiers. Il interroge le daemon enregistré dans `.naht/daemon.port` (écrit par `naht serve`) et n'utilise le port de `naht.toml` que si ce fichier est absent. Il attend au plus 2 secondes une réponse.
 
 ```sh
 naht pull

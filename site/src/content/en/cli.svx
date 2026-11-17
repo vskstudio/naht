@@ -48,7 +48,9 @@ plugin's connection. Leave it running while you work.
 
 ## `naht pull [path]`
 
-Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event.
+Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event. It asks the
+daemon recorded in `.naht/daemon.port` (written by `naht serve`), and uses the `naht.toml` port only when
+that file is absent. It waits at most 2 seconds for an answer.
 
 ```sh
 naht pull

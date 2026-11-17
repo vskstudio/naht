@@ -97,7 +97,10 @@ All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on f
   connect), and a base whose path that snapshot omits is dropped first, so a blob re-created on disk is
   created in Studio, never matched against an old base. A blob deleted on disk while the daemon was down
   keeps its base until Studio reports, so when Studio sends its copy back the path is a Studio-bound
-  delete, not a resurrected file.
+  delete, not a resurrected file. Filesystem blob changes made during a session therefore wait until
+  Studio posts its first blob snapshot of that session; the plugin posts one on every connect, even for
+  a place with no terrain. Those changes stay on disk and are reconciled as soon as the snapshot
+  arrives.
 
 ## 5. State store (SQLite)
 
@@ -124,9 +127,10 @@ A `meta` table holds the schema version and project identity. Writes are transac
 instances only the hash is stored (no merge base).
 
 While it runs, `naht serve` also writes its bound port to `.naht/daemon.port` (plain text, next to
-`state.db`) and removes the file on a clean shutdown. `naht resolve` reads that port to ask the daemon
-to re-sync, so `--port` is honoured and `naht.toml` is not used for the nudge. A file left behind by a
-crashed daemon points at a closed port, and the nudge then does nothing.
+`state.db`) and removes the file on a clean shutdown. `naht resolve` and `naht pull` read that port to
+ask the daemon to re-sync, so `--port` is honoured. `naht pull` falls back to the `naht.toml` port only
+when the file is absent. Both nudges wait at most 2 s for an answer. A file left behind by a crashed
+daemon points at a closed port, and the nudge then does nothing.
 
 ## 6. Configuration
 
@@ -224,6 +228,16 @@ not a v1 blocker.
   Not changed yet. Proposed guard: hold any batch of deletions above a threshold (for example 10 or
   a quarter of the synced paths, whichever is larger), leave those paths untouched, and surface them
   in `naht status` until the user confirms the deletion through an explicit command (not yet designed).
+- **Filesystem blobs wait for a Studio report that may never come.** The plugin pushes its terrain
+  snapshot on each connect (`plugin/src/Connection.luau:110` calls `_pushTerrain`, which posts at
+  `:209-211`). If `Terrain.read` fails (`:203-208`) or the post fails, the error is swallowed, so the
+  daemon gets no snapshot for that connection and filesystem blob changes stay held until the next
+  connect. A plugin without the blob channel never polls `/blobs`, so blob sync cannot work with it at
+  all. Not changed: a daemon-side timeout would have to assume that an unreported Studio has no terrain,
+  and filesystem terrain could then overwrite Studio's real terrain.
+- **A Studio snapshot can overwrite a pending ToStudio blob.** A `POST /blobs` replaces the session's
+  mirror, and a filesystem blob already queued for Studio but not yet applied by the plugin is not
+  protected from that replacement. The fix belongs with the queue and ack work for blobs, a later branch.
 - **A Studio edit made while the plugin is disconnected is not tracked for frozen paths.** `studio_sides`
   only records Studio edits that arrive over the wire. An edit made in Studio while the plugin is
   disconnected never reaches it, so the stored Studio side of a frozen path can be stale, and the next
