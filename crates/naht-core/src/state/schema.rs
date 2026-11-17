@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::{SCHEMA_VERSION, SCHEMA_VERSION_KEY, StateError, read_meta_i64};
 
@@ -22,8 +22,9 @@ pub(super) fn schema_is_current(conn: &Connection) -> Result<bool, StateError> {
     Ok(!legacy_assets && read_meta_i64(conn, SCHEMA_VERSION_KEY)? == Some(SCHEMA_VERSION))
 }
 
-pub(super) fn migrate(conn: &Connection) -> Result<(), StateError> {
-    conn.execute_batch(
+pub(super) fn migrate(conn: &mut Connection) -> Result<(), StateError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (
              key   TEXT PRIMARY KEY,
              value TEXT NOT NULL
@@ -48,5 +49,24 @@ pub(super) fn migrate(conn: &Connection) -> Result<(), StateError> {
          );
          DELETE FROM assets WHERE content_hash NOT LIKE 'blake3:%';",
     )?;
+    write_schema_version(&tx)?;
+    tx.commit()?;
     Ok(())
+}
+
+fn write_schema_version(tx: &Transaction<'_>) -> Result<(), StateError> {
+    match read_meta_i64(tx, SCHEMA_VERSION_KEY)? {
+        Some(found) if found != SCHEMA_VERSION => Err(StateError::SchemaVersionMismatch {
+            found,
+            expected: SCHEMA_VERSION,
+        }),
+        Some(_) => Ok(()),
+        None => {
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+                (SCHEMA_VERSION_KEY, SCHEMA_VERSION.to_string()),
+            )?;
+            Ok(())
+        }
+    }
 }

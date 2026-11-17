@@ -111,28 +111,11 @@ impl StateStore {
         Self::init(Connection::open_in_memory()?)
     }
 
-    fn init(conn: Connection) -> Result<Self, StateError> {
+    fn init(mut conn: Connection) -> Result<Self, StateError> {
         conn.busy_timeout(BUSY_TIMEOUT)?;
         if !schema_is_current(&conn)? {
-            migrate(&conn)?;
+            migrate(&mut conn)?;
         }
-
-        match read_meta_i64(&conn, SCHEMA_VERSION_KEY)? {
-            Some(found) if found != SCHEMA_VERSION => {
-                return Err(StateError::SchemaVersionMismatch {
-                    found,
-                    expected: SCHEMA_VERSION,
-                });
-            }
-            Some(_) => {}
-            None => {
-                conn.execute(
-                    "INSERT INTO meta (key, value) VALUES (?1, ?2)",
-                    (SCHEMA_VERSION_KEY, SCHEMA_VERSION.to_string()),
-                )?;
-            }
-        }
-
         Ok(Self { conn })
     }
 
