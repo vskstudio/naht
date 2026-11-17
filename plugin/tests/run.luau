@@ -1379,6 +1379,133 @@ end
 
 do
 	local log, onState = stateLog()
+	local attempts = 0
+	local seenDelays: { number } = {}
+	local keptEveryTime = true
+	local tree, root = studioWorld(true)
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				attempts += 1
+				table.insert(seenDelays, connection.pushBackoff)
+				local sawOld = false
+				for _, change in changes do
+					if change.path == "old.luau" then
+						sawOld = true
+					end
+				end
+				if not sawOld then
+					keptEveryTime = false
+				end
+				if attempts <= 3 then
+					error("naht: /changes returned 503")
+				end
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+	connection:_schedulePush()
+	task.wait(0.6)
+	check(
+		"a 503 on changes keeps the batch and retries it",
+		attempts == 4 and keptEveryTime,
+		string.format("attempts %d, kept %s", attempts, tostring(keptEveryTime))
+	)
+	check(
+		"each retry after a 503 on changes waits twice as long",
+		seenDelays[1] == 0.01 and seenDelays[2] == 0.02 and seenDelays[3] == 0.04 and seenDelays[4] == 0.08,
+		table.concat(seenDelays, ",")
+	)
+	check("a successful push resets the push backoff", connection.pushBackoff == 2, tostring(connection.pushBackoff))
+	local warned: string? = nil
+	for _, entry in log do
+		if entry.state == "Warning" and warned == nil then
+			warned = entry.detail
+		end
+	end
+	check(
+		"a 503 on changes sets a Warning naming the reason",
+		warned ~= nil
+			and string.find(warned, "push failed: ", 1, true) ~= nil
+			and string.find(warned, "naht: /changes returned 503", 1, true) ~= nil,
+		tostring(warned)
+	)
+	check("a successful push after a 503 ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end
+
+do
+	local log, onState = stateLog()
+	local acks: { { string } } = {}
+	local ackAttempts = 0
+	local patchCalls = 0
+	local tree, root = studioWorld(true)
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				patchCalls += 1
+				if patchCalls == 1 then
+					return {
+						cursor = 1,
+						patches = {
+							{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+						},
+					}
+				end
+				if patchCalls == 2 then
+					return { cursor = 1, patches = {} }
+				end
+				error("stop")
+			end,
+			postAck = function(_, paths)
+				ackAttempts += 1
+				if ackAttempts == 1 then
+					error("naht: /ack returned 503")
+				end
+				table.insert(acks, paths)
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.ackBackoff = 0.01
+	pcall(connection._serve, connection, 1)
+	check(
+		"a 503 on ack keeps the applied paths and retries them",
+		ackAttempts == 2 and #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau",
+		string.format("attempts %d, acks %d", ackAttempts, #acks)
+	)
+	local warned = false
+	for _, entry in log do
+		local detail = entry.detail or ""
+		if
+			entry.state == "Warning"
+			and string.find(detail, "ack failed: ", 1, true) ~= nil
+			and string.find(detail, "naht: /ack returned 503", 1, true) ~= nil
+		then
+			warned = true
+		end
+	end
+	check("a 503 on ack sets a Warning naming the reason", warned, lastStateOf(log))
+	check("a successful ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end
+
+do
+	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
 	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
 	connection.running = true

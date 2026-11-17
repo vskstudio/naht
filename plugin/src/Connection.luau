@@ -16,6 +16,8 @@ local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
 local UNDECODABLE_BLOB = "undecodable blob batch"
 local DECODE_FAILURE_LIMIT = 5
+local ACK_BACKOFF_START = 2
+local RETRY_BACKOFF_MAX = 60
 
 local CLASS_SUFFIX = {
 	Script = ".server.luau",
@@ -25,6 +27,10 @@ local CLASS_SUFFIX = {
 
 local UNSAFE_NAME_CHARACTERS = { "/", "\\", "\0" }
 local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
+
+local function doubled(current: number, max: number): number
+	return math.min(current * 2, max)
+end
 
 local function isSafeName(name: string): boolean
 	for _, character in UNSAFE_NAME_CHARACTERS do
@@ -84,6 +90,8 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		backoff = BACKOFF_START,
 		blobBackoff = BLOB_BACKOFF_START,
 		terrainBackoff = TERRAIN_BACKOFF_START,
+		pushBackoff = PUSH_RETRY,
+		ackBackoff = ACK_BACKOFF_START,
 		terrainInFlight = false,
 		cursor = 0,
 		blobCursor = 0,
@@ -150,7 +158,7 @@ function Connection._refreshState(self)
 end
 
 function Connection.nextBlobBackoff(current: number): number
-	return math.min(current * 2, BLOB_BACKOFF_MAX)
+	return doubled(current, BLOB_BACKOFF_MAX)
 end
 
 function Connection.start(self)
@@ -273,6 +281,7 @@ function Connection._run(self, session: number)
 end
 
 function Connection._serve(self, session: number)
+	local unacked: { string } = {}
 	while self:_isCurrent(session) do
 		local batch = self.client:patches(self.cursor)
 		self.applying = true
@@ -304,12 +313,37 @@ function Connection._serve(self, session: number)
 		end
 		self.cursor = batch.cursor
 		self.backoff = BACKOFF_START
-		if #applied > 0 then
-			pcall(function()
-				self.client:postAck(applied)
-			end)
+		for _, path in applied do
+			if not table.find(unacked, path) then
+				table.insert(unacked, path)
+			end
+		end
+		if #unacked > 0 then
+			unacked = self:_ack(session, unacked)
+			if not self:_isCurrent(session) then
+				return
+			end
 		end
 	end
+end
+
+function Connection._ack(self, session: number, paths: { string }): { string }
+	local ok, err = pcall(function()
+		self.client:postAck(paths)
+	end)
+	if not self:_isCurrent(session) then
+		return paths
+	end
+	if ok then
+		self.ackBackoff = ACK_BACKOFF_START
+		self:_clearWarning("ack")
+		return {}
+	end
+	self:_setWarning("ack", "ack failed: " .. tostring(err))
+	local delay = self.ackBackoff
+	self.ackBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+	task.wait(delay)
+	return paths
 end
 
 function Connection._serveBlobs(self, epoch: number)
@@ -533,17 +567,26 @@ function Connection._schedulePush(self, delay: number?)
 		if #changes == 0 then
 			return
 		end
-		local ok = pcall(function()
+		local ok, err = pcall(function()
 			self.client:postChanges(changes)
 		end)
-		if not ok and self:_isCurrent(session) then
-			for path, change in sent do
-				if self.pendingPush[path] == nil then
-					self.pendingPush[path] = change
-				end
-			end
-			self:_schedulePush(PUSH_RETRY)
+		if not self:_isCurrent(session) then
+			return
 		end
+		if ok then
+			self.pushBackoff = PUSH_RETRY
+			self:_clearWarning("push")
+			return
+		end
+		self:_setWarning("push", "push failed: " .. tostring(err))
+		for path, change in sent do
+			if self.pendingPush[path] == nil then
+				self.pendingPush[path] = change
+			end
+		end
+		local delay = self.pushBackoff
+		self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+		self:_schedulePush(delay)
 	end)
 end
 
