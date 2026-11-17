@@ -19,13 +19,42 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 
 | Méthode + chemin | Rôle |
 |---|---|
-| `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session, et la garde `servePlaceId`. Déclenche un re-diff contre l'état persisté à la (re)connexion. |
+| `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Déclenche un re-diff contre l'état persisté à la (re)connexion. |
 | `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. |
 | `POST /changes` | Éditions Studio → système de fichiers (un lot d'upserts/deletes). |
 | `GET /blobs` | Long-poll pour le canal **blob terrain** (daemon → Studio). Gardé séparé de `/patches` parce que les blobs se synchronisent de façon opaque, sans diff/merge. |
 | `POST /blobs` | Changements de blob Studio → daemon (voxels de terrain). |
 | `POST /ack` | Le plugin confirme quels patches il a réellement appliqués. Gate l'avancée de la base. |
 | `GET /heartbeat` | Ping de vivacité ; pilote l'état de connexion explicite. |
+
+## Contrôle d'accès
+
+Le daemon vérifie chaque route avant son handler. Une requête reçoit `403` quand :
+
+- elle porte un header `Origin`, que les navigateurs ajoutent aux requêtes inter-sites ;
+- son `Host` n'est pas `127.0.0.1:<port>`, `localhost:<port>` ou `[::1]:<port>`, ce qui bloque les pages qui
+  rattachent un nom DNS à l'adresse de bouclage (DNS rebinding) ;
+- elle n'a pas le header `x-naht-client`. Un navigateur ne peut pas envoyer un header personnalisé à une autre
+  origine sans preflight, et le daemon n'en répond jamais ;
+- le projet définit `[serve] place_id` et le header `x-naht-place-id` manque ou diffère.
+
+Ces contrôles arrêtent les navigateurs et le DNS rebinding. Ce ne sont pas une authentification : tout processus
+de la machine qui atteint le port et envoie les headers est accepté. Sur une machine partagée, c'est donc le
+compte du système d'exploitation qui protège le projet. Le modèle de menace est dans `SECURITY.md`.
+
+Les écritures sont aussi contrôlées. `POST /changes` prend une map MessagePack `{changes: [...]}`, où chaque
+changement vaut `{Upsert: {path, class, content}}` ou `{Delete: {path}}`. Il n'accepte que des chemins visibles
+qui correspondent à un script Studio. Si un changement du lot est refusé, le lot entier l'est : le daemon répond
+`400` avec un corps JSON `{"refused_paths": [...]}` qui liste chaque chemin refusé dans l'ordre du lot, et rien
+du lot n'est écrit. Un lot dont tous les changements sont acceptés reçoit `200` avec un corps vide, et un chemin
+qui passe par un lien symbolique est refusé. Un corps mal formé reçoit `400`. Si les changements valides ne peuvent pas être appliqués, le lot reçoit
+`500` et le miroir Studio du daemon est restauré dans l'état qu'il avait avant le lot. `POST /blobs` n'accepte
+que des fichiers `.terrain` visibles, et le reste reçoit `400` sans rien écrire.
+
+Au plus deux requêtes POST lisent et traitent un corps à la fois, et une troisième attend un slot sans limite de
+temps propre. Chaque corps est plafonné à 64 MiB et reçoit `413` lorsqu'il est plus grand. Le délai de 15
+secondes ne couvre que la lecture du corps, qui reçoit `408` lorsqu'elle se bloque, et un corps qui se termine
+trop tôt ou qui est mal formé reçoit `400`. Une tête de requête qui reste bloquée pendant dix secondes est coupée.
 
 ## Le handshake (`GET /info`)
 
@@ -34,13 +63,13 @@ projet, un id de session, et l'optionnel `serve_place_id`. Deux gardes vivent ic
 
 - **Version gate** : un décalage de version de protocole est signalé au lieu de synchroniser contre un pair
   incompatible. Mets à jour la CLI et le plugin ensemble. Voir [Installation](#/docs/installation).
-- **Garde `servePlaceId`** : si le projet définit `[serve] place_id`, le daemon ne procède qu'avec la
-  session Studio dont le place id correspond. Un décalage est rejeté ici, avant qu'aucune source ne bouge.
+- **Garde `servePlaceId`** : si le projet définit `[serve] place_id`, chaque requête doit porter le header
+  `x-naht-place-id` correspondant. Un décalage est refusé avant qu'aucune source ne bouge (voir Contrôle d'accès).
 
 <Callout type="important">
 
 La garde `servePlaceId` est l'assurance pas chère qui t'empêche de déverser la source d'un jeu dans un autre.
-Un décalage échoue au handshake. Rien n'est écrit.
+Un décalage échoue dès la première requête. Rien n'est écrit.
 
 </Callout>
 
@@ -63,5 +92,9 @@ re-diffe et renvoie exactement ce qui manque, sans jamais supposer qu'un lot per
 
 ## Versionnage
 
-Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `1`). Il fait partie du handshake pour que les
+Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `2`). Il fait partie du handshake pour que les
 deux moitiés puissent refuser de se parler à travers une frontière incompatible au lieu de corrompre l'état.
+
+Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur chaque requête et accompagnent la
+version `2`. Un plugin compilé pour la version `1` est refusé sur toutes les routes, et il signale qu'il est
+obsolète et cesse de se reconnecter. Mets à jour la CLI et le plugin ensemble.

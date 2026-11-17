@@ -38,8 +38,9 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   `pending` count (unacked FS→Studio text patches) plus a bounded in-memory ring buffer (256) of
   recent *completed* sync events `{seq, unix_ms, path, direction, kind, outcome}`, with a `since`
   cursor (1-based seqs, strictly-greater filter: a consumer never re-sees its last event, and
-  `buffer_start_seq` signals an eviction gap). Additive: no existing message shape changed,
-  `PROTOCOL_VERSION` stays `1`. The Neublox adapter that consumes it lives outside this repo.
+  `buffer_start_seq` signals an eviction gap). Additive: no existing message shape changed. The
+  protocol version was `1` when this shipped and is `2` now, after the client headers became mandatory
+  (see the protocol page). The Neublox adapter that consumes it lives outside this repo.
 
 ## Shipped: v0.3.0 (merged)
 
@@ -55,6 +56,18 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
 - **CI enforces everything** through `scripts/check.sh`: fmt, the 500-line limit, no plain comments,
   no em or en dash (#63), clippy with warnings denied, tests, rustdoc with warnings denied, full
   `cargo deny` and workspace `cargo machete`.
+
+## Protocol 2 (unreleased)
+
+- **`POST /changes` response**: a batch whose every change is accepted is answered `200` with an empty body.
+  A batch with any refused change is refused whole: `400` with a JSON body `{"refused_paths": [...]}` naming
+  each refused path, and nothing in the batch applies. The request is `ChangeBatch` `{changes: [...]}` where
+  each change is externally tagged, `Upsert {path, class, content}` or `Delete {path}`. A malformed body is
+  `400`, and a batch whose valid changes fail to apply is `500` with the Studio mirror restored to its state
+  before the batch.
+- **Body limits**: at most two POST bodies are read and handled at once, each capped at 64 MiB (`413`), with
+  a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 has not shipped, so
+  these changes belong to it and `PROTOCOL_VERSION` stays `2`.
 
 ---
 
