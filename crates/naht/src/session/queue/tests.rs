@@ -1,8 +1,12 @@
 use std::fs;
+use std::io;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use naht_core::binary::BlobInstance;
+use naht_core::reconciler::{Direction, Patch, PatchKind};
 use naht_core::state::StateStore;
+use tracing::subscriber::with_default;
 
 use crate::session::Session;
 
@@ -100,4 +104,48 @@ fn an_unchanged_patch_keeps_its_delivered_seq_across_a_rescan() {
     let (_, patches) = session.take_patches(0);
     assert_eq!(patches.len(), 1);
     assert_eq!(patches[0].patch.path, "B.luau");
+}
+
+#[derive(Clone, Default)]
+struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_duplicate_patch_is_not_logged_as_emitted_twice() {
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_in(root.path());
+    let patch = Patch {
+        path: "A.luau".to_owned(),
+        class: "ModuleScript".to_owned(),
+        direction: Direction::ToStudio,
+        kind: PatchKind::Create,
+        content: Some("one".to_owned()),
+    };
+
+    with_default(subscriber, || {
+        session.enqueue(patch.clone());
+        session.enqueue(patch);
+    });
+
+    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(text.matches("patch emitted").count(), 1);
+    assert_eq!(session.queue.len(), 1);
 }

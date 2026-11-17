@@ -146,17 +146,17 @@ impl Session {
     }
 
     fn push_patch(&mut self, patch: Patch) {
+        if let Some((_, queued)) = self.queue.get(&patch.path)
+            && *queued == patch
+        {
+            return;
+        }
         tracing::info!(
             target: "naht::sync",
             path = ?patch.path,
             kind = ?patch.kind,
             "patch emitted"
         );
-        if let Some((_, queued)) = self.queue.get(&patch.path)
-            && *queued == patch
-        {
-            return;
-        }
         self.queue
             .insert(patch.path.clone(), (self.next_seq, patch));
         self.next_seq = self.next_seq.saturating_add(1);
