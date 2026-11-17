@@ -253,6 +253,9 @@ function Connection._run(self, session: number)
 			end
 			self.projectName = info.project_name
 			self.conflicts = {}
+			for _, path in info.conflicted or {} do
+				self.conflicts[path] = true
+			end
 			self:_refreshState()
 			self.cursor = 0
 			self.blobCursor = 0

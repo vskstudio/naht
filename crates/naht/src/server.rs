@@ -200,7 +200,7 @@ fn handshake(session: &mut Session, place_id: Option<u64>) -> Result<ServerInfo,
         });
     }
     session.rescan()?;
-    Ok(session.info())
+    Ok(session.handshake_info()?)
 }
 
 #[derive(Deserialize)]

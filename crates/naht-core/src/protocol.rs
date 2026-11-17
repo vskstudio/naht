@@ -31,6 +31,9 @@ pub struct ServerInfo {
     /// The place id this project is bound to, or `None` if unguarded. The plugin reports its own
     /// place id at handshake; a mismatch is rejected by the daemon before any sync.
     pub serve_place_id: Option<u64>,
+    /// The paths frozen as conflicted, so a plugin that reconnects after a restart can show them.
+    #[serde(default)]
+    pub conflicted: Vec<String>,
 }
 
 /// The long-poll response from `GET /patches`: every queued patch past the client's cursor, plus the
@@ -191,9 +194,35 @@ mod tests {
             project_name: "demo".to_owned(),
             session_id: "s-1".to_owned(),
             serve_place_id: Some(123),
+            conflicted: vec!["Frozen.luau".to_owned()],
         };
         let bytes = to_msgpack(&info).unwrap();
         assert_eq!(from_msgpack::<ServerInfo>(&bytes).unwrap(), info);
+    }
+
+    #[derive(Serialize)]
+    struct PreConflictServerInfo {
+        protocol_version: u32,
+        server_version: String,
+        project_name: String,
+        session_id: String,
+        serve_place_id: Option<u64>,
+    }
+
+    #[test]
+    fn server_info_without_conflicted_decodes_with_none_frozen() {
+        let legacy = PreConflictServerInfo {
+            protocol_version: PROTOCOL_VERSION,
+            server_version: "0.1.0".to_owned(),
+            project_name: "demo".to_owned(),
+            session_id: "s-1".to_owned(),
+            serve_place_id: None,
+        };
+        let bytes = to_msgpack(&legacy).unwrap();
+        assert_eq!(
+            from_msgpack::<ServerInfo>(&bytes).unwrap().conflicted,
+            Vec::<String>::new()
+        );
     }
 
     #[test]

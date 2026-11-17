@@ -16,7 +16,7 @@ local Protocol = require("../src/Protocol").new(MessagePack)
 local Connection = require("../src/Connection")
 
 local GOLDEN = {
-	server_info = "85b070726f746f636f6c5f76657273696f6e01ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263ae73657276655f706c6163655f69647b",
+	server_info = "86b070726f746f636f6c5f76657273696f6e01ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263ae73657276655f706c6163655f69647baa636f6e666c696374656490",
 	patch_batch = "82a6637572736f7202a7706174636865739185a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
 	change_batch = "81a76368616e6765739281a655707365727483a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a7636f6e74656e74a872657475726e203281a644656c65746581a470617468aa7372632f422e6c756175",
 	blob_patch_batch = "82a6637572736f7201a7706174636865739185a470617468af5465727261696e2e7465727261696ea5636c617373a75465727261696ea9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74c4050001ff807f",
@@ -1502,6 +1502,57 @@ do
 	end
 	check("a 503 on ack sets a Warning naming the reason", warned, lastStateOf(log))
 	check("a successful ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				return { protocol_version = 1, project_name = "demo", conflicted = { "Frozen.luau" } }
+			end,
+			patches = function(_, _cursor)
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				task.wait()
+				return { cursor = 0, patches = {} }
+			end,
+			postBlobs = function() end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_run(1)
+	local conflictSeen = false
+	local connectedSeen = false
+	for _, entry in log do
+		if entry.state == "Conflict" and entry.detail == "Frozen.luau" then
+			conflictSeen = true
+		end
+		if entry.state == "Connected" then
+			connectedSeen = true
+		end
+	end
+	check(
+		"a connect with a frozen path reports it as a Conflict and never Connected",
+		conflictSeen and not connectedSeen,
+		"states: " .. table.concat((function()
+			local names = {}
+			for _, entry in log do
+				table.insert(names, entry.state .. "(" .. tostring(entry.detail) .. ")")
+			end
+			return names
+		end)(), " ")
+	)
 end
 
 do

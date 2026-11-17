@@ -6,6 +6,7 @@ export type ServerInfo = {
 	project_name: string,
 	session_id: string,
 	serve_place_id: number?,
+	conflicted: { string }?,
 }
 
 export type Patch = {
