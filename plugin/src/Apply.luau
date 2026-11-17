@@ -16,6 +16,8 @@ export type Tree = {
 	root: Node,
 	createInstance: (className: string, name: string) -> Node,
 	findChild: (parent: Node, name: string) -> Node?,
+	children: (parent: Node) -> { Node },
+	className: (node: Node) -> string,
 	setParent: (node: Node, parent: Node) -> (),
 	setSource: (node: Node, content: string) -> (),
 	destroy: (node: Node) -> (),
@@ -28,16 +30,35 @@ export type Patch = {
 	content: string?,
 }
 
-local SCRIPT_SUFFIXES = { ".server.luau", ".client.luau", ".luau" }
+local SCRIPT_KINDS = {
+	{ suffix = ".server.luau", class = "Script" },
+	{ suffix = ".client.luau", class = "LocalScript" },
+	{ suffix = ".luau", class = "ModuleScript" },
+}
 
--- The instance name for a file name, stripping the known script suffix.
-local function instanceName(fileName: string): string
-	for _, suffix in SCRIPT_SUFFIXES do
-		if #fileName > #suffix and string.sub(fileName, -#suffix) == suffix then
-			return string.sub(fileName, 1, #fileName - #suffix)
+local function scriptKind(fileName: string): { suffix: string, class: string }?
+	for _, kind in SCRIPT_KINDS do
+		if #fileName > #kind.suffix and string.sub(fileName, -#kind.suffix) == kind.suffix then
+			return kind
 		end
 	end
-	return fileName
+	return nil
+end
+
+local function instanceName(fileName: string): string
+	local kind = scriptKind(fileName)
+	if kind == nil then
+		return fileName
+	end
+	return string.sub(fileName, 1, #fileName - #kind.suffix)
+end
+
+local function expectedClass(fileName: string, patchClass: string): string
+	local kind = scriptKind(fileName)
+	if kind == nil then
+		return patchClass
+	end
+	return kind.class
 end
 
 local function splitPath(path: string): { string }
@@ -73,6 +94,21 @@ function Applier._ensureParent(self, segments: { string }): Node
 	return parent
 end
 
+-- Walk the folder chain for every segment but the last without creating anything; nil when a folder is
+-- missing.
+function Applier._findParent(self, segments: { string }): Node?
+	local tree = self.tree
+	local parent = tree.root
+	for index = 1, #segments - 1 do
+		local existing = tree.findChild(parent, segments[index])
+		if existing == nil then
+			return nil
+		end
+		parent = existing
+	end
+	return parent
+end
+
 -- Apply one patch. `Conflict` carries the marker text and is applied like an `Update` so the
 -- conflict is visible in Studio; the caller surfaces it in the UI.
 function Applier.apply(self, patch: Patch)
@@ -81,17 +117,24 @@ function Applier.apply(self, patch: Patch)
 	if #segments == 0 then
 		return
 	end
-	local leafName = instanceName(segments[#segments])
-	local parent = self:_ensureParent(segments)
+	local fileName = segments[#segments]
+	local leafName = instanceName(fileName)
 
 	if patch.kind == "Delete" then
-		local existing = tree.findChild(parent, leafName)
-		if existing ~= nil then
-			tree.destroy(existing)
+		local parent = self:_findParent(segments)
+		if parent == nil then
+			return
+		end
+		local class = expectedClass(fileName, patch.class)
+		for _, child in tree.children(parent) do
+			if child.Name == leafName and tree.className(child) == class then
+				tree.destroy(child)
+			end
 		end
 		return
 	end
 
+	local parent = self:_ensureParent(segments)
 	local node = tree.findChild(parent, leafName)
 	if node == nil then
 		node = tree.createInstance(patch.class, leafName)
@@ -120,6 +163,12 @@ function Apply.studioTree(root: Node): Tree
 		end,
 		findChild = function(parent: Node, name: string): Node?
 			return parent:FindFirstChild(name)
+		end,
+		children = function(parent: Node): { Node }
+			return parent:GetChildren()
+		end,
+		className = function(node: Node): string
+			return node.ClassName
 		end,
 		setParent = function(node: Node, parent: Node)
 			node.Parent = parent

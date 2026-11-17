@@ -158,7 +158,7 @@ check("encode string", primitives.text == "hello")
 
 local function mockTree()
 	local function newNode(className: string, name: string)
-		return { ClassName = className, Name = name, Source = nil, children = {}, parent = nil }
+		return { ClassName = className, Name = name, Source = "", children = {}, parent = nil }
 	end
 	local root = newNode("Folder", "root")
 	return {
@@ -173,6 +173,19 @@ local function mockTree()
 				end
 			end
 			return nil
+		end,
+		children = function(parent: any): { any }
+			local list = {}
+			for index, child in parent.children do
+				list[index] = child
+			end
+			return list
+		end,
+		className = function(node: any): string
+			return node.ClassName
+		end,
+		getSource = function(node: any): string
+			return node.Source
 		end,
 		setParent = function(node: any, parent: any)
 			node.parent = parent
@@ -222,6 +235,62 @@ local ui = tree.findChild(tree.root, "ui")
 local main = if ui ~= nil then tree.findChild(ui, "main") else nil
 check("apply strips .client.luau suffix", main ~= nil and main.Name == "main")
 check("apply maps LocalScript class", main ~= nil and main.ClassName == "LocalScript")
+
+local function freshApplier()
+	local fresh = mockTree()
+	return fresh, Apply.create(fresh)
+end
+
+local function countNamed(parent: any, name: string): number
+	local count = 0
+	for _, child in parent.children do
+		if child.Name == name then
+			count += 1
+		end
+	end
+	return count
+end
+
+do
+	local fresh, freshApply = freshApplier()
+	freshApply:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
+	freshApply:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Delete" })
+	local utils = fresh.findChild(fresh.root, "Utils")
+	check(
+		"delete of a file keeps a same-named folder and its children",
+		utils ~= nil and utils.ClassName == "Folder" and fresh.findChild(utils, "Helper") ~= nil
+	)
+end
+
+do
+	local fresh, freshApply = freshApplier()
+	freshApply:apply({ path = "x.luau", class = "ModuleScript", kind = "Create", content = "a" })
+	freshApply:apply({ path = "x.server.luau", class = "Script", kind = "Delete" })
+	local survivor = fresh.findChild(fresh.root, "x")
+	check(
+		"delete of a script whose class changed keeps the new sibling",
+		survivor ~= nil and survivor.ClassName == "ModuleScript" and survivor.Source == "a"
+	)
+end
+
+do
+	local fresh, freshApply = freshApplier()
+	freshApply:apply({ path = "missing/A.luau", class = "ModuleScript", kind = "Delete" })
+	check("delete never creates missing parent folders", fresh.findChild(fresh.root, "missing") == nil)
+end
+
+do
+	local fresh, freshApply = freshApplier()
+	freshApply:apply({ path = "x/Inner.luau", class = "ModuleScript", kind = "Create", content = "" })
+	freshApply:apply({ path = "x.luau", class = "ModuleScript", kind = "Create", content = "" })
+	freshApply:apply({ path = "x.luau", class = "ModuleScript", kind = "Delete" })
+	local remaining = countNamed(fresh.root, "x")
+	local folder = fresh.findChild(fresh.root, "x")
+	check(
+		"delete removes only the same-class sibling among same-named instances",
+		remaining == 1 and folder ~= nil and folder.ClassName == "Folder"
+	)
+end
 
 -- === transport modules compile ===============================================================
 -- These talk to HttpService / the DataModel, so they can't run headless, but they must at least
