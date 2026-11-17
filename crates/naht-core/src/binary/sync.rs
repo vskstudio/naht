@@ -11,10 +11,7 @@ use crate::walk::Unseen;
 
 use super::model::{BlobInstance, BlobPatch, patch};
 
-/// Reconcile the filesystem and Studio blob sides against the persisted (hash-only) base.
-///
-/// Filesystem writes and deletions are applied to `vfs`; Studio-bound patches are returned. A blob
-/// changed on both sides freezes that path as a binary conflict: nothing is overwritten.
+/// Reconciles blobs only once Studio has reported its complete blob snapshot.
 ///
 /// # Errors
 ///
@@ -23,15 +20,23 @@ pub fn reconcile_blobs(
     vfs: &mut impl Vfs,
     store: &StateStore,
     fs: &BTreeMap<String, BlobInstance>,
-    studio: &BTreeMap<String, BlobInstance>,
+    studio: Option<&BTreeMap<String, BlobInstance>>,
     unseen: &Unseen,
 ) -> Result<Vec<BlobPatch>, ReconcileError> {
-    let base: BTreeMap<String, InstanceRecord> = store
-        .all()?
-        .into_iter()
-        .filter(|record| record.base_content.is_none())
-        .map(|record| (record.path.clone(), record))
-        .collect();
+    let Some(studio) = studio else {
+        return Ok(Vec::new());
+    };
+    let mut base = BTreeMap::new();
+    for record in store.all()? {
+        if record.base_content.is_some() {
+            continue;
+        }
+        if studio.contains_key(&record.path) || record.conflicted || unseen.contains(&record.path) {
+            base.insert(record.path.clone(), record);
+        } else {
+            store.remove(&record.path)?;
+        }
+    }
 
     let keys = union_keys(fs, studio, &base);
 
@@ -115,11 +120,7 @@ impl<V: Vfs> Pass<'_, V> {
             (None, Some(studio)) => {
                 self.reconcile_one_side(path, &class, &studio.content, base_hash, Side::Studio)?;
             }
-            (None, None) => {
-                if base.is_some() {
-                    self.store.remove(path)?;
-                }
-            }
+            (None, None) => {}
         }
         Ok(())
     }

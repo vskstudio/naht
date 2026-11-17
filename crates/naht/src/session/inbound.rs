@@ -2,7 +2,7 @@ use super::Session;
 use super::{MASS_DELETE_WARN, SessionError};
 use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::{Change, EventKind, Outcome};
-use naht_core::reconciler::{Direction, Patch, PatchKind, TextInstance};
+use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::InstanceRecord;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,11 +22,13 @@ impl Session {
                     content,
                 } => {
                     self.vfs.validate_path(&path)?;
+                    reconciler::record_studio_side(&self.store, &path, &class, Some(&content))?;
                     self.studio
                         .insert(path.clone(), TextInstance::new(path, class, content));
                 }
                 Change::Delete { path } => {
                     self.vfs.validate_path(&path)?;
+                    reconciler::record_studio_deletion(&self.store, &path)?;
                     self.studio.remove(&path);
                 }
             }
@@ -50,10 +52,12 @@ impl Session {
         if !self.terrain_sync {
             return Ok(());
         }
+        let mut snapshot = BTreeMap::new();
         for change in changes {
             self.vfs.validate_path(&change.path)?;
-            self.studio_blobs.insert(change.path.clone(), change);
+            snapshot.insert(change.path.clone(), change);
         }
+        self.studio_blobs = Some(snapshot);
         self.reconcile_blobs()
     }
 
@@ -73,21 +77,23 @@ impl Session {
                     );
                 }
                 Direction::ToStudio => {
-                    match (&patch.kind, &patch.content) {
-                        (PatchKind::Delete, _) => {
-                            self.studio_blobs.remove(&patch.path);
-                        }
-                        (_, Some(content)) => {
-                            self.studio_blobs.insert(
-                                patch.path.clone(),
-                                BlobInstance::new(
+                    if let Some(mirror) = self.studio_blobs.as_mut() {
+                        match (&patch.kind, &patch.content) {
+                            (PatchKind::Delete, _) => {
+                                mirror.remove(&patch.path);
+                            }
+                            (_, Some(content)) => {
+                                mirror.insert(
                                     patch.path.clone(),
-                                    patch.class.clone(),
-                                    content.clone(),
-                                ),
-                            );
+                                    BlobInstance::new(
+                                        patch.path.clone(),
+                                        patch.class.clone(),
+                                        content.clone(),
+                                    ),
+                                );
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                     self.enqueue_blob(patch);
                 }
@@ -175,7 +181,8 @@ impl Session {
             PatchKind::Delete => {
                 self.studio.remove(&patch.path);
             }
-            PatchKind::Create | PatchKind::Update | PatchKind::Conflict => {
+            PatchKind::Conflict => {}
+            PatchKind::Create | PatchKind::Update => {
                 if let Some(content) = &patch.content {
                     self.studio.insert(
                         patch.path.clone(),

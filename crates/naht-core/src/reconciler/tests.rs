@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::persist::advance_base;
+use super::persist::{advance_base, freeze};
 use super::*;
 use crate::merge;
 use crate::state::StateStore;
@@ -149,7 +149,11 @@ fn overlapping_both_changed_freezes_with_markers_and_loses_nothing() {
 
     let record = store.get("m").unwrap().unwrap();
     assert!(record.conflicted);
-    assert_eq!(record.base_content, Some(base.as_bytes().to_vec()));
+    assert_eq!(
+        record.base_content,
+        Some(b"local a = 22\n".to_vec()),
+        "the frozen base is the Studio side, so a resolution is pushed to Studio, never overwritten"
+    );
 }
 
 #[test]
@@ -202,7 +206,8 @@ fn resolve_refuses_while_markers_remain_then_succeeds() {
     assert_eq!(status(&store).unwrap().conflicted.len(), 0);
     assert_eq!(
         store.get("m").unwrap().unwrap().base_content,
-        Some(b"local a = 99\n".to_vec())
+        Some(b"local a = 22\n".to_vec()),
+        "resolve only unfreezes: the base stays on the Studio side until the next reconcile"
     );
 }
 
@@ -399,4 +404,28 @@ fn a_base_record_under_an_ignored_directory_is_kept_when_the_scan_skips_it() {
 
     assert_eq!(patches.len(), 0);
     assert!(store.get("target/A.luau").unwrap().is_some());
+}
+
+#[test]
+fn a_studio_deletion_of_a_frozen_path_keeps_the_class_its_base_recorded() {
+    let store = store_with_base(&[]);
+    freeze(&store, "src/A.luau", CLASS, "return 2").unwrap();
+
+    record_studio_deletion(&store, "src/A.luau").unwrap();
+
+    let side = store
+        .studio_side("src/A.luau")
+        .unwrap()
+        .expect("a frozen path tracks its Studio side");
+    assert_eq!(side.class, CLASS);
+    assert_eq!(side.content, None);
+}
+
+#[test]
+fn a_studio_deletion_of_an_untracked_path_records_nothing() {
+    let store = store_with_base(&[("src/A.luau", "return 1")]);
+
+    record_studio_deletion(&store, "src/A.luau").unwrap();
+
+    assert_eq!(store.studio_sides().unwrap(), Vec::new());
 }

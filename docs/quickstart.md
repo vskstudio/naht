@@ -85,7 +85,10 @@ naht status                 # lists the frozen path(s)
 naht resolve src/Hello.luau # clears the freeze; refuses while markers remain
 ```
 
-Sync resumes for that path once it is resolved.
+Once it is resolved, the running daemon is asked to re-sync at once, so the resolved file reaches Studio
+without another action. With no daemon running, it is sent on the next sync event. If a daemon is recorded
+but does not answer within 2 seconds, `naht resolve` says so and the file waits for the next sync event.
+Studio's old text is never written back over it.
 
 ## Where to next
 

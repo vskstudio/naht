@@ -28,6 +28,8 @@ pub struct ServerInfo {
     pub project_name: String,
     /// A per-run session id; a change in it tells the plugin the daemon restarted.
     pub session_id: String,
+    /// A random id per daemon run, which `.naht/daemon.port` records to identify this daemon.
+    pub daemon_id: String,
     /// The place id this project is bound to, or `None` if unguarded. The plugin reports its own
     /// place id at handshake; a mismatch is rejected by the daemon before any sync.
     pub serve_place_id: Option<u64>,
@@ -178,13 +180,47 @@ pub fn to_msgpack<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
 ///
 /// Returns [`ProtocolError::Decode`] when `bytes` is not a valid message of type `T`.
 pub fn from_msgpack<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError> {
-    Ok(rmp_serde::from_slice(bytes)?)
+    let mut deserializer = rmp_serde::Deserializer::from_read_ref(bytes);
+    deserializer.set_max_depth(MAX_MSGPACK_NESTING.saturating_add(1));
+    Ok(T::deserialize(&mut deserializer)?)
 }
+
+const MAX_MSGPACK_NESTING: usize = 32;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::reconciler::PatchKind;
+    use serde::de::IgnoredAny;
+    use std::iter::repeat_n;
+
+    fn nested_map(depth: usize) -> Vec<u8> {
+        let mut bytes = vec![0x81, 0xa1, b'x'];
+        bytes.extend(repeat_n(0x91, depth));
+        bytes.push(0x00);
+        bytes
+    }
+
+    fn nested_arrays(containers: usize) -> Vec<u8> {
+        let mut bytes = vec![0x91; containers];
+        bytes.push(0x00);
+        bytes
+    }
+
+    #[test]
+    fn a_message_nested_past_the_depth_limit_is_refused() {
+        let error = from_msgpack::<ServerInfo>(&nested_map(1000)).unwrap_err();
+        assert!(error.to_string().contains("depth limit"), "{error}");
+    }
+
+    #[test]
+    fn a_message_nested_to_the_limit_decodes_and_one_container_deeper_is_refused() {
+        let limit = MAX_MSGPACK_NESTING;
+        from_msgpack::<IgnoredAny>(&nested_arrays(limit)).unwrap();
+        let error =
+            from_msgpack::<IgnoredAny>(&nested_arrays(limit.saturating_add(1))).unwrap_err();
+        assert!(error.to_string().contains("depth limit"), "{error}");
+    }
 
     #[test]
     fn server_info_round_trips_through_msgpack() {
@@ -193,6 +229,7 @@ mod tests {
             server_version: "0.1.0".to_owned(),
             project_name: "demo".to_owned(),
             session_id: "s-1".to_owned(),
+            daemon_id: "d-1".to_owned(),
             serve_place_id: Some(123),
             conflicted: vec!["Frozen.luau".to_owned()],
         };
@@ -206,6 +243,7 @@ mod tests {
         server_version: String,
         project_name: String,
         session_id: String,
+        daemon_id: String,
         serve_place_id: Option<u64>,
     }
 
@@ -216,6 +254,7 @@ mod tests {
             server_version: "0.1.0".to_owned(),
             project_name: "demo".to_owned(),
             session_id: "s-1".to_owned(),
+            daemon_id: "d-1".to_owned(),
             serve_place_id: None,
         };
         let bytes = to_msgpack(&legacy).unwrap();
@@ -279,6 +318,106 @@ mod tests {
         };
         let bytes = to_msgpack(&batch).unwrap();
         assert_eq!(from_msgpack::<ChangeBatch>(&bytes).unwrap(), batch);
+    }
+
+    const PLUGIN_SUITE: &str = include_str!("../../../plugin/tests/run.luau");
+
+    fn pinned_hex(name: &str) -> String {
+        let prefix = format!("{name} = \"");
+        let pins: Vec<&str> = PLUGIN_SUITE
+            .lines()
+            .filter_map(|line| {
+                line.trim_start()
+                    .trim_start_matches("--")
+                    .trim_start()
+                    .strip_prefix(prefix.as_str())
+            })
+            .collect();
+        let [pin] = pins.as_slice() else {
+            panic!(
+                "run.luau must pin `{name}` exactly once, found {}",
+                pins.len()
+            );
+        };
+        pin.split('"')
+            .next()
+            .expect("a pinned hex string")
+            .to_owned()
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    #[test]
+    fn server_info_encodes_to_the_bytes_the_plugin_suite_pins() {
+        let info = ServerInfo {
+            protocol_version: PROTOCOL_VERSION,
+            server_version: "0.1.0".to_owned(),
+            project_name: "demo".to_owned(),
+            session_id: "abc".to_owned(),
+            daemon_id: "d-1".to_owned(),
+            serve_place_id: Some(123),
+            conflicted: Vec::new(),
+        };
+        assert_eq!(hex(&to_msgpack(&info).unwrap()), pinned_hex("server_info"));
+    }
+
+    #[test]
+    fn patch_batch_encodes_to_the_bytes_the_plugin_suite_pins() {
+        let batch = PatchBatch {
+            cursor: 2,
+            patches: vec![Patch {
+                path: "src/A.luau".to_owned(),
+                class: "ModuleScript".to_owned(),
+                direction: Direction::ToStudio,
+                kind: PatchKind::Update,
+                content: Some("return 1".to_owned()),
+            }],
+        };
+        assert_eq!(hex(&to_msgpack(&batch).unwrap()), pinned_hex("patch_batch"));
+    }
+
+    #[test]
+    fn change_batch_encodes_to_the_bytes_the_plugin_suite_pins() {
+        let batch = ChangeBatch {
+            changes: vec![
+                Change::Upsert {
+                    path: "src/A.luau".to_owned(),
+                    class: "ModuleScript".to_owned(),
+                    content: "return 2".to_owned(),
+                },
+                Change::Delete {
+                    path: "src/B.luau".to_owned(),
+                },
+            ],
+        };
+        assert_eq!(
+            hex(&to_msgpack(&batch).unwrap()),
+            pinned_hex("change_batch")
+        );
+    }
+
+    #[test]
+    fn blob_patch_batch_encodes_to_the_bytes_the_plugin_suite_pins() {
+        let batch = BlobPatchBatch {
+            cursor: 1,
+            patches: vec![BlobPatch {
+                path: "Terrain.terrain".to_owned(),
+                class: "Terrain".to_owned(),
+                direction: Direction::ToStudio,
+                kind: PatchKind::Update,
+                content: Some(vec![0x00, 0x01, 0xff, 0x80, 0x7f]),
+            }],
+        };
+        assert_eq!(
+            hex(&to_msgpack(&batch).unwrap()),
+            pinned_hex("blob_patch_batch")
+        );
     }
 
     #[test]

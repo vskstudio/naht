@@ -8,6 +8,7 @@
 
 pub mod commands;
 pub mod config;
+mod daemon_port;
 pub mod logging;
 /// Rendering of the command-line report.
 pub mod output;

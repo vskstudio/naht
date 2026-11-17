@@ -179,7 +179,7 @@ impl<V: Vfs> Pass<'_, V> {
             }
             Merge::Conflict(marked) => {
                 self.vfs.write(Path::new(path), marked.as_bytes())?;
-                freeze(self.store, path, class, base.unwrap_or_default())?;
+                freeze(self.store, path, class, studio)?;
                 self.patches.push(patch(
                     path,
                     class,

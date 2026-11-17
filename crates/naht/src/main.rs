@@ -10,11 +10,11 @@
 //! | 2 | the command line is wrong, reported by `clap` |
 //! | 65 | the project's input is malformed or the request conflicts with it |
 //! | 66 | an input file or the project directory cannot be read |
-//! | 69 | the daemon is not reachable, or its port cannot be bound |
+//! | 69 | the daemon is not reachable, its port cannot be bound, another `naht serve` already holds the project, or the port answers as a daemon that is not this project's or cannot be verified |
 //! | 70 | an internal failure that is not the operator's doing |
 //! | 71 | the file watcher cannot start |
 //! | 73 | an output file or project file cannot be created |
-//! | 74 | a file or the state database cannot be read or written |
+//! | 74 | a file, the state database or the daemon lock cannot be read or written, or the lock cannot be taken on this filesystem |
 //! | 78 | the configuration is invalid |
 
 mod exit;
@@ -147,7 +147,7 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
         }
         Command::Pull { path } => {
             let config = Config::load(&path)?;
-            commands::pull(&config).await?;
+            commands::pull(&path, &config).await?;
             out.say("pulled, daemon re-synced")?;
         }
         Command::Build {
@@ -177,7 +177,24 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
         }
         Command::Resolve { path, project } => {
             commands::resolve(&project, &path)?;
-            out.say(format_args!("resolved {path}"))?;
+            match commands::resync_running(&project).await {
+                commands::ResyncOutcome::Resynced => {
+                    out.say(format_args!("resolved {path}, daemon re-synced"))?;
+                }
+                commands::ResyncOutcome::NotRunning => {
+                    out.say(format_args!("resolved {path}"))?;
+                }
+                commands::ResyncOutcome::ForeignDaemon { project } => {
+                    out.say(format_args!(
+                        "resolved {path}, but the recorded port belongs to another project ({project}), so it was not re-synced"
+                    ))?;
+                }
+                commands::ResyncOutcome::Failed(reason) => {
+                    out.say(format_args!(
+                        "resolved {path}, but the running daemon {reason}, so it was not re-synced"
+                    ))?;
+                }
+            }
         }
         Command::PackagePlugin { src, output } => {
             commands::package_plugin(&src, &output)?;

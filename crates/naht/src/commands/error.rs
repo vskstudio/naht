@@ -1,4 +1,5 @@
 use crate::config::ConfigError;
+use crate::session::SessionError;
 use crate::uploader::UploaderError;
 use crate::watcher::WatchError;
 use naht_core::build::BuildError;
@@ -109,6 +110,9 @@ pub enum CommandError {
     /// A reconcile step failed.
     #[error(transparent)]
     Reconcile(#[from] ReconcileError),
+    /// The sync session could not be opened from the persisted state.
+    #[error(transparent)]
+    Session(#[from] SessionError),
     /// The layered configuration is invalid.
     #[error(transparent)]
     Config(#[from] ConfigError),
@@ -136,6 +140,71 @@ pub enum CommandError {
         /// The status the daemon returned.
         status: StatusCode,
     },
+    /// The port recorded for this project belongs to a daemon of another project.
+    #[error(
+        "no daemon is running for this project: the recorded port {port} belongs to another project (`{project}`)"
+    )]
+    ForeignDaemon {
+        /// The port that answered.
+        port: u16,
+        /// The project name the answering daemon reports.
+        project: String,
+    },
+    /// The port answers as a daemon of this project's name, but not the one recorded in the port file.
+    #[error(
+        "port {port} answers as another daemon named `{project}`, not the one recorded in `.naht/daemon.port` (stop that daemon, then restart `naht serve` in this project)"
+    )]
+    StaleDaemon {
+        /// The port that answered.
+        port: u16,
+        /// The project name the answering daemon reports.
+        project: String,
+    },
+    /// There is no port file, so the daemon that answered cannot be checked.
+    #[error(
+        "`.naht/daemon.port` is missing, so the daemon on port {port} cannot be verified (restart `naht serve` in this project to write it)"
+    )]
+    MissingPortFile {
+        /// The port that answered.
+        port: u16,
+    },
+    /// The port file predates daemon ids, so the daemon that answered cannot be checked.
+    #[error(
+        "`.naht/daemon.port` was written by an older naht and records no daemon id, so the daemon on port {port} cannot be verified (restart `naht serve` to rewrite it)"
+    )]
+    UnverifiedDaemon {
+        /// The port that answered.
+        port: u16,
+    },
+    /// The daemon answers from an older naht that reports no daemon id, so it cannot be checked.
+    #[error(
+        "the daemon on port {port} is from an older naht that reports no daemon id, so it cannot be verified (stop it, then run `naht serve` with this naht version)"
+    )]
+    OlderDaemon {
+        /// The port that answered.
+        port: u16,
+    },
+    /// Something answers at the daemon address, but not with naht's handshake.
+    #[error("`{url}` did not answer with naht's handshake")]
+    NotNahtDaemon {
+        /// The address that was tried.
+        url: String,
+    },
+    /// A daemon is already serving this project, so a second one must not start.
+    #[error("`naht serve` is already running for `{}` (see `.naht/daemon.lock`)", path.display())]
+    AlreadyRunning {
+        /// The project directory whose lock is held.
+        path: PathBuf,
+    },
+    /// The single-instance lock could not be taken for a reason other than contention.
+    #[error("cannot take the daemon lock `{}`", path.display())]
+    Lock {
+        /// The lock file.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
     /// The daemon's port could not be bound.
     #[error("cannot bind {addr}")]
     Bind {
@@ -159,4 +228,49 @@ pub enum CommandError {
         /// The workspace version it should name.
         want: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommandError;
+
+    #[test]
+    fn a_stale_daemon_names_the_other_daemon_and_the_next_step() {
+        let message = CommandError::StaleDaemon {
+            port: 34872,
+            project: "game".to_owned(),
+        }
+        .to_string();
+        assert_eq!(
+            message,
+            "port 34872 answers as another daemon named `game`, not the one recorded in `.naht/daemon.port` (stop that daemon, then restart `naht serve` in this project)"
+        );
+    }
+
+    #[test]
+    fn a_missing_port_file_is_not_reported_as_an_old_one() {
+        let missing = CommandError::MissingPortFile { port: 34872 }.to_string();
+        assert!(
+            missing.starts_with("`.naht/daemon.port` is missing,"),
+            "{missing}"
+        );
+        assert!(!missing.contains("older naht"), "{missing}");
+    }
+
+    #[test]
+    fn an_old_port_file_names_the_older_naht() {
+        let old = CommandError::UnverifiedDaemon { port: 34872 }.to_string();
+        assert!(old.contains("written by an older naht"), "{old}");
+        assert!(old.contains("records no daemon id"), "{old}");
+    }
+
+    #[test]
+    fn an_older_daemon_asks_for_this_naht_version() {
+        let older = CommandError::OlderDaemon { port: 34872 }.to_string();
+        assert!(older.contains("from an older naht"), "{older}");
+        assert!(
+            older.contains("run `naht serve` with this naht version"),
+            "{older}"
+        );
+    }
 }

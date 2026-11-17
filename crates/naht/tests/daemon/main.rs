@@ -8,3 +8,6 @@ mod changes;
 mod handshake;
 #[cfg(test)]
 mod support;
+#[cfg(test)]
+#[path = "../wire/mod.rs"]
+mod wire;

@@ -58,6 +58,16 @@ async fn post_changes_rejects_paths_that_escape_the_project_root() {
     assert!(!harness.root.parent().unwrap().join(sentinel).exists());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_changes_body_nested_too_deep_is_refused_and_the_daemon_keeps_answering() {
+    let harness = Harness::start(None).await;
+
+    let status = harness.post_changes_nested(1000).await;
+
+    assert!(status.is_client_error(), "{status}");
+    assert!(harness.info(None).await.status().is_success());
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn post_changes_rejects_symlink_paths_that_escape_the_project_root() {

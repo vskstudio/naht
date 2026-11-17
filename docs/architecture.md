@@ -81,8 +81,26 @@ All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on f
 - **Text:** 3-way merge with the last-sync content as the base. Clean merge → written, base advanced.
 - **Unmergeable text:** git-style markers (`<<<<<<< FS` / `=======` / `>>>>>>> Studio`) written into
   the file, the path marked *conflicted* in SQLite, and sync for that path **frozen** until
-  `naht resolve` confirms the markers are gone.
+  `naht resolve` confirms the markers are gone. The base of a frozen path holds the Studio content
+  at freeze time, so `naht resolve` only lifts the freeze and then asks the running daemon, found through
+  `.naht/daemon.port`, to reconcile (`GET /info`, 2 s timeout): the resolved file is sent to Studio as an
+  update at once, and the stale Studio text is never written back over it. With no daemon running, or one
+  that does not answer in time, the next sync event does it. Studio edits
+  that arrive while the path is frozen are kept in `studio_sides`, so the next reconcile after a
+  resolve (even after a restart) merges against the latest Studio text, or conflicts again, and never
+  overwrites it.
 - **Binary:** file-level conflict, never auto-merged.
+- **Restart:** a session opens with its Studio mirror seeded from the persisted text bases, overridden
+  by the tracked Studio sides of frozen paths. An unchanged file is therefore not read as a Studio
+  deletion, and an edit made while the daemon was down is sent to Studio as an update. Blobs are never
+  seeded from the filesystem: nothing is reconciled until Studio reports its blob snapshot (on plugin
+  connect), and a base whose path that snapshot omits is dropped first, so a blob re-created on disk is
+  created in Studio, never matched against an old base. A blob deleted on disk while the daemon was down
+  keeps its base until Studio reports, so when Studio sends its copy back the path is a Studio-bound
+  delete, not a resurrected file. Filesystem blob changes made during a session therefore wait until
+  Studio posts its first blob snapshot of that session; the plugin posts one on every connect, even for
+  a place with no terrain, and retries that post until the daemon accepts it. Those changes stay on disk
+  and are reconciled as soon as the snapshot arrives.
 
 ## 5. State store (SQLite)
 
@@ -96,12 +114,41 @@ Per instance, keyed by stable GUID:
 | `path` | filesystem path it maps to |
 | `class` | Roblox class name |
 | `content_hash` | fast change detection |
-| `base_content` (BLOB) | last-synced content: the **base** for 3-way text merge (text only) |
+| `base_content` (BLOB) | last-synced content: the **base** for 3-way text merge (text only); for a frozen path, the Studio content |
 | `mtime` | filesystem modification time |
 | `conflicted` | whether this path is frozen pending resolution |
 
+A `studio_sides` table (`path`, `class`, `content`) holds the latest Studio side of a path that is
+frozen or was frozen and not yet re-based; `content` is `NULL` when Studio deleted the instance, and
+`class` is then the class the base recorded. It seeds the Studio mirror on restart and is cleared as
+soon as the base advances.
+
 A `meta` table holds the schema version and project identity. Writes are transactional. For binary
 instances only the hash is stored (no merge base).
+
+While it runs, `naht serve` also writes its bound port and a random per-run daemon id to
+`.naht/daemon.port` (plain text, the port on the first line and the id on the second, next to `state.db`,
+written through a temp file and a rename so a reader never sees a partial value) and removes the file on a
+clean shutdown. A second `naht serve` on the same project refuses to start (exit 69): the daemon holds an
+exclusive lock on `.naht/daemon.lock` for its whole lifetime, taken before it writes anything. The lock
+covers only the daemon. `naht status` and `naht resolve` open `state.db` without it and rely on SQLite
+locking: every connection sets a 5 s busy timeout, and migrations run only when the schema is not current,
+so opening a current store takes no write lock. A migration runs in one `BEGIN IMMEDIATE` transaction, which
+takes the write lock before its first statement: it creates the tables, drops legacy asset hashes and writes
+the schema version, and rolls back as a whole if any step fails. When `try_lock` is refused on a filesystem that does not
+support it, `naht serve` exits 74 and does not start (it fails closed). On NFS the lock may be per host, so
+it does not exclude a daemon running on another machine.
+
+`naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured. When that
+file is absent, `naht pull` asks the `naht.toml` port and refuses whatever answers there, since no id is
+recorded to check it against; `naht resolve` skips the nudge. Both nudges wait at most 2 s for an answer. A
+file left behind by a crashed daemon points at a closed port, and the nudge then does nothing. Before a nudge
+re-syncs anything, it checks that the answer's `/info` names this project (and this place, when `naht.toml`
+configures one) and that its `daemon_id` is the id recorded in the port file. A port that answers for another
+project is reported as foreign and not re-synced. A daemon of this project's name with another id is refused
+as stale (`StaleDaemon`). A missing port file (`MissingPortFile`), a port file from an older naht with no id
+line (`UnverifiedDaemon`), and a daemon from an older naht that reports no `daemon_id` (`OlderDaemon`) are each
+refused as unverified, and each message asks for `naht serve` to be restarted.
 
 ## 6. Configuration
 
@@ -128,6 +175,12 @@ instances only the hash is stored (no merge base).
   handles complex Roblox types, with usable Luau libraries. JSON is avoided for payloads; the encoding
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
+- **Compatibility.** Under `PROTOCOL_VERSION` 1, a field may be added to a message, and unknown fields are
+  ignored, so an older client still reads a newer server's messages. `daemon_id` was added to `ServerInfo`
+  this way. The reverse is refused on purpose: a newer `naht pull` refuses an older daemon's handshake, one
+  with no `daemon_id`, with the `OlderDaemon` message ("from an older naht"), because it cannot tell which
+  daemon it reached. Removing or retyping a field, or changing what a message means, is a breaking change and
+  bumps the version.
 - **Endpoints:** `GET /info` (handshake + `servePlaceId` guard), `GET /patches` (long-poll, held
   open until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the
   binary terrain channel: a separate long-poll/push pair, kept apart from the text patch channel
@@ -193,3 +246,24 @@ not a v1 blocker.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.
 - **Directory with `init.luau` (N13).** On the daemon side a directory holding an `init.luau` is one `ModuleScript` with children. The plugin does not apply that shape yet: it creates a `Folder` for the directory and a `ModuleScript` named `init` inside it, so Studio's tree differs from the daemon's. Applying it needs the directory node to become the module itself, which `plugin/src/Apply.luau` does not do. The same holds for `init.server.luau` and `init.client.luau`.
+- **Wiped checkout while the daemon is down.** If the project directory is emptied or moved while
+  `naht serve` is stopped, the restart re-diffs every synced file as deleted on disk, and each one
+  becomes a Studio delete (30 files gone on disk means 30 Studio deletes). Live sync does the same.
+  Not changed yet. Proposed guard: hold any batch of deletions above a threshold (for example 10 or
+  a quarter of the synced paths, whichever is larger), leave those paths untouched, and surface them
+  in `naht status` until the user confirms the deletion through an explicit command (not yet designed).
+- **Filesystem blobs wait for a Studio report that may never come.** The plugin pushes its terrain
+  snapshot on each connect (`plugin/src/Connection.luau:110` calls `_pushTerrain`, which posts at
+  `:209-211`). If `Terrain.read` fails (`:203-208`) or the post fails, the error is swallowed, so the
+  daemon gets no snapshot for that connection and filesystem blob changes stay held until the next
+  connect. A plugin without the blob channel never polls `/blobs`, so blob sync cannot work with it at
+  all. The plugin must retry its terrain snapshot until the daemon accepts it, and report a persistent
+  failure. Not changed: a daemon-side timeout would have to assume that an unreported Studio has no terrain,
+  and filesystem terrain could then overwrite Studio's real terrain.
+- **A Studio snapshot can overwrite a pending ToStudio blob.** A `POST /blobs` replaces the session's
+  mirror, and a filesystem blob already queued for Studio but not yet applied by the plugin is not
+  protected from that replacement. The fix belongs with the queue and ack work for blobs, a later branch.
+- **A Studio edit made while the plugin is disconnected is not tracked for frozen paths.** `studio_sides`
+  only records Studio edits that arrive over the wire. An edit made in Studio while the plugin is
+  disconnected never reaches it, so the stored Studio side of a frozen path can be stale, and the next
+  reconcile after a restart merges against the older Studio text. Not changed yet.

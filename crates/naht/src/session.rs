@@ -17,6 +17,7 @@ mod queue;
 mod rescan;
 mod state;
 
+use getrandom::{Error as RandomError, fill};
 use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::SyncEvent;
 use naht_core::reconciler::{Patch, ReconcileError, TextInstance};
@@ -38,6 +39,9 @@ pub enum SessionError {
     /// A path from the protocol was refused by the rooted filesystem.
     #[error(transparent)]
     Vfs(#[from] VfsError),
+    /// The operating system could not supply the random daemon id.
+    #[error("cannot generate a daemon id: {0}")]
+    DaemonId(#[from] RandomError),
 }
 
 const PROJECT_ROOT: &str = "";
@@ -62,7 +66,7 @@ pub struct Session {
     /// The last-known Studio side of binary blobs (terrain), keyed by path. Blobs are last-writer-wins
     /// (architecture §9), so, unlike the ack-gated text mirror, this advances as soon as a patch is
     /// emitted rather than on a plugin ack.
-    studio_blobs: BTreeMap<String, BlobInstance>,
+    studio_blobs: Option<BTreeMap<String, BlobInstance>>,
     /// Queued filesystem → Studio blob patches, on their own sequence/cursor (a separate `/blobs`
     /// channel), keyed by path so a re-diff replaces rather than appends.
     blob_queue: BTreeMap<String, (u64, BlobPatch)>,
@@ -73,6 +77,7 @@ pub struct Session {
     activity_next_seq: u64,
     project_name: String,
     id: String,
+    daemon_id: String,
     serve_place_id: Option<u64>,
     terrain_sync: bool,
 }
@@ -82,4 +87,14 @@ fn new_session_id() -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos());
     format!("{nanos:x}")
+}
+
+fn new_daemon_id() -> Result<String, RandomError> {
+    let mut bytes = [0_u8; 16];
+    fill(&mut bytes)?;
+    Ok(bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .concat())
 }

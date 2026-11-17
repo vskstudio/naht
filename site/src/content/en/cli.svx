@@ -44,11 +44,20 @@ naht serve -v             # debug logs
 | `--port <PORT>` | Override the configured/default port (`34872`). |
 
 The daemon serves over `http://localhost:<port>`, watches the filesystem, and accepts the Studio
-plugin's connection. Leave it running while you work.
+plugin's connection. Leave it running while you work. Only one daemon runs per project: a second `naht serve` on the same project exits with an error and leaves the first one running.
 
 ## `naht pull [path]`
 
-Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event.
+Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event. It asks the
+daemon recorded in `.naht/daemon.port` (written by `naht serve`), waits at most 2 seconds for an answer,
+and only uses a daemon that reports this project and whose id is the one recorded in that file. The pull
+is refused in these cases, and the message says why:
+
+- `.naht/daemon.port` is missing: the daemon that answers cannot be checked. Restart `naht serve` in this project to write the file.
+- The file was written by an older naht and records no daemon id: restart `naht serve` to rewrite it.
+- The port answers as another daemon with this project's name, not the one recorded: stop that daemon, then restart `naht serve` in this project.
+- The daemon answering is from an older naht and reports no daemon id: stop it, then run `naht serve` with this naht version.
+- A recorded port that belongs to another project makes the pull fail.
 
 ```sh
 naht pull
@@ -88,6 +97,8 @@ naht status
 ## `naht resolve <path>`
 
 Clear a conflict once its markers are gone. **Refuses while any conflict markers remain.**
+
+Once cleared, it asks the daemon recorded in `.naht/daemon.port` to re-sync, and never waits more than 2 seconds for it. It prints `daemon re-synced` when that works, nothing extra when no daemon is running, and the reason otherwise (for example, the daemon did not answer in time). The file is resolved in every case, and the exit status stays 0. A nudge that fails never fails the command: only the message changes. That includes a recorded port that belongs to another project.
 
 ```sh
 naht resolve src/Hello.luau

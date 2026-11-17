@@ -26,7 +26,7 @@ fn blobs(items: &[(&str, &[u8])]) -> BTreeMap<String, BlobInstance> {
 fn base_with(store: &StateStore, path: &str, content: &[u8]) {
     let mut vfs = MemoryVfs::new();
     let instances = blobs(&[(path, content)]);
-    sync_blobs(&mut vfs, store, &instances, &instances).unwrap();
+    sync_blobs(&mut vfs, store, &instances, Some(&instances)).unwrap();
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn a_blob_round_trips_each_way_without_byte_loss() {
         &mut vfs,
         &store,
         &blobs(&[("Terrain.terrain", &blob)]),
-        &BTreeMap::new(),
+        Some(&BTreeMap::new()),
     )
     .unwrap();
     assert_eq!(patches.len(), 1);
@@ -69,7 +69,7 @@ fn a_blob_round_trips_each_way_without_byte_loss() {
         &mut terrain_vfs,
         &terrain_store,
         &BTreeMap::new(),
-        &blobs(&[("Terrain.terrain", &blob)]),
+        Some(&blobs(&[("Terrain.terrain", &blob)])),
     )
     .unwrap();
     assert_eq!(
@@ -88,7 +88,7 @@ fn a_one_sided_change_syncs_and_advances_the_base() {
         &mut vfs,
         &store,
         &blobs(&[("t.terrain", b"v2")]),
-        &blobs(&[("t.terrain", b"v1")]),
+        Some(&blobs(&[("t.terrain", b"v1")])),
     )
     .unwrap();
     assert_eq!(patches.len(), 1);
@@ -110,7 +110,7 @@ fn a_change_on_both_sides_freezes_a_binary_conflict_without_overwriting() {
         &mut vfs,
         &store,
         &blobs(&[("t.terrain", b"fs-edit")]),
-        &blobs(&[("t.terrain", b"studio-edit")]),
+        Some(&blobs(&[("t.terrain", b"studio-edit")])),
     )
     .unwrap();
 
@@ -125,7 +125,7 @@ fn a_change_on_both_sides_freezes_a_binary_conflict_without_overwriting() {
         &mut vfs,
         &store,
         &blobs(&[("t.terrain", b"fs-2")]),
-        &blobs(&[("t.terrain", b"studio-2")]),
+        Some(&blobs(&[("t.terrain", b"studio-2")])),
     )
     .unwrap();
     assert_eq!(again.len(), 0);
@@ -140,7 +140,7 @@ fn a_deleted_blob_propagates() {
         &mut vfs,
         &store,
         &BTreeMap::new(),
-        &blobs(&[("t.terrain", b"v1")]),
+        Some(&blobs(&[("t.terrain", b"v1")])),
     )
     .unwrap();
     assert_eq!(patches.len(), 1);
@@ -153,7 +153,7 @@ fn sync_blobs(
     vfs: &mut impl Vfs,
     store: &StateStore,
     fs: &BTreeMap<String, BlobInstance>,
-    studio: &BTreeMap<String, BlobInstance>,
+    studio: Option<&BTreeMap<String, BlobInstance>>,
 ) -> Result<Vec<BlobPatch>, ReconcileError> {
     reconcile_blobs(vfs, store, fs, studio, &Unseen::default())
 }
@@ -177,12 +177,31 @@ fn an_unreadable_blob_missing_from_the_fs_side_is_neither_deleted_nor_forgotten(
         &mut vfs,
         &store,
         &BTreeMap::new(),
-        &blobs(&[("t.terrain", b"v1")]),
+        Some(&blobs(&[("t.terrain", b"v1")])),
         &unseen_at("t.terrain"),
     )
     .unwrap();
 
     assert_eq!(patches.len(), 0);
     assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"v1");
+    assert!(store.get("t.terrain").unwrap().is_some());
+}
+
+#[test]
+fn an_unseen_path_missing_from_the_studio_report_keeps_its_base() {
+    let mut vfs = MemoryVfs::new();
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"v1");
+
+    let patches = reconcile_blobs(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        Some(&BTreeMap::new()),
+        &unseen_at("t.terrain"),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 0);
     assert!(store.get("t.terrain").unwrap().is_some());
 }

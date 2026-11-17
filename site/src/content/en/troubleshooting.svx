@@ -58,7 +58,10 @@ Naht froze a file because both sides changed it and the change couldn't be auto-
 1. `naht status`: see which paths are frozen.
 2. Open each file; resolve the `<<<<<<<` / `=======` / `>>>>>>>` markers by hand.
 3. `naht resolve <path>`: it **refuses while any markers remain**, so a half-resolved file can't slip
-   through.
+   through. It only lifts the freeze, then asks the running daemon to re-sync, so the resolved file reaches
+   Studio at once. With no daemon running, it is sent on the next sync event. If a daemon is recorded
+   but does not answer within 2 seconds, the command says so and the file waits for the next sync event. Studio's old text is never
+   written back over it.
 
 ## Edits stopped syncing after a disconnect
 

@@ -38,5 +38,5 @@ async fn pull_fails_clearly_when_no_daemon_is_running() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("naht.toml"), "[serve]\nport = 1\n").unwrap();
     let config = Config::load(dir.path()).unwrap();
-    assert!(commands::pull(&config).await.is_err());
+    assert!(commands::pull(dir.path(), &config).await.is_err());
 }

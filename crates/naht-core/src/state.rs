@@ -12,8 +12,20 @@ use rusqlite::{Connection, OptionalExtension};
 use std::fs;
 use std::io;
 use std::num::ParseIntError;
+use std::time::Duration;
+
+#[cfg(test)]
+mod busy_tests;
+mod schema;
+#[cfg(test)]
+mod schema_tests;
+mod studio_side;
+
+use schema::{migrate, schema_is_current};
+pub use studio_side::StudioSide;
 
 const SCHEMA_VERSION: i64 = 1;
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 const PROJECT_ID_KEY: &str = "project_id";
@@ -99,44 +111,11 @@ impl StateStore {
         Self::init(Connection::open_in_memory()?)
     }
 
-    fn init(conn: Connection) -> Result<Self, StateError> {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS meta (
-                 key   TEXT PRIMARY KEY,
-                 value TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS instances (
-                 guid         TEXT PRIMARY KEY,
-                 path         TEXT NOT NULL,
-                 class        TEXT NOT NULL,
-                 content_hash TEXT NOT NULL,
-                 base_content BLOB,
-                 mtime        INTEGER NOT NULL,
-                 conflicted   INTEGER NOT NULL DEFAULT 0
-             );
-             CREATE TABLE IF NOT EXISTS assets (
-                 content_hash TEXT PRIMARY KEY,
-                 asset_id     TEXT NOT NULL
-             );
-             DELETE FROM assets WHERE content_hash NOT LIKE 'blake3:%';",
-        )?;
-
-        match read_meta_i64(&conn, SCHEMA_VERSION_KEY)? {
-            Some(found) if found != SCHEMA_VERSION => {
-                return Err(StateError::SchemaVersionMismatch {
-                    found,
-                    expected: SCHEMA_VERSION,
-                });
-            }
-            Some(_) => {}
-            None => {
-                conn.execute(
-                    "INSERT INTO meta (key, value) VALUES (?1, ?2)",
-                    (SCHEMA_VERSION_KEY, SCHEMA_VERSION.to_string()),
-                )?;
-            }
+    fn init(mut conn: Connection) -> Result<Self, StateError> {
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        if !schema_is_current(&conn)? {
+            migrate(&mut conn)?;
         }
-
         Ok(Self { conn })
     }
 
@@ -223,6 +202,10 @@ impl StateStore {
     ///
     /// Returns an error when the record cannot be deleted.
     pub fn remove(&self, guid: &str) -> Result<(), StateError> {
+        self.conn.execute(
+            "DELETE FROM studio_sides WHERE path = (SELECT path FROM instances WHERE guid = ?1)",
+            [guid],
+        )?;
         self.conn
             .execute("DELETE FROM instances WHERE guid = ?1", [guid])?;
         Ok(())

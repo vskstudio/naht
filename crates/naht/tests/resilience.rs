@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 fn session(root: &Path) -> Session {
     fs::create_dir_all(root.join("src")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-    Session::new(root, store, "demo", None, true)
+    Session::new(root, store, "demo", None, true).unwrap()
 }
 
 #[test]

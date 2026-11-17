@@ -2,6 +2,7 @@ use super::error::CommandError;
 use super::files::{canonical, open_store};
 use super::inspect::{serve_warnings, unsyncable_lines};
 use crate::config::Config;
+use crate::daemon_port;
 use crate::output::Output;
 use crate::server;
 use crate::server::AppState;
@@ -10,6 +11,7 @@ use crate::shutdown;
 use crate::watcher;
 use naht_core::mapper;
 use naht_core::vfs::DiskVfs;
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -33,6 +35,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     out: &mut Output<Stdout, Stderr>,
 ) -> Result<(), CommandError> {
     let root = canonical(root)?;
+    let _instance = take_instance_lock(&root)?;
     let startup_snapshot = {
         let root = root.clone();
         task::spawn_blocking(move || mapper::snapshot_dir(&DiskVfs::new(), &root)).await
@@ -57,7 +60,8 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         config.project_name(&root),
         config.serve.place_id,
         config.terrain_sync(),
-    );
+    )?;
+    let daemon_id = session.daemon_id().to_owned();
     let state = AppState::new(session, LONG_POLL);
     state
         .tasks()
@@ -69,6 +73,10 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|source| CommandError::Bind { addr, source })?;
+    daemon_port::write(&root, port, &daemon_id).map_err(|source| CommandError::Write {
+        path: daemon_port::path(&root),
+        source,
+    })?;
     tracing::info!(target: "naht::server", %addr, root = %root.display(), "naht serving");
     out.say(format_args!(
         "naht serving {} on http://{addr}",
@@ -78,11 +86,41 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     let served = server::serve(listener, Arc::clone(&state))
         .await
         .map_err(CommandError::Serve);
+    let unpublished = daemon_port::remove(&root).map_err(|source| CommandError::Write {
+        path: daemon_port::path(&root),
+        source,
+    });
     state.shutdown().cancel();
     drop(watcher);
     state.tasks().close();
     state.tasks().wait().await;
-    served
+    served.and(unpublished)
+}
+
+fn take_instance_lock(root: &Path) -> Result<File, CommandError> {
+    let state_dir = root.join(".naht");
+    fs::create_dir_all(&state_dir).map_err(|source| CommandError::CreateDir {
+        path: state_dir.clone(),
+        source,
+    })?;
+    let path = state_dir.join("daemon.lock");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|source| CommandError::Lock {
+            path: path.clone(),
+            source,
+        })?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(TryLockError::WouldBlock) => Err(CommandError::AlreadyRunning {
+            path: root.to_path_buf(),
+        }),
+        Err(TryLockError::Error(source)) => Err(CommandError::Lock { path, source }),
+    }
 }
 
 #[cfg(test)]
