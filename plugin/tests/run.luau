@@ -2174,15 +2174,23 @@ do
 	local tree, root = studioWorld(true)
 	local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
 	local parityNames = serde.decode("json", fs.readFile("crates/naht-core/tests/fixtures/project_path_names.json"))
+	local dir = place(tree, "Folder", "Dir", root)
 	for _, name in parityNames.refused do
-		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, root))
+		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
 		check(string.format("path skips a folder named %q, as the daemon refuses it", name), connection:_pathOf(leaf) == nil)
 	end
 	for _, name in parityNames.accepted do
-		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, root))
+		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
 		check(
 			string.format("path keeps a folder named %q, as the daemon accepts it", name),
-			connection:_pathOf(leaf) == name .. "/Leaf.luau"
+			connection:_pathOf(leaf) == "Dir/" .. name .. "/Leaf.luau"
+		)
+	end
+	for _, name in parityNames.pluginOnlyRefused do
+		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
+		check(
+			string.format("path skips a folder named %q, which the plugin refuses even though the daemon splits it", name),
+			connection:_pathOf(leaf) == nil
 		)
 	end
 end
