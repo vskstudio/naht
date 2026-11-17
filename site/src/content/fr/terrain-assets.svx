@@ -36,6 +36,7 @@ Le terrain est lu/écrit via `ReadVoxels`/`WriteVoxels` et synchronisé comme un
 last-writer-wins. Si les **deux** côtés ont changé le terrain depuis la base, Naht le **gèle** plutôt que de
 deviner. Le même principe « ne jamais écraser » que pour les [conflits](#/docs/conflicts) de texte, appliqué au binaire.
 
+Pour libérer un terrain gelé, garde un côté avec `naht resolve --keep disk|studio` (voir [Conflits](#/docs/conflicts)).
 <Callout type="note">
 
 Quand `terrain_sync` est **désactivé** (le défaut), le terrain est simplement signalé comme non synchronisé : rapporté, pas
