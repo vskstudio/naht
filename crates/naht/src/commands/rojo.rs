@@ -291,7 +291,7 @@ pub(super) fn assemble_project_snapshot(
     Ok((snapshot, warnings))
 }
 
-fn checked_tree_path(path: &str) -> Result<&Path, CommandError> {
+pub(super) fn checked_tree_path(path: &str) -> Result<&Path, CommandError> {
     let relative = Path::new(path);
     let stays_inside = !relative.as_os_str().is_empty()
         && relative
