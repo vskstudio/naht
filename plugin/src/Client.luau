@@ -57,7 +57,11 @@ function Client.blobs(self: Client, cursor: number): any
 	if not response.Success then
 		error("naht: /blobs returned " .. tostring(response.StatusCode))
 	end
-	return Protocol.decodeBlobs(response.Body)
+	local decoded, batch = pcall(Protocol.decodeBlobs, response.Body)
+	if not decoded then
+		error("naht: undecodable blob batch: " .. tostring(batch), 0)
+	end
+	return batch
 end
 
 function Client.postBlobs(self: Client, changes: { any })

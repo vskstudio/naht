@@ -14,6 +14,8 @@ local TERRAIN_BACKOFF_MAX = 60
 local TERRAIN_RESOLUTION = 4
 local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
+local UNDECODABLE_BLOB = "undecodable blob batch"
+local DECODE_FAILURE_LIMIT = 5
 
 local CLASS_SUFFIX = {
 	Script = ".server.luau",
@@ -311,6 +313,8 @@ function Connection._serve(self, session: number)
 end
 
 function Connection._serveBlobs(self, epoch: number)
+	local decodeFailures = 0
+	local failingCursor = -1
 	while self:_isBlobCurrent(epoch) do
 		local ok, batch = pcall(function()
 			return self.client:blobs(self.blobCursor)
@@ -319,9 +323,31 @@ function Connection._serveBlobs(self, epoch: number)
 			return
 		end
 		if ok then
+			decodeFailures = 0
 			self:_applyBlobBatch(epoch, batch)
 		else
-			self:_setWarning("blob", "terrain blob poll failed: " .. tostring(batch))
+			local message = tostring(batch)
+			if string.find(message, UNDECODABLE_BLOB, 1, true) ~= nil then
+				if failingCursor ~= self.blobCursor then
+					failingCursor = self.blobCursor
+					decodeFailures = 0
+				end
+				decodeFailures += 1
+			else
+				decodeFailures = 0
+			end
+			if decodeFailures >= DECODE_FAILURE_LIMIT then
+				self:_setWarning(
+					"blob",
+					string.format(
+						"terrain blob stream stalled at cursor %d: %d undecodable batches in a row, sync is stalled, restart the daemon",
+						self.blobCursor,
+						decodeFailures
+					)
+				)
+			else
+				self:_setWarning("blob", "terrain blob poll failed: " .. message)
+			end
 			task.wait(self.blobBackoff)
 			self.blobBackoff = Connection.nextBlobBackoff(self.blobBackoff)
 		end
