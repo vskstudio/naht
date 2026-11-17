@@ -404,3 +404,82 @@ async fn a_text_poll_from_a_previous_session_is_refused_409() {
 
     assert_eq!(status, StatusCode::CONFLICT);
 }
+
+async fn post_ack_status(state: &Arc<AppState>, uri: &str, seqs: Vec<u64>) -> StatusCode {
+    let body = protocol::to_msgpack(&Ack { seqs }).unwrap();
+    let request = Request::post(uri)
+        .header(guard::CLIENT_HEADER, "plugin")
+        .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
+        .body(Body::from(body))
+        .unwrap();
+    router(Arc::clone(state), TEST_PORT)
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn state_with_a_queued_text_patch() -> (tempfile::TempDir, Arc<AppState>, u64) {
+    let (root, state) = fresh_state(Duration::from_secs(1));
+    fs::write(root.path().join("A.luau"), "return 1").unwrap();
+    state.session.lock().await.rescan().unwrap();
+    let seq = state.session.lock().await.take_patches(0).1[0].seq;
+    (root, state, seq)
+}
+
+#[tokio::test]
+async fn an_ack_from_a_previous_daemon_session_is_refused_409_and_settles_nothing() {
+    let (_root, state, seq) = state_with_a_queued_text_patch().await;
+
+    let status = post_ack_status(&state, "/ack?session=previous", vec![seq]).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let current = state.session.lock().await.session_id().to_owned();
+    let (_, body) =
+        get_status_and_body(&state, &format!("/patches?cursor=0&session={current}")).await;
+    let batch: PatchBatch = protocol::from_msgpack(&body).unwrap();
+    assert_eq!(
+        batch.patches.len(),
+        1,
+        "a stale ack settled a patch the plugin never received"
+    );
+}
+
+#[tokio::test]
+async fn an_ack_naming_the_current_session_settles_the_patch() {
+    let (_root, state, seq) = state_with_a_queued_text_patch().await;
+    let current = state.session.lock().await.session_id().to_owned();
+
+    let status = post_ack_status(&state, &format!("/ack?session={current}"), vec![seq]).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(state.session.lock().await.take_patches(0).1.is_empty());
+}
+
+#[tokio::test]
+async fn an_ack_without_a_session_is_refused_400_and_settles_nothing() {
+    let (_root, state, seq) = state_with_a_queued_text_patch().await;
+
+    let status = post_ack_status(&state, "/ack", vec![seq]).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(state.session.lock().await.take_patches(0).1.len(), 1);
+}
+
+#[tokio::test]
+async fn a_text_poll_without_a_session_is_refused_400() {
+    let (_root, state, _) = state_with_a_queued_text_patch().await;
+
+    let (status, _) = get_status_and_body(&state, "/patches?cursor=0").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_blob_poll_without_a_session_is_refused_400() {
+    let (_root, state) = terrain_with_a_queued_blob();
+
+    let (status, _) = get_status_and_body(&state, "/blobs?cursor=0").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

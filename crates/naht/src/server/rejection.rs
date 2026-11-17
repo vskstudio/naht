@@ -24,6 +24,8 @@ pub(super) enum Rejection {
     Busy,
     #[error("session changed: the daemon restarted, re-handshake with /info")]
     SessionChanged,
+    #[error("missing session query parameter: name the session from /info")]
+    MissingSession,
     #[error("refused project paths: {0:?}")]
     RefusedPaths(Vec<String>),
 }
@@ -34,7 +36,8 @@ impl Rejection {
             Self::Malformed(_)
             | Self::InvalidPath(_)
             | Self::Disallowed(_)
-            | Self::RefusedPaths(_) => StatusCode::BAD_REQUEST,
+            | Self::RefusedPaths(_)
+            | Self::MissingSession => StatusCode::BAD_REQUEST,
             Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::SessionChanged => StatusCode::CONFLICT,
             Self::Encode(_) | Self::Session(_) | Self::Blocking(_) => {

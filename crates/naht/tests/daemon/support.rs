@@ -95,10 +95,15 @@ impl Harness {
         fs::read(self.root.join(rel)).unwrap()
     }
 
+    async fn session_id(&self) -> String {
+        self.heartbeat().await.session_id
+    }
+
     pub(crate) async fn blobs(&self, cursor: u64) -> BlobPatchBatch {
+        let session = self.session_id().await;
         let resp = self
             .authed(self.client.get(format!("{}/blobs", self.base)))
-            .query(&[("cursor", cursor.to_string())])
+            .query(&[("cursor", cursor.to_string()), ("session", session)])
             .send()
             .await
             .unwrap();
@@ -131,9 +136,10 @@ impl Harness {
     }
 
     pub(crate) async fn patches(&self, cursor: u64) -> PatchBatch {
+        let session = self.session_id().await;
         let resp = self
             .authed(self.client.get(format!("{}/patches", self.base)))
-            .query(&[("cursor", cursor.to_string())])
+            .query(&[("cursor", cursor.to_string()), ("session", session)])
             .send()
             .await
             .unwrap();
@@ -188,7 +194,8 @@ impl Harness {
     }
 
     pub(crate) async fn ack(&self, seqs: Vec<u64>) -> reqwest::StatusCode {
-        wire::ack(&self.client, &self.base, seqs).await
+        let session = self.session_id().await;
+        wire::ack(&self.client, &self.base, &session, seqs).await
     }
 
     pub(crate) async fn ack_all(&self, batch: &PatchBatch) {

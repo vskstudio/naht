@@ -9,7 +9,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use naht::session::Session;
-use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, SequencedPatch};
+use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, Pong, SequencedPatch};
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 use naht_core::state::StateStore;
 use reqwest::Client;
@@ -53,6 +53,7 @@ struct Daemon {
     client: Client,
     quick: Client,
     base: String,
+    session: String,
 }
 
 impl Daemon {
@@ -81,21 +82,24 @@ impl Daemon {
             client: Client::new(),
             quick: Client::builder().timeout(PENDING_WINDOW).build().unwrap(),
             base: format!("http://{}:{port}", Ipv4Addr::LOCALHOST),
+            session: String::new(),
         };
-        daemon.wait_ready().await.then_some(daemon)
+        let session = daemon.wait_ready().await?;
+        daemon.session = session;
+        Some(daemon)
     }
 
-    async fn wait_ready(&mut self) -> bool {
+    async fn wait_ready(&mut self) -> Option<String> {
         let started = Instant::now();
         loop {
             if self.child.try_wait().unwrap().is_some() {
-                return false;
+                return None;
             }
-            if wire::heartbeat(&self.client, &self.base)
-                .await
-                .is_ok_and(|resp| resp.status().is_success())
+            if let Ok(resp) = wire::heartbeat(&self.client, &self.base).await
+                && resp.status().is_success()
             {
-                return true;
+                let pong: Pong = wire::decode(resp).await;
+                return Some(pong.session_id);
             }
             assert!(
                 started.elapsed() < READY_DEADLINE,
@@ -115,7 +119,7 @@ impl Daemon {
             .quick
             .get(format!("{}/patches", self.base))
             .header(CLIENT_HEADER, "plugin")
-            .query(&[("cursor", "0")])
+            .query(&[("cursor", "0"), ("session", self.session.as_str())])
             .send()
             .await
         {
@@ -126,7 +130,7 @@ impl Daemon {
     }
 
     async fn ack(&self, seqs: Vec<u64>) {
-        let status = wire::ack(&self.client, &self.base, seqs).await;
+        let status = wire::ack(&self.client, &self.base, &self.session, seqs).await;
         assert!(status.is_success(), "POST /ack: {status}");
     }
 }

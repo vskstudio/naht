@@ -21,7 +21,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use cursor::CursorQuery;
+use cursor::{CursorQuery, SessionQuery};
 use naht_core::protocol::{
     self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, ServerInfo,
 };
@@ -378,13 +378,18 @@ fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usi
     Ok(count)
 }
 
-async fn ack(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+async fn ack(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SessionQuery>,
+    body: Bytes,
+) -> Response {
     let ack: Ack = match protocol::from_msgpack(&body) {
         Ok(ack) => ack,
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
     let count = ack.seqs.len();
     match apply_within(&state, move |session| {
+        query.check(session)?;
         session.ack(&ack.seqs).map_err(Rejection::from)
     })
     .await
