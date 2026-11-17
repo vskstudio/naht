@@ -359,6 +359,76 @@ do
 	)
 end
 
+task = require("@lune/task") :: any
+local Connection = require("../src/Connection")
+
+local function fakeConnection(client, terrain)
+	return Connection.new(client, {}, 1, function() end, { terrain = terrain, tree = nil })
+end
+
+local extentsRegion = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 16, Y = 16, Z = 16 } }
+local expandedResolution: number? = nil
+local readRegion: any = nil
+local pushedBlobs: { any } = {}
+local extentsTerrain = {
+	MaxExtents = {
+		ExpandToGrid = function(_, resolution)
+			expandedResolution = resolution
+			return extentsRegion
+		end,
+	},
+	ReadVoxels = function(_, region, _resolution)
+		readRegion = region
+		return { { { { Value = 1 } } } }, { { { 0.5 } } }
+	end,
+}
+local pushClient = {
+	postBlobs = function(_, changes)
+		table.insert(pushedBlobs, changes)
+	end,
+}
+local pushConnection = fakeConnection(pushClient, extentsTerrain)
+pushConnection:_pushTerrain()
+check("terrain push expands MaxExtents to the 4-stud grid", expandedResolution == 4)
+check("terrain push reads the MaxExtents region as-is", readRegion == extentsRegion)
+check("terrain push posts one blob", #pushedBlobs == 1)
+
+local function blobPatchOf(content: string)
+	return { kind = "Upsert", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain", content = content }
+end
+
+local blobCalls: { number } = {}
+local failingBlobClient = {
+	blobs = function(_, cursor)
+		table.insert(blobCalls, cursor)
+		if #blobCalls == 1 then
+			return { cursor = 5, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
+		end
+		error("stop")
+	end,
+}
+local failingBlobConnection = fakeConnection(failingBlobClient, extentsTerrain)
+failingBlobConnection.running = true
+failingBlobConnection.epoch = 1
+failingBlobConnection:_serveBlobs(1)
+check("a failed blob keeps the blob cursor where it was", blobCalls[2] == 0 and failingBlobConnection.blobCursor == 0)
+
+local emptyBatchCalls: { number } = {}
+local emptyBlobClient = {
+	blobs = function(_, cursor)
+		table.insert(emptyBatchCalls, cursor)
+		if #emptyBatchCalls == 1 then
+			return { cursor = 7, patches = {} }
+		end
+		error("stop")
+	end,
+}
+local emptyBlobConnection = fakeConnection(emptyBlobClient, extentsTerrain)
+emptyBlobConnection.running = true
+emptyBlobConnection.epoch = 1
+emptyBlobConnection:_serveBlobs(1)
+check("an empty blob batch advances the blob cursor", emptyBatchCalls[2] == 7)
+
 -- === transport modules compile ===============================================================
 -- These talk to HttpService / the DataModel, so they can't run headless, but they must at least
 -- compile. Catches syntax regressions in the modules the cases above don't load.

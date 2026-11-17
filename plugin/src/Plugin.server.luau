@@ -6,6 +6,7 @@
 local ServerStorage = game:GetService("ServerStorage")
 
 local Client = require(script.Parent.Client)
+local Apply = require(script.Parent.Apply)
 local Connection = require(script.Parent.Connection)
 
 -- Where synced source lives in the DataModel, and the daemon to talk to. The full configurable
@@ -63,7 +64,10 @@ end
 local function connect()
 	local root = ensureRoot()
 	local client = Client.new(BASE_URL)
-	connection = Connection.new(client, root, game.PlaceId, setState)
+	connection = Connection.new(client, root, game.PlaceId, setState, {
+		terrain = workspace.Terrain,
+		tree = Apply.studioTree(root),
+	})
 	connection:start()
 	widget.Enabled = true
 end

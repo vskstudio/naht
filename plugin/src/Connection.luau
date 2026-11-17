@@ -6,9 +6,9 @@
 -- carries edits out, and reports connection state. On every (re)connect it resets its cursor to 0 so
 -- the daemon's reconnect re-diff drives a clean catch-up rather than a blind replay.
 
-local Apply = require(script.Parent.Apply)
-local Protocol = require(script.Parent.Protocol)
-local Terrain = require(script.Parent.Terrain)
+local Apply = require(if script ~= nil then script.Parent.Apply else "./Apply")
+local Protocol = require(if script ~= nil then script.Parent.Protocol else "./Protocol")
+local Terrain = require(if script ~= nil then script.Parent.Terrain else "./Terrain")
 
 local Connection = {}
 Connection.__index = Connection
@@ -54,13 +54,16 @@ function Connection.new(
 	client: any,
 	root: Instance,
 	placeId: number,
-	onState: (State, string?) -> ()
+	onState: (State, string?) -> (),
+	deps: { terrain: any, tree: Apply.Tree? }
 )
 	return setmetatable({
 		client = client,
 		root = root,
 		placeId = placeId,
 		onState = onState,
+		terrain = deps.terrain,
+		tree = deps.tree,
 		running = false,
 		cursor = 0,
 		blobCursor = 0,
@@ -129,7 +132,7 @@ function Connection._serve(self)
 	while self.running do
 		local batch = self.client:patches(self.cursor)
 		self.applying = true
-		local applier = Apply.create(Apply.studioTree(self.root))
+		local applier = Apply.create(self.tree :: Apply.Tree)
 		local applied = {}
 		for _, patch in batch.patches do
 			if patch.kind ~= "Delete" then
@@ -168,40 +171,42 @@ function Connection._serveBlobs(self, epoch: number)
 		if not ok then
 			return
 		end
+		local allApplied = true
 		for _, patch in batch.patches do
 			if patch.kind == "Conflict" then
 				self.onState("Conflict", patch.path)
 			elseif patch.direction == "ToStudio" and patch.content ~= nil then
 				-- Apply independently so one bad blob doesn't sink the loop.
-				pcall(function()
+				local applied = pcall(function()
 					self:_applyBlob(patch.content)
 				end)
+				allApplied = allApplied and applied
 			end
 		end
-		self.blobCursor = batch.cursor
+		if allApplied then
+			self.blobCursor = batch.cursor
+		else
+			task.wait(PUSH_RETRY)
+		end
 	end
 end
 
 -- The Region3 covering the whole terrain, at voxel resolution, used for both read and write so the
 -- blob round-trips against a stable region.
 function Connection._terrainRegion(self): any
-	local extents = (workspace :: any).Terrain.MaxExtents
-	return Region3.new(
-		Vector3.new(extents.Min.X, extents.Min.Y, extents.Min.Z) * TERRAIN_RESOLUTION,
-		Vector3.new(extents.Max.X, extents.Max.Y, extents.Max.Z) * TERRAIN_RESOLUTION
-	)
+	return self.terrain.MaxExtents:ExpandToGrid(TERRAIN_RESOLUTION)
 end
 
 -- Write an incoming voxel blob into the live terrain.
 function Connection._applyBlob(self, blob: string)
-	Terrain.write((workspace :: any).Terrain, self:_terrainRegion(), blob)
+	Terrain.write(self.terrain, self:_terrainRegion(), blob)
 end
 
 -- Read the current terrain and push it to the filesystem as one blob. Best-effort: a read or post
 -- failure is left for the next connect rather than killing the session.
 function Connection._pushTerrain(self)
 	local ok, blob = pcall(function()
-		return Terrain.read((workspace :: any).Terrain, self:_terrainRegion(), TERRAIN_RESOLUTION)
+		return Terrain.read(self.terrain, self:_terrainRegion(), TERRAIN_RESOLUTION)
 	end)
 	if not ok then
 		return
