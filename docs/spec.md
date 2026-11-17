@@ -59,6 +59,11 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
 
 ## Protocol 2 (unreleased)
 
+- **Sequenced text patches**: each `GET /patches` patch carries its queue `seq` beside its fields
+  (`SequencedPatch`, flattened on the wire). `POST /ack` takes `{seqs: [...]}` in place of `{paths: [...]}`:
+  an acked patch leaves the queue and advances its base, and an ack for a superseded sequence is a no-op.
+  The plugin holds its cursor at the first patch it rejected, so the next poll asks for it again.
+
 - **`POST /changes` response**: a batch whose every change is accepted is answered `200` with an empty body.
   A batch with any refused change is refused whole: `400` with a JSON body `{"refused_paths": [...]}` naming
   each refused path, and nothing in the batch applies. The request is `ChangeBatch` `{changes: [...]}` where

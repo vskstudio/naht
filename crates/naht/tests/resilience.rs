@@ -10,7 +10,6 @@ use naht_core::reconciler::PatchKind;
 use naht_core::state::StateStore;
 use std::fs;
 use std::path::Path;
-use std::slice;
 use std::time::{Duration, SystemTime};
 
 fn session(root: &Path) -> Session {
@@ -29,7 +28,7 @@ fn an_atomic_save_yields_one_update_with_the_final_content() {
     session.rescan().unwrap();
     let (cursor, first) = session.take_patches(0);
     assert_eq!(first.len(), 1);
-    session.ack(&[first[0].path.clone()]).unwrap();
+    session.ack(&[first[0].seq]).unwrap();
 
     fs::write(root.join("src").join("A.luau.tmp"), "return 2").unwrap();
     fs::rename(
@@ -41,8 +40,8 @@ fn an_atomic_save_yields_one_update_with_the_final_content() {
 
     let (_, second) = session.take_patches(cursor);
     assert_eq!(second.len(), 1, "atomic save should coalesce to one patch");
-    assert_eq!(second[0].kind, PatchKind::Update);
-    assert_eq!(second[0].content.as_deref(), Some("return 2"));
+    assert_eq!(second[0].patch.kind, PatchKind::Update);
+    assert_eq!(second[0].patch.content.as_deref(), Some("return 2"));
 }
 
 #[test]
@@ -72,8 +71,8 @@ fn an_unacked_patch_holds_the_base_so_a_racing_studio_edit_merges_not_clobbers()
     fs::write(&file, "a\nb\nc\n").unwrap();
     session.rescan().unwrap();
     let (_, first) = session.take_patches(0);
-    let path = first[0].path.clone();
-    session.ack(slice::from_ref(&path)).unwrap();
+    let path = first[0].patch.path.clone();
+    session.ack(&[first[0].seq]).unwrap();
 
     fs::write(&file, "A\nb\nc\n").unwrap();
     session.rescan().unwrap();
@@ -99,8 +98,8 @@ fn a_file_that_turns_unreadable_is_neither_deleted_nor_reported_as_deleted() {
     fs::write(&file, "return 1").unwrap();
     session.rescan().unwrap();
     let (cursor, first) = session.take_patches(0);
-    let path = first[0].path.clone();
-    session.ack(slice::from_ref(&path)).unwrap();
+    let path = first[0].patch.path.clone();
+    session.ack(&[first[0].seq]).unwrap();
     session
         .apply_changes(vec![Change::Upsert {
             path: path.clone(),
@@ -115,7 +114,9 @@ fn a_file_that_turns_unreadable_is_neither_deleted_nor_reported_as_deleted() {
     assert_eq!(fs::read(&file).unwrap(), vec![0xff, 0xfe]);
     let (_, later) = session.take_patches(cursor);
     assert!(
-        later.iter().all(|patch| patch.kind != PatchKind::Delete),
+        later
+            .iter()
+            .all(|patch| patch.patch.kind != PatchKind::Delete),
         "an unreadable file must not produce a delete, got {later:?}"
     );
 }

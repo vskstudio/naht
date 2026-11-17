@@ -187,17 +187,13 @@ impl Harness {
         decode(resp).await
     }
 
-    pub(crate) async fn ack(&self, paths: Vec<String>) -> reqwest::StatusCode {
-        wire::ack(&self.client, &self.base, paths).await
+    pub(crate) async fn ack(&self, seqs: Vec<u64>) -> reqwest::StatusCode {
+        wire::ack(&self.client, &self.base, seqs).await
     }
 
     pub(crate) async fn ack_all(&self, batch: &PatchBatch) {
-        let paths = batch
-            .patches
-            .iter()
-            .map(|patch| patch.path.clone())
-            .collect();
-        assert!(self.ack(paths).await.is_success());
+        let seqs = batch.patches.iter().map(|patch| patch.seq).collect();
+        assert!(self.ack(seqs).await.is_success());
     }
 }
 

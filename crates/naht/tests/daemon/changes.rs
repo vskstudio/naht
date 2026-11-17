@@ -17,7 +17,7 @@ async fn fs_change_appears_via_patches() {
 
     let batch = harness.patches(0).await;
     assert_eq!(batch.patches.len(), 1);
-    let patch = &batch.patches[0];
+    let patch = &batch.patches[0].patch;
     assert_eq!(patch.path, "Greeter.luau");
     assert_eq!(patch.class, "ModuleScript");
     assert_eq!(patch.direction, Direction::ToStudio);
@@ -335,14 +335,20 @@ async fn a_half_acked_batch_re_emits_only_the_unacked_path() {
     let first = harness.patches(0).await;
     assert_eq!(first.patches.len(), 2);
 
-    assert!(harness.ack(vec!["A.luau".to_owned()]).await.is_success());
+    let a_seq = first
+        .patches
+        .iter()
+        .find(|patch| patch.patch.path == "A.luau")
+        .unwrap()
+        .seq;
+    assert!(harness.ack(vec![a_seq]).await.is_success());
 
     harness.info(None).await;
     let again = harness.patches(first.cursor).await;
     let paths: Vec<_> = again
         .patches
         .iter()
-        .map(|patch| patch.path.as_str())
+        .map(|patch| patch.patch.path.as_str())
         .collect();
     assert_eq!(paths, vec!["B.luau"]);
 }

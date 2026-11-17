@@ -8,7 +8,6 @@ use naht_core::reconciler::Direction;
 use naht_core::state::StateStore;
 use std::fs;
 use std::path::Path;
-use std::slice;
 
 fn session_at(root: &Path) -> Session {
     fs::create_dir_all(root.join("src")).unwrap();
@@ -28,8 +27,8 @@ fn ack_records_a_push_event_and_clears_pending() {
     assert_eq!(before.events.len(), 0);
 
     let (_, patches) = session.take_patches(0);
-    let path = patches[0].path.clone();
-    session.ack(slice::from_ref(&path)).unwrap();
+    let path = patches[0].patch.path.clone();
+    session.ack(&[patches[0].seq]).unwrap();
 
     let after = session.activity(0);
     assert_eq!(after.pending, 0);

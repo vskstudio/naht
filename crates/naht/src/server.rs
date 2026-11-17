@@ -383,9 +383,9 @@ async fn ack(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         Ok(ack) => ack,
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let count = ack.paths.len();
+    let count = ack.seqs.len();
     match apply_within(&state, move |session| {
-        session.ack(&ack.paths).map_err(Rejection::from)
+        session.ack(&ack.seqs).map_err(Rejection::from)
     })
     .await
     {

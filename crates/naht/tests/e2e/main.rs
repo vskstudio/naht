@@ -9,7 +9,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use naht::session::Session;
-use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch};
+use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, SequencedPatch};
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 use naht_core::state::StateStore;
 use reqwest::Client;
@@ -28,16 +28,23 @@ const PENDING_WINDOW: Duration = Duration::from_secs(2);
 const RESOLVE_LIMIT: Duration = Duration::from_secs(10);
 
 enum Window {
-    Patches(Vec<Patch>),
+    Patches(Vec<SequencedPatch>),
     Quiet,
 }
 
 impl Window {
-    fn patches(self) -> Vec<Patch> {
+    fn sequenced(self) -> Vec<SequencedPatch> {
         match self {
             Self::Patches(patches) => patches,
             Self::Quiet => Vec::new(),
         }
+    }
+
+    fn patches(self) -> Vec<Patch> {
+        self.sequenced()
+            .into_iter()
+            .map(|sequenced| sequenced.patch)
+            .collect()
     }
 }
 
@@ -118,8 +125,8 @@ impl Daemon {
         }
     }
 
-    async fn ack(&self, paths: Vec<String>) {
-        let status = wire::ack(&self.client, &self.base, paths).await;
+    async fn ack(&self, seqs: Vec<u64>) {
+        let status = wire::ack(&self.client, &self.base, seqs).await;
         assert!(status.is_success(), "POST /ack: {status}");
     }
 }
@@ -203,8 +210,8 @@ fn freeze_offline(root: &Path) {
     let mut session = Session::new(root, store, "demo", None, false).unwrap();
     session.rescan().unwrap();
     let (_, first) = session.take_patches(0);
-    let paths: Vec<String> = first.iter().map(|patch| patch.path.clone()).collect();
-    session.ack(&paths).unwrap();
+    let seqs: Vec<u64> = first.iter().map(|patch| patch.seq).collect();
+    session.ack(&seqs).unwrap();
     fs::write(root.join(FILE), "local a = 11\n").unwrap();
     session
         .apply_changes(vec![Change::Upsert {
@@ -231,13 +238,17 @@ async fn a_daemon_restart_keeps_a_synced_file_and_emits_no_delete() {
 
     let first = Daemon::start(&root).await;
     first.handshake().await;
-    let patches = first.pending_patches().await.patches();
-    let paths: Vec<String> = patches.iter().map(|patch| patch.path.clone()).collect();
+    let patches = first.pending_patches().await.sequenced();
+    let seqs: Vec<u64> = patches.iter().map(|patch| patch.seq).collect();
+    let paths: Vec<String> = patches
+        .iter()
+        .map(|patch| patch.patch.path.clone())
+        .collect();
     assert!(
         paths.iter().any(|path| path == FILE),
         "the first run did not sync {FILE}: {paths:?}"
     );
-    first.ack(paths).await;
+    first.ack(seqs).await;
     drop(first);
 
     let second = Daemon::start(&root).await;

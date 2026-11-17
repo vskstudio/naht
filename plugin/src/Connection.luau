@@ -18,6 +18,7 @@ local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
 local DECODE_FAILURE_LIMIT = 5
 local ACK_BACKOFF_START = 2
+local REJECTED_PATCH_DELAY = 1
 local RETRY_BACKOFF_MAX = 60
 local SERVER_ERROR_LIMIT = 3
 local PUSH_ABANDON_AFTER = 30
@@ -364,58 +365,63 @@ function Connection._run(self, session: number)
 end
 
 function Connection._serve(self, session: number)
-	local unacked: { string } = {}
+	local unacked: { number } = {}
 	while self:_isCurrent(session) do
 		local batch = self.client:patches(self.cursor)
 		self.applying = true
 		local applier = self.apply.create(self.tree, self:_echo())
-		local applied = {}
+		local nextCursor = batch.cursor
+		local rejected = false
 		for _, patch in batch.patches do
 			if not self:_isCurrent(session) then
 				break
 			end
 			local ok, err = pcall(function()
-					applier:apply(patch)
-				end)
-				local source = "patch:" .. patch.path
-				if ok then
-					table.insert(applied, patch.path)
-					self:_clearWarning(source)
-					if patch.kind == "Conflict" then
-						self:_setConflict(patch.path)
-					else
-						self:_clearConflict(patch.path)
-					end
-				else
-					self:_setWarning(source, string.format("patch rejected: %s: %s", patch.path, tostring(err)))
+				applier:apply(patch)
+			end)
+			local source = "patch:" .. patch.path
+			if ok then
+				if not table.find(unacked, patch.seq) then
+					table.insert(unacked, patch.seq)
 				end
+				self:_clearWarning(source)
+				if patch.kind == "Conflict" then
+					self:_setConflict(patch.path)
+				else
+					self:_clearConflict(patch.path)
+				end
+			else
+				self:_setWarning(source, string.format("patch rejected: %s: %s", patch.path, tostring(err)))
+				if not rejected then
+					rejected = true
+					nextCursor = patch.seq
+				end
+			end
 		end
 		self.applying = false
 		if not self:_isCurrent(session) then
 			return
 		end
-		self.cursor = batch.cursor
+		self.cursor = nextCursor
 		self.backoff = BACKOFF_START
-		for _, path in applied do
-			if not table.find(unacked, path) then
-				table.insert(unacked, path)
-			end
-		end
 		if #unacked > 0 then
 			unacked = self:_ack(session, unacked)
 			if not self:_isCurrent(session) then
 				return
 			end
 		end
+		if rejected then
+			task.wait(REJECTED_PATCH_DELAY)
+		end
 	end
 end
 
-function Connection._ack(self, session: number, paths: { string }): { string }
+function Connection._ack(self, session: number, seqs: { number }): { number }
 	local ok, err = pcall(function()
-		self.client:postAck(paths)
+		self.client:postAck(seqs)
 	end)
 	if not self:_isCurrent(session) then
-		return paths
+		return seqs
 	end
 	if ok then
 		self.ackBackoff = ACK_BACKOFF_START
@@ -431,7 +437,7 @@ function Connection._ack(self, session: number, paths: { string }): { string }
 	local delay = self.ackBackoff
 	self.ackBackoff = doubled(delay, RETRY_BACKOFF_MAX)
 	task.wait(delay)
-	return paths
+	return seqs
 end
 
 function Connection._serveBlobs(self, epoch: number)

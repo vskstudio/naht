@@ -24,7 +24,7 @@ it needs HTTP/2, which `HttpService` does not support.
 | `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
 | `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. |
 | `POST /blobs` | Studio → daemon blob changes (terrain voxels). |
-| `POST /ack` | The plugin confirms which patches it actually applied. Gates the base advance. |
+| `POST /ack` | The plugin confirms, by sequence number, which patches it actually applied. Gates the base advance. |
 | `GET /heartbeat` | Liveness ping; drives the explicit connection state. |
 
 ## Access control
@@ -86,7 +86,7 @@ freezing rather than merging. See [Terrain & assets](#/docs/terrain-assets).
 
 ## Ack-gating
 
-A Studio-bound patch advances the persisted base **only after the plugin acks it** via `POST /ack`. On
+A Studio-bound patch advances the persisted base **only after the plugin acks its sequence** via `POST /ack`. An acked patch leaves the queue, and an ack for a sequence the daemon has since superseded confirms nothing. On
 a flaky connection a half-applied batch leaves the un-acked patches un-advanced, so the next reconnect
 re-diffs and resends exactly what's missing, never assuming a dropped batch landed. This is the
 backbone of Naht's reconnect safety, detailed in the [Sync engine](#/docs/sync-engine).

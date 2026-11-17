@@ -49,7 +49,9 @@ async fn a_new_file_becomes_a_queued_patch() {
         time::sleep(Duration::from_millis(50)).await;
     }
 
-    let patch = found.expect("the watcher should have queued a patch for the new file");
+    let patch = found
+        .expect("the watcher should have queued a patch for the new file")
+        .patch;
     assert_eq!(patch.path, "Watched.luau");
     assert_eq!(patch.kind, PatchKind::Create);
     assert_eq!(patch.content.as_deref(), Some("return 7"));

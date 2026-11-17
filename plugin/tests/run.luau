@@ -20,7 +20,7 @@ local serde = require("@lune/serde")
 
 local GOLDEN = {
 	server_info = "87b070726f746f636f6c5f76657273696f6e02ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490",
-	patch_batch = "82a6637572736f7202a7706174636865739185a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
+	patch_batch = "82a6637572736f7202a7706174636865739186a373657101a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
 	change_batch = "81a76368616e6765739281a655707365727483a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a7636f6e74656e74a872657475726e203281a644656c65746581a470617468aa7372632f422e6c756175",
 	blob_patch_batch = "82a6637572736f7201a7706174636865739185a470617468af5465727261696e2e7465727261696ea5636c617373a75465727261696ea9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74c4050001ff807f",
 }
@@ -877,7 +877,7 @@ suite("stop during a patch poll applies nothing", function()
 					connection:stop()
 					return {
 						cursor = 1,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
 					}
 				end,
 				postAck = function(_, _paths)
@@ -1049,7 +1049,7 @@ suite("a stop during apply leaves the patch cursor where it was", function()
 				patches = function(_, _cursor)
 					return {
 						cursor = 5,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
 				postAck = function(_, _paths) end,
@@ -1140,11 +1140,44 @@ suite("a stop during the backoff wait leaves the backoff unchanged", function()
 		check("a stop during the backoff wait leaves the backoff unchanged", connection.backoff == 0.05, "backoff " .. tostring(connection.backoff))
 end)
 
+suite("a rejected text patch holds the cursor at its seq so the next poll asks for it again", function()
+		local _, onState = stateLog()
+		local tree, root = studioWorld(true)
+		lockedSource(tree, "Bad", 1000)
+		local cursors: { number } = {}
+		local connection = Connection.new(
+			{
+				patches = function(_, cursor)
+					table.insert(cursors, cursor)
+					if #cursors == 1 then
+						return {
+							cursor = 3,
+							patches = {
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 2, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+							},
+						}
+					end
+					error("stop")
+				end,
+				postAck = function() end,
+			},
+			root,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		pcall(connection._serve, connection, 1)
+		check("a rejected patch holds the cursor at its seq", cursors[2] == 1, "cursors " .. table.concat(cursors, ","))
+end)
+
 suite("a rejected text patch sets a Warning naming the path and reason", function()
 		local log, onState = stateLog()
 		local tree, root = studioWorld(true)
 		lockedSource(tree, "Bad", 1000)
-		local acks: { { string } } = {}
+		local acks: { { number } } = {}
 		local polls = 0
 		local connection = Connection.new(
 			{
@@ -1154,8 +1187,8 @@ suite("a rejected text patch sets a Warning naming the path and reason", functio
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
-								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 2, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
 							},
 						}
 					end
@@ -1182,14 +1215,14 @@ suite("a rejected text patch sets a Warning naming the path and reason", functio
 				and string.find(last.detail, "Source is locked", 1, true) ~= nil,
 			if last ~= nil then tostring(last.detail) else "no state reported"
 		)
-		check("a rejected text patch is left out of the ack", #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau")
+		check("a rejected text patch is left out of the ack", #acks == 1 and #acks[1] == 1 and acks[1][1] == 2)
 end)
 
 suite("a rejected patch that later applies ends in Connected", function()
 		local log, onState = stateLog()
 		local tree, root = studioWorld(true)
 		lockedSource(tree, "Bad", 1)
-		local bad = { kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" }
+		local bad = { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" }
 		local polls = 0
 		local connection = Connection.new(
 			{
@@ -1228,9 +1261,9 @@ suite("a conflict plus a success in one batch ends in Conflict", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
-								{ kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" },
-								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 2, kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" },
+								{ seq = 3, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
 							},
 						}
 					end
@@ -1263,13 +1296,13 @@ suite("a later success on the conflicted path ends the Conflict", function()
 					if polls == 1 then
 						return {
 							cursor = 1,
-							patches = { { kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" } },
+							patches = { { seq = 1, kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" } },
 						}
 					end
 					if polls == 2 then
 						return {
 							cursor = 2,
-							patches = { { kind = "Upsert", direction = "ToStudio", path = "C.luau", class = "ModuleScript", content = "C" } },
+							patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "C.luau", class = "ModuleScript", content = "C" } },
 						}
 					end
 					error("stop")
@@ -1543,7 +1576,7 @@ end)
 
 suite("a 503 on ack keeps the applied paths and retries them", function()
 		local log, onState = stateLog()
-		local acks: { { string } } = {}
+		local acks: { { number } } = {}
 		local ackAttempts = 0
 		local patchCalls = 0
 		local tree, root = studioWorld(true)
@@ -1556,7 +1589,7 @@ suite("a 503 on ack keeps the applied paths and retries them", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
 							},
 						}
 					end
@@ -1584,7 +1617,7 @@ suite("a 503 on ack keeps the applied paths and retries them", function()
 		pcall(connection._serve, connection, 1)
 		check(
 			"a 503 on ack keeps the applied paths and retries them",
-			ackAttempts == 2 and #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau",
+			ackAttempts == 2 and #acks == 1 and #acks[1] == 1 and acks[1][1] == 1,
 			string.format("attempts %d, acks %d", ackAttempts, #acks)
 		)
 		local warned = false
@@ -1699,7 +1732,7 @@ suite("a stop between patch poll and apply writes nothing", function()
 					connection:stop()
 					return {
 						cursor = 3,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
 				postAck = function(_, _paths)
@@ -2003,7 +2036,7 @@ local function echoConnection(syncEcho: boolean)
 				if polls == 1 then
 					return {
 						cursor = 1,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "Z.luau", class = "ModuleScript", content = "A" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Z.luau", class = "ModuleScript", content = "A" } },
 					}
 				end
 				error("stop")
@@ -2118,7 +2151,7 @@ end)
 
 suite("a same-named folder does not block a patch, so it is acked", function()
 		local tree, root = studioWorld(true)
-		local acked: { string } = {}
+		local acked: { number } = {}
 		local blockedPolls = 0
 		place(tree, "Folder", "Utils", root)
 		local connection = Connection.new(
@@ -2129,8 +2162,8 @@ suite("a same-named folder does not block a patch, so it is acked", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Utils.luau", class = "ModuleScript", content = "x" },
-								{ kind = "Upsert", direction = "ToStudio", path = "Other.luau", class = "ModuleScript", content = "y" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Utils.luau", class = "ModuleScript", content = "x" },
+								{ seq = 2, kind = "Upsert", direction = "ToStudio", path = "Other.luau", class = "ModuleScript", content = "y" },
 							},
 						}
 					end
@@ -2149,7 +2182,7 @@ suite("a same-named folder does not block a patch, so it is acked", function()
 		pcall(connection._serve, connection, 1)
 		check(
 			"a same-named folder does not block a patch, so it is acked",
-			#acked == 2 and acked[1] == "Utils.luau" and acked[2] == "Other.luau",
+			#acked == 2 and acked[1] == 1 and acked[2] == 2,
 			"acked " .. table.concat(acked, ",")
 		)
 end)
@@ -2619,7 +2652,7 @@ suite("a refused ack is not retried", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
 							},
 						}
 					end
@@ -2666,7 +2699,7 @@ suite("a transient ack failure retries one entry per path", function()
 				patches = function(_, _cursor)
 					patchCalls += 1
 					if patchCalls == 1 then
-						local same = { kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" }
+						local same = { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" }
 						return { cursor = 1, patches = { same, same } }
 					end
 					if patchCalls == 2 or patchCalls == 3 then

@@ -131,8 +131,8 @@ instances only the hash is stored (no merge base).
 - **Endpoints:** `GET /info` (handshake), `GET /patches` (long-poll, held
   open until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the
   binary terrain channel: a separate long-poll/push pair, kept apart from the text patch channel
-  because blobs are synced opaquely with no diff/merge), `POST /ack` (the plugin confirms which
-  patches it applied), `GET /heartbeat` (liveness ping), `GET /activity` (read-only live sync feed:
+  because blobs are synced opaquely with no diff/merge), `POST /ack` (the plugin confirms, by queue
+  sequence, which patches it applied; an acked patch leaves the queue), `GET /heartbeat` (liveness ping), `GET /activity` (read-only live sync feed:
   a `pending` count plus a bounded ring buffer of recent completed sync events with a `since`
   cursor, for an external consumer; additive, no protocol-version bump).
 - **Trust boundary:** one middleware gates every route before any handler runs, and answers `403`
@@ -166,8 +166,9 @@ instances only the hash is stored (no merge base).
 - **Resilience** is the headline feature here, because it is exactly what Rojo and Argon get wrong:
   heartbeat, automatic reconnect, an explicit connection-state indicator, and: on reconnect: a
   **re-diff against the persisted state** rather than a blind re-push. Studio-bound patches are
-  **ack-gated**: a patch's base advances only once the plugin acks it, so a half-applied batch re-diffs
-  the rest instead of treating them as synced.
+  **ack-gated**: a patch's base advances only once the plugin acks its queue sequence, so a half-applied
+  batch re-diffs the rest instead of treating them as synced. An acked patch leaves the queue, and an ack
+  for a sequence the daemon has since superseded confirms nothing.
 - **Retry backoff** is per channel. The text connection loop waits 1 s after a failed handshake or
   poll, doubles the wait on each further failure, and caps it at 15 s. The terrain blob loop
   (`_serveBlobs` in `plugin/src/Connection.luau`) runs apart from it: a failed `GET /blobs` poll, or a

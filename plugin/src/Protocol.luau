@@ -114,8 +114,8 @@ local function new(MessagePack: Codec)
 		return { kind = "Delete", path = path }
 	end
 
-	function Protocol.encodeAck(paths: { string }): string
-		return MessagePack.encode({ paths = MessagePack.array(paths) })
+	function Protocol.encodeAck(seqs: { number }): string
+		return MessagePack.encode({ seqs = MessagePack.array(seqs) })
 	end
 
 	function Protocol.encodeChanges(changes: { Change }): string

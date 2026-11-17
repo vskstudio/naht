@@ -99,12 +99,12 @@ function Client.postBlobs(self: Client, changes: { any })
 	end
 end
 
-function Client.postAck(self: Client, paths: { string })
+function Client.postAck(self: Client, seqs: { number })
 	local response = request(self, {
 		Url = "/ack",
 		Method = "POST",
 		Headers = { ["Content-Type"] = "application/msgpack" },
-		Body = Protocol.encodeAck(paths),
+		Body = Protocol.encodeAck(seqs),
 	})
 	if not response.Success then
 		error({
