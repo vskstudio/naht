@@ -72,7 +72,7 @@ api_key_env = "ROBLOX_OPEN_CLOUD_KEY"   # NAME of the env var, never the key its
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `enabled` | bool | `false` | Upload local mesh/image files and rewrite their references to `rbxassetid://…`. |
+| `enabled` | bool | `false` | Upload local mesh/image files and rewrite their references to `rbxassetid://…`. Uploads happen on `naht build` only; `sync` and `serve` leave references as written. |
 | `api_key_env` | string | _unset_ | The **name** of the environment variable holding your Open Cloud key. |
 
 <Callout type="warning">

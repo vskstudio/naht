@@ -62,7 +62,7 @@ pub enum UploadFailure {
 /// Errors from resolving an asset.
 #[derive(Debug, thiserror::Error)]
 pub enum AssetError {
-    /// The upload itself failed (network, auth, quota). Pauses only this asset's path.
+    /// The upload itself failed (network, auth, quota). Only this property keeps its reference.
     #[error("asset upload failed")]
     Upload(#[source] UploadFailure),
     /// The asset-id cache (state store) failed.
@@ -85,7 +85,7 @@ pub enum AssetError {
 /// Resolve a local asset blob to an asset id, uploading it once per content hash.
 ///
 /// An unchanged blob (same hash) is served from the cache without re-uploading. An upload
-/// failure surfaces here and pauses only this asset, so the caller keeps syncing everything else.
+/// failure is returned to the caller, which reports it and resolves every other asset.
 ///
 /// # Errors
 ///
@@ -141,8 +141,8 @@ fn is_already_resolved(value: &str) -> bool {
 
 /// One asset property that could not be resolved, so it was left at its original reference.
 ///
-/// A failed upload (architecture §8) pauses **only** that property's path; the rest of the snapshot
-/// is still rewritten. The caller surfaces these and, in a live session, pauses the named paths.
+/// A failed upload leaves **only** that property at its original reference; the rest of the snapshot
+/// is still rewritten. `naht build` reports these as warnings and keeps going.
 #[derive(Debug)]
 pub struct AssetFailure {
     /// The instance path, by name, from the scanned root (e.g. `Model/Rock`).
@@ -158,7 +158,7 @@ pub struct AssetFailure {
 /// Uploads once and caches each file. Properties that are already asset ids, or are not local
 /// files, are left untouched. The build/sync pipeline calls this when `[assets]` is enabled.
 ///
-/// A single asset that fails to resolve does **not** abort the walk (architecture §8): that property
+/// A single asset that fails to resolve does **not** abort the walk: that property
 /// is left at its original reference and recorded in the returned failures, while every other asset
 /// is still uploaded and rewritten. The returned vector is empty when everything resolved.
 #[must_use]

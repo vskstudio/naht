@@ -156,7 +156,7 @@ instances only the hash is stored (no merge base).
 - A source file that cannot be read or decoded (non-UTF-8, dangling symlink) is skipped and logged as a warning; the rest of the tree still syncs.
 - A path the scan could not see (an unreadable file, or one under an ignored directory) is left alone on both sides and in the base: it is neither deleted nor overwritten by a Studio edit.
 - A write never follows a symlink. A live or dangling link at the target is refused with `VfsError::Symlink`, and nothing behind it is created or changed.
-- Temp files (`.<name>.<pid>.<n>.naht-tmp`) untouched for ten minutes are removed when a session opens, outside the walk's ignored directories. Younger ones are left alone, so a write running in another process (a second daemon or a concurrent `naht` command) is not broken.
+- Temp files (`.<name>.<pid>.<n>.naht-tmp`) untouched for ten minutes are removed when a session opens, outside the walk's ignored directories. Younger ones are left alone, so a write running in another process (a second daemon or a concurrent `naht` command) is not broken. A temp file whose modification time cannot be read is kept.
 - `thiserror` in `naht-core`, `anyhow` at the binary boundary.
 - **Safety guard:** `servePlaceId`: the daemon refuses to sync into a Studio session whose place id
   doesn't match the project, preventing source from landing in the wrong game.
@@ -191,4 +191,4 @@ not a v1 blocker.
 - **Frozen binary paths have no unfreeze (C8).** When both sides change a blob, its path freezes, and the resolve API has no way to clear that freeze. Choosing which side wins on resolve is a decision still open, and the fix touches the persist layer (`reconciler/persist.rs`).
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
-- **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next sync.
+- **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.

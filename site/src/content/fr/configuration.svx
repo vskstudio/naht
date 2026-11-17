@@ -74,7 +74,7 @@ api_key_env = "ROBLOX_OPEN_CLOUD_KEY"   # NAME of the env var, never the key its
 
 | Clé | Type | Défaut | Rôle |
 |---|---|---|---|
-| `enabled` | bool | `false` | Upload les fichiers mesh/image locaux et réécrit leurs références en `rbxassetid://…`. |
+| `enabled` | bool | `false` | Upload les fichiers mesh/image locaux et réécrit leurs références en `rbxassetid://…`. Les uploads ont lieu lors de `naht build` seulement ; `sync` et `serve` laissent les références telles quelles. |
 | `api_key_env` | string | _non défini_ | Le **nom** de la variable d'environnement contenant ta clé Open Cloud. |
 
 <Callout type="warning">
