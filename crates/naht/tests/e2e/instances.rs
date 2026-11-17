@@ -1,5 +1,10 @@
 use std::fs;
+use std::net::Ipv4Addr;
 use std::process::Command;
+
+use naht_core::protocol::{PROTOCOL_VERSION, to_msgpack};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 use super::{
     Daemon, free_port, frozen_with_a_resolved_file, init, run_bounded, run_pull, run_resolve,
@@ -157,4 +162,56 @@ async fn a_pull_names_the_missing_daemon_id_of_a_port_file_from_an_older_naht() 
         "the missing id is not explained: {stderr}"
     );
     daemon.handshake().await;
+}
+
+#[derive(serde::Serialize)]
+struct OlderNahtInfo {
+    protocol_version: u32,
+    server_version: String,
+    project_name: String,
+    session_id: String,
+    serve_place_id: Option<u64>,
+}
+
+async fn answer_info_like_an_older_naht(listener: TcpListener) {
+    let body = to_msgpack(&OlderNahtInfo {
+        protocol_version: PROTOCOL_VERSION,
+        server_version: "0.1.0".to_owned(),
+        project_name: "demo".to_owned(),
+        session_id: "s-1".to_owned(),
+        serve_place_id: None,
+    })
+    .unwrap();
+    while let Ok((mut socket, _)) = listener.accept().await {
+        let mut request = [0_u8; 1024];
+        drop(socket.read(&mut request).await);
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        drop(socket.write_all(head.as_bytes()).await);
+        drop(socket.write_all(&body).await);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pull_refuses_a_recorded_port_answered_by_an_older_naht() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("demo");
+    init(&root);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(answer_info_like_an_older_naht(listener));
+    write_recorded_port(&root, port, "d-1");
+
+    let out = run_pull(&root).await;
+    assert!(
+        !out.status.success(),
+        "a pull must not trust a daemon from an older naht that reports no daemon id"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("is from an older naht"),
+        "the older daemon is not named: {stderr}"
+    );
 }
