@@ -591,9 +591,24 @@ function Connection._schedulePush(self, delay: number?)
 	end)
 end
 
-function Connection._flushPush(self, session: number)
-	local remaining = self.pendingPush
+function Connection._takePending(self, remaining: { [string]: any }): { [string]: any }
+	for path, change in self.pendingPush do
+		remaining[path] = change
+	end
 	self.pendingPush = {}
+	return remaining
+end
+
+function Connection._restorePending(self, remaining: { [string]: any })
+	for path, change in remaining do
+		if self.pendingPush[path] == nil then
+			self.pendingPush[path] = change
+		end
+	end
+end
+
+function Connection._flushPush(self, session: number)
+	local remaining = self:_takePending({})
 	while next(remaining) ~= nil do
 		local changes = {}
 		for _, change in remaining do
@@ -617,17 +632,13 @@ function Connection._flushPush(self, session: number)
 		end
 		if isTransientFailure(err) then
 			self:_setWarning("push", "push failed: " .. failureMessage(err))
-			for path, change in remaining do
-				if self.pendingPush[path] == nil then
-					self.pendingPush[path] = change
-				end
-			end
+			self:_restorePending(remaining)
 			local delay = self.pushBackoff
 			self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
 			self:_schedulePush(delay)
 			return
 		end
-		remaining = self:_dropRefused(remaining, err)
+		remaining = self:_takePending(self:_dropRefused(remaining, err))
 	end
 end
 

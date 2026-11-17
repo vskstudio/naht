@@ -2611,6 +2611,49 @@ do
 	check("a transient ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
 end
 
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local posts: { string } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				local content = changes[1].content
+				table.insert(posts, content)
+				if content == "v1" then
+					task.wait(0.3)
+					error({ status = 400, message = "naht: /changes returned 400", refused = { "Bad.luau" } })
+				end
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "v1")
+	connection:_schedulePush()
+	local waited = 0
+	while #posts == 0 and waited < 100 do
+		task.wait(0.01)
+		waited += 1
+	end
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "v2")
+	connection:_schedulePush()
+	task.wait(1)
+	connection.running = false
+	check(
+		"an edit made during a refused post is sent once the refusal drops the only path",
+		table.concat(posts, ",") == "v1,v2",
+		"posts: " .. table.concat(posts, ",")
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end
