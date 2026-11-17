@@ -59,7 +59,7 @@ function Client.blobs(self: Client, cursor: number): any
 	end
 	local decoded, batch = pcall(Protocol.decodeBlobs, response.Body)
 	if not decoded then
-		error("naht: undecodable blob batch: " .. tostring(batch), 0)
+		error({ undecodable = true, message = "naht: undecodable blob batch: " .. tostring(batch) })
 	end
 	return batch
 end

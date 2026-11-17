@@ -14,7 +14,6 @@ local TERRAIN_BACKOFF_MAX = 60
 local TERRAIN_RESOLUTION = 4
 local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
-local UNDECODABLE_BLOB = "undecodable blob batch"
 local DECODE_FAILURE_LIMIT = 5
 local ACK_BACKOFF_START = 2
 local RETRY_BACKOFF_MAX = 60
@@ -46,6 +45,10 @@ local function failureMessage(err: any): string
 		return tostring(err.message)
 	end
 	return tostring(err)
+end
+
+local function isUndecodableFailure(err: any): boolean
+	return type(err) == "table" and err.undecodable == true
 end
 
 local function refusedPathsOf(err: any): { string }
@@ -375,7 +378,6 @@ end
 
 function Connection._serveBlobs(self, epoch: number)
 	local decodeFailures = 0
-	local failingCursor = -1
 	while self:_isBlobCurrent(epoch) do
 		local ok, batch = pcall(function()
 			return self.client:blobs(self.blobCursor)
@@ -387,12 +389,7 @@ function Connection._serveBlobs(self, epoch: number)
 			decodeFailures = 0
 			self:_applyBlobBatch(epoch, batch)
 		else
-			local message = tostring(batch)
-			if string.find(message, UNDECODABLE_BLOB, 1, true) ~= nil then
-				if failingCursor ~= self.blobCursor then
-					failingCursor = self.blobCursor
-					decodeFailures = 0
-				end
+			if isUndecodableFailure(batch) then
 				decodeFailures += 1
 			else
 				decodeFailures = 0
@@ -400,14 +397,10 @@ function Connection._serveBlobs(self, epoch: number)
 			if decodeFailures >= DECODE_FAILURE_LIMIT then
 				self:_setWarning(
 					"blob",
-					string.format(
-						"terrain blob stream stalled at cursor %d: %d undecodable batches in a row, sync is stalled, restart the daemon",
-						self.blobCursor,
-						decodeFailures
-					)
+					string.format("terrain blob batch at cursor %d keeps failing to decode, still retrying", self.blobCursor)
 				)
 			else
-				self:_setWarning("blob", "terrain blob poll failed: " .. message)
+				self:_setWarning("blob", "terrain blob poll failed: " .. failureMessage(batch))
 			end
 			task.wait(self.blobBackoff)
 			self.blobBackoff = Connection.nextBlobBackoff(self.blobBackoff)

@@ -1321,6 +1321,47 @@ do
 			blobs = function(_, _cursor)
 				calls += 1
 				if calls <= 5 then
+					error({ undecodable = true, message = "naht: undecodable blob batch: bad header" })
+				end
+				connection.epoch += 1
+				error("superseded")
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.blobBackoff = 0.01
+	connection:_serveBlobs(1)
+	local last = log[#log]
+	check(
+		"a batch that keeps failing to decode is reported as still retrying",
+		last ~= nil
+			and last.state == "Warning"
+			and string.find(last.detail or "", "terrain blob batch at cursor 0 keeps failing to decode, still retrying", 1, true) ~= nil,
+		last and (last.state .. ": " .. (last.detail or "")) or "no state reported"
+	)
+	check(
+		"the stalled wording no longer tells the user to restart the daemon",
+		last ~= nil and string.find(last.detail or "", "restart", 1, true) == nil,
+		last and (last.detail or "") or "no state reported"
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local calls = 0
+	local tree, root = studioWorld(true)
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			blobs = function(_, _cursor)
+				calls += 1
+				if calls <= 5 then
 					error("naht: undecodable blob batch: bad header")
 				end
 				connection.epoch += 1
@@ -1339,8 +1380,11 @@ do
 	connection:_serveBlobs(1)
 	local last = log[#log]
 	check(
-		"a batch that keeps failing to decode is reported as a stalled blob stream",
-		last ~= nil and last.state == "Warning" and string.find(last.detail or "", "stalled at cursor 0", 1, true) ~= nil,
+		"a plain error that only mentions an undecodable batch is not counted as a decode failure",
+		last ~= nil
+			and last.state == "Warning"
+			and string.find(last.detail or "", "terrain blob poll failed: ", 1, true) ~= nil
+			and string.find(last.detail or "", "stalled", 1, true) == nil,
 		last and (last.state .. ": " .. (last.detail or "")) or "no state reported"
 	)
 end
@@ -1355,7 +1399,7 @@ do
 			blobs = function(_, _cursor)
 				calls += 1
 				if calls <= 5 then
-					error("naht: undecodable blob batch: bad header")
+					error({ undecodable = true, message = "naht: undecodable blob batch: bad header" })
 				end
 				if calls == 6 then
 					return { cursor = 1, patches = {} }
