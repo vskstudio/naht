@@ -35,9 +35,24 @@ drop it into the local Plugins folder) and enable **Game Settings â†’ Security â
    `Reconnecting` if the daemon goes away, and `Conflict` with the path when a merge can't be
    resolved automatically. Synced source mirrors under `ServerStorage/Naht`.
 
+Behaviour notes:
+
+- Turning sync off detaches every Studio listener, and turning it back on attaches them once.
+- A delete patch removes only the instance of the matching script class (`Script`, `LocalScript` or
+  `ModuleScript`) and never creates folders to hold it. A delete for a missing parent does nothing.
+- An applied patch is not echoed back. Only a Studio edit that changes a script's source is pushed.
+- Instance names containing `/`, `\` or NUL are not synced, because they would split into extra
+  folders on disk. The plugin warns once per affected path.
+- A terrain blob with out-of-range dimensions, a non-positive resolution, or a payload length that
+  does not match its dimensions is refused. A blob that fails to apply keeps its place and is retried
+  every 2 seconds; the cursor advances only once every blob in a batch has been applied.
+- The reconnect backoff restarts (from 1 second) only after a poll completes, so a daemon that
+  answers `/info` and then fails on `/patches` keeps backing off.
+
 ## Tests
 
-The encode/decode and patch-apply paths run headless under [lune](https://github.com/lune-org/lune)
+The encode/decode, patch-apply, terrain blob, and connection lifecycle paths run headless under
+[lune](https://github.com/lune-org/lune)
 (pinned in the repo `aftman.toml`):
 
 ```sh
