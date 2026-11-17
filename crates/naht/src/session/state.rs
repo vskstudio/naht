@@ -119,7 +119,11 @@ impl Session {
     }
 
     pub(super) fn may_remove_emptied_dir(&self, dir: &Path) -> bool {
-        dir.components().count() > 1 && !self.source_roots.contains(&case_folded_key(dir))
+        dir.components().count() > 1 && self.may_remove_init_folder(dir)
+    }
+
+    pub(super) fn may_remove_init_folder(&self, dir: &Path) -> bool {
+        !self.source_roots.contains(&case_folded_key(dir))
     }
 
     /// Whether `path` is currently a directory on disk, so a file batch cannot write over it.

@@ -482,6 +482,25 @@ fn a_flat_server_script_that_gains_a_child_becomes_an_init_server_folder() {
 }
 
 #[test]
+fn deleting_a_childless_init_script_removes_its_empty_folder() {
+    let (root, mut session) = init_folder_session();
+    session.apply_changes(vec![delete("Folder.luau")]).unwrap();
+
+    assert!(!root.path().join("Folder").exists());
+}
+
+#[test]
+fn renaming_a_childless_init_script_removes_its_empty_folder() {
+    let (root, mut session) = init_folder_session();
+    session
+        .apply_changes(vec![delete("Folder.luau"), upsert("Bar.luau", "return 1")])
+        .unwrap();
+
+    assert!(!root.path().join("Folder").exists());
+    assert_eq!(read(root.path(), "Bar.luau"), "return 1");
+}
+
+#[test]
 fn a_server_script_edit_of_a_childless_init_script_keeps_the_init_file() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir_all(root.path().join("Folder")).unwrap();

@@ -40,10 +40,17 @@ impl Session {
     }
 
     pub(super) fn remove_emptied_dirs(&mut self, deleted: &[String]) {
+        let session = &*self;
         let candidates: BTreeSet<&Path> = deleted
             .iter()
-            .flat_map(|path| Path::new(path).ancestors())
-            .filter(|candidate| self.may_remove_emptied_dir(candidate))
+            .flat_map(|path| {
+                let own_folder = init_folder(path).map(Path::new);
+                Path::new(path).ancestors().filter(move |candidate| {
+                    session.may_remove_emptied_dir(candidate)
+                        || (Some(*candidate) == own_folder
+                            && session.may_remove_init_folder(candidate))
+                })
+            })
             .collect();
         let mut dirs: Vec<&Path> = candidates.into_iter().collect();
         dirs.sort_by_key(|dir| Reverse(dir.components().count()));
