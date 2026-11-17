@@ -3,6 +3,8 @@ use naht_core::reconciler::{Direction, PatchKind};
 
 use super::support::Harness;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 use tokio::time;
 
@@ -116,6 +118,139 @@ async fn a_mixed_batch_is_refused_whole_and_names_each_refused_path() {
     assert_eq!(refused, vec!["Bad.txt".to_owned()]);
     assert!(!harness.root.join("Good.luau").exists());
     assert!(!harness.root.join("Bad.txt").exists());
+}
+
+fn upsert(path: &str) -> Change {
+    Change::Upsert {
+        path: path.to_owned(),
+        class: "ModuleScript".to_owned(),
+        content: "return 1".to_owned(),
+    }
+}
+
+fn delete(path: &str) -> Change {
+    Change::Delete {
+        path: path.to_owned(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_deleting_a_folder_and_all_its_children_removes_the_directory() {
+    let harness = Harness::start(None).await;
+    assert_eq!(
+        harness
+            .post_changes(vec![upsert("src/Folder/A.luau")])
+            .await,
+        reqwest::StatusCode::OK
+    );
+
+    let status = harness
+        .post_changes(vec![delete("src/Folder"), delete("src/Folder/A.luau")])
+        .await;
+
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert!(!harness.root.join("src/Folder/A.luau").exists());
+    assert!(!harness.root.join("src/Folder").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_deleting_the_last_child_of_a_folder_removes_the_emptied_folder() {
+    let harness = Harness::start(None).await;
+    assert_eq!(
+        harness
+            .post_changes(vec![upsert("src/Folder/A.luau")])
+            .await,
+        reqwest::StatusCode::OK
+    );
+
+    let status = harness
+        .post_changes(vec![delete("src/Folder/A.luau")])
+        .await;
+
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert!(!harness.root.join("src/Folder/A.luau").exists());
+    assert!(!harness.root.join("src/Folder").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_last_file_deleted_under_a_top_level_source_root_keeps_the_root() {
+    let harness = Harness::start(None).await;
+    assert_eq!(
+        harness.post_changes(vec![upsert("src/A.luau")]).await,
+        reqwest::StatusCode::OK
+    );
+
+    let status = harness.post_changes(vec![delete("src/A.luau")]).await;
+
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert!(!harness.root.join("src/A.luau").exists());
+    assert!(harness.root.join("src").is_dir());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_emptied_folder_that_still_holds_a_non_synced_file_is_kept_with_200() {
+    let harness = Harness::start(None).await;
+    assert_eq!(
+        harness
+            .post_changes(vec![upsert("src/Folder/A.luau")])
+            .await,
+        reqwest::StatusCode::OK
+    );
+    fs::write(harness.root.join("src/Folder/notes.txt"), "keep").unwrap();
+
+    let status = harness
+        .post_changes(vec![delete("src/Folder/A.luau")])
+        .await;
+
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert!(!harness.root.join("src/Folder/A.luau").exists());
+    assert!(harness.root.join("src/Folder").is_dir());
+    assert!(harness.root.join("src/Folder/notes.txt").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_the_disk_refuses_to_remove_keeps_the_batch_and_answers_200() {
+    let harness = Harness::start(None).await;
+    assert_eq!(
+        harness
+            .post_changes(vec![upsert("src/Folder/A.luau"), upsert("lib/Keep.luau")])
+            .await,
+        reqwest::StatusCode::OK
+    );
+    let src = harness.root.join("src");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o555)).unwrap();
+    let refused_writes = fs::write(src.join("probe.txt"), "probe").is_err();
+
+    let status = harness
+        .post_changes(vec![delete("src/Folder/A.luau"), upsert("lib/New.luau")])
+        .await;
+
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(refused_writes, "this test needs a user without root rights");
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert!(!harness.root.join("src/Folder/A.luau").exists());
+    assert!(harness.root.join("lib/New.luau").exists());
+    assert!(harness.root.join("src/Folder").is_dir());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_deleting_a_folder_while_its_children_remain_is_refused_naming_it() {
+    let harness = Harness::start(None).await;
+    assert_eq!(
+        harness
+            .post_changes(vec![upsert("src/Folder/A.luau")])
+            .await,
+        reqwest::StatusCode::OK
+    );
+
+    let refused = harness
+        .post_changes_refused(vec![delete("src/Folder")])
+        .await;
+
+    assert_eq!(refused, vec!["src/Folder".to_owned()]);
+    assert!(harness.root.join("src/Folder/A.luau").exists());
+    assert!(harness.root.join("src/Folder").is_dir());
 }
 
 #[cfg(unix)]

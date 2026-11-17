@@ -24,7 +24,7 @@ use naht_core::protocol::SyncEvent;
 use naht_core::reconciler::{Patch, ReconcileError, TextInstance};
 use naht_core::state::{StateError, StateStore};
 use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -77,6 +77,7 @@ pub struct Session {
     activity: VecDeque<SyncEvent>,
     /// The seq to stamp on the next recorded event; monotonic within this session.
     activity_next_seq: u64,
+    source_roots: BTreeSet<String>,
     project_name: String,
     id: String,
     daemon_id: String,

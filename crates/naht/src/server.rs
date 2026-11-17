@@ -6,6 +6,8 @@
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
 //! decisions are delegated to the [`Session`]; this layer is pure transport.
 
+use std::collections::BTreeSet;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +25,9 @@ use naht_core::protocol::{
     self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong,
     ProtocolError, ServerInfo,
 };
-use naht_core::vfs::{ProjectPathError, VfsError, validate_blob_path, validate_source_path};
+use naht_core::vfs::{
+    ProjectPathError, VfsError, validate_blob_path, validate_directory_path, validate_source_path,
+};
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinError;
@@ -263,13 +267,7 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
 }
 
 fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, Rejection> {
-    let refused: Vec<String> = batch
-        .changes
-        .iter()
-        .map(change_path)
-        .filter(|path| is_refused_text_path(session, path))
-        .map(str::to_owned)
-        .collect();
+    let refused = refused_text_paths(session, &batch.changes);
     if !refused.is_empty() {
         return Err(Rejection::RefusedPaths(refused));
     }
@@ -278,10 +276,41 @@ fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, 
     Ok(count)
 }
 
-fn is_refused_text_path(session: &Session, path: &str) -> bool {
+fn refused_text_paths(session: &Session, changes: &[Change]) -> Vec<String> {
+    let deleted: BTreeSet<&Path> = changes.iter().filter_map(deleted_path).collect();
+    changes
+        .iter()
+        .filter(|change| is_refused_text_change(session, change, &deleted))
+        .map(|change| change_path(change).to_owned())
+        .collect()
+}
+
+fn is_refused_text_change(session: &Session, change: &Change, deleted: &BTreeSet<&Path>) -> bool {
+    let path = change_path(change);
+    if session.validate_path(path).is_err() {
+        return true;
+    }
+    if session.is_directory(path) {
+        return !removes_whole_directory(session, change, deleted);
+    }
     validate_source_path(path).is_err()
-        || session.validate_path(path).is_err()
-        || session.is_directory(path)
+}
+
+fn removes_whole_directory(session: &Session, change: &Change, deleted: &BTreeSet<&Path>) -> bool {
+    match change {
+        Change::Delete { path } => {
+            validate_directory_path(path).is_ok()
+                && session.subtree_deleted_by(Path::new(path), deleted)
+        }
+        Change::Upsert { .. } => false,
+    }
+}
+
+fn deleted_path(change: &Change) -> Option<&Path> {
+    match change {
+        Change::Delete { path } => Some(Path::new(path)),
+        Change::Upsert { .. } => None,
+    }
 }
 
 fn change_path(change: &Change) -> &str {

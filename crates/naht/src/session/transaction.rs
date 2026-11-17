@@ -29,6 +29,7 @@ pub(super) enum BlobsJournal {
 #[derive(Debug)]
 pub(super) enum DiskChange {
     Dir(PathBuf),
+    RemovedDir(PathBuf),
     File {
         path: PathBuf,
         previous: Option<Vec<u8>>,
@@ -122,6 +123,7 @@ fn restore_disk(vfs: &mut impl Vfs, changes: Vec<DiskChange>) {
                 previous: None,
             } => remove_if_present(vfs, &path),
             DiskChange::Dir(path) => remove_if_empty_dir(vfs, &path),
+            DiskChange::RemovedDir(path) => vfs.create_dir(&path),
         };
         if let Err(error) = outcome {
             tracing::error!(
@@ -204,6 +206,17 @@ impl<V: Vfs> Journaled<'_, V> {
             Ok(EntryKind::File) => self.inner.read(path).map(Some),
             _ => Ok(None),
         }
+    }
+
+    pub(super) fn remove_if_emptied(&mut self, path: &Path) -> Result<(), VfsError> {
+        let emptied = matches!(self.inner.kind(path), Ok(EntryKind::Dir))
+            && self.inner.list(path)?.is_empty();
+        if !emptied {
+            return Ok(());
+        }
+        self.inner.remove(path)?;
+        self.push(DiskChange::RemovedDir(path.to_path_buf()));
+        Ok(())
     }
 
     fn record_missing_dirs(&mut self, dir: &Path) {

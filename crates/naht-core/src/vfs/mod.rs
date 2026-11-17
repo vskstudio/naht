@@ -17,7 +17,8 @@ mod tests;
 pub use disk::{DiskVfs, remove_stale_temp_files};
 pub use memory::MemoryVfs;
 pub use project_path::{
-    ProjectPathError, validate_blob_path, validate_project_path, validate_source_path,
+    ProjectPathError, validate_blob_path, validate_directory_path, validate_project_path,
+    validate_source_path,
 };
 pub use rooted::RootedVfs;
 
@@ -105,7 +106,7 @@ pub trait Vfs {
     ///
     /// Returns [`VfsError`] when the directory cannot be created.
     fn create_dir(&mut self, path: &Path) -> Result<(), VfsError>;
-    /// Deletes a file, or a directory together with its whole subtree; fails when nothing is at `path`.
+    /// Deletes a file, or an empty directory; fails when nothing is at `path` or the directory still has entries.
     ///
     /// # Errors
     ///

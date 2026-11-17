@@ -107,6 +107,16 @@ pub fn validate_source_path(path: &str) -> Result<(), ProjectPathError> {
     }
 }
 
+/// Validate a directory path a `/changes` deletion names: a project-relative, visible path.
+///
+/// # Errors
+///
+/// Returns [`ProjectPathError`] when the path is unsafe or hidden.
+pub fn validate_directory_path(path: &str) -> Result<(), ProjectPathError> {
+    validate_project_path(path)?;
+    reject_hidden_components(path)
+}
+
 /// Validate a path sent to `/blobs`: a project-relative, visible file with the blob extension.
 ///
 /// # Errors

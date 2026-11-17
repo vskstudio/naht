@@ -1,11 +1,26 @@
 use super::Session;
-use super::transaction::{BlobsJournal, Transaction};
+use super::transaction::{BlobsJournal, Journal, Journaled, Transaction};
 use super::{MASS_DELETE_WARN, SessionError};
 use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::{Change, EventKind, Outcome};
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::InstanceRecord;
+use naht_core::vfs::Vfs;
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+fn remove_emptied_dirs_in<V: Vfs>(vfs: &mut V, journal: &mut Option<Journal>, dirs: &[&Path]) {
+    for dir in dirs {
+        let mut journaled = Journaled {
+            inner: &mut *vfs,
+            journal: &mut *journal,
+        };
+        if let Err(error) = journaled.remove_if_emptied(dir) {
+            tracing::warn!(target: "naht::session", path = ?dir, error = ?error, "kept a directory the batch emptied: it could not be removed");
+        }
+    }
+}
 
 impl Session {
     /// Apply a batch of Studio-side edits to the mirror, then reconcile against the current
@@ -15,11 +30,30 @@ impl Session {
     ///
     /// Returns [`SessionError`] when a change cannot be applied.
     pub fn apply_changes(&mut self, changes: Vec<Change>) -> Result<(), SessionError> {
+        let deleted: Vec<String> = changes
+            .iter()
+            .filter_map(|change| match change {
+                Change::Delete { path } => Some(path.clone()),
+                Change::Upsert { .. } => None,
+            })
+            .collect();
         let mut batch = Transaction::begin(self)?;
         batch.stage_text_changes(changes)?;
         batch.reconcile_all()?;
+        batch.remove_emptied_dirs(&deleted);
         batch.commit();
         Ok(())
+    }
+
+    pub(super) fn remove_emptied_dirs(&mut self, deleted: &[String]) {
+        let candidates: BTreeSet<&Path> = deleted
+            .iter()
+            .flat_map(|path| Path::new(path).ancestors())
+            .filter(|candidate| self.may_remove_emptied_dir(candidate))
+            .collect();
+        let mut dirs: Vec<&Path> = candidates.into_iter().collect();
+        dirs.sort_by_key(|dir| Reverse(dir.components().count()));
+        remove_emptied_dirs_in(&mut self.vfs, &mut self.journal, &dirs);
     }
 
     pub(super) fn stage_text_changes(&mut self, changes: Vec<Change>) -> Result<(), SessionError> {
@@ -219,195 +253,4 @@ impl Session {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
-
-    use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
-    use naht_core::protocol::Change;
-    use naht_core::state::{InstanceRecord, StateStore};
-
-    use crate::session::{Session, SessionError};
-
-    fn upsert(path: &str, content: &str) -> Change {
-        Change::Upsert {
-            path: path.to_owned(),
-            class: "ModuleScript".to_owned(),
-            content: content.to_owned(),
-        }
-    }
-
-    #[test]
-    fn a_failed_batch_restores_the_entry_it_overwrote() {
-        let root = tempfile::tempdir().unwrap();
-        let mut session = Session::new(
-            root.path(),
-            StateStore::open_in_memory().unwrap(),
-            "demo",
-            None,
-            false,
-        )
-        .unwrap();
-        session
-            .apply_changes(vec![upsert("Good.luau", "A")])
-            .unwrap();
-
-        let outcome = session.apply_changes(vec![
-            upsert("Good.luau", "B"),
-            Change::Delete {
-                path: "../escape.luau".to_owned(),
-            },
-        ]);
-
-        assert!(outcome.is_err());
-        assert_eq!(session.studio["Good.luau"].content, "A");
-    }
-
-    fn session_in(root: &Path) -> Session {
-        Session::new(
-            root,
-            StateStore::open_in_memory().unwrap(),
-            "demo",
-            None,
-            false,
-        )
-        .unwrap()
-    }
-
-    fn base_records(session: &Session) -> BTreeMap<String, InstanceRecord> {
-        session
-            .store
-            .all()
-            .unwrap()
-            .into_iter()
-            .map(|record| (record.guid.clone(), record))
-            .collect()
-    }
-
-    fn batch_ending_in_read_only_dir(
-        session: &mut Session,
-        root: &Path,
-        changes: Vec<Change>,
-    ) -> Result<(), SessionError> {
-        let read_only = root.join("ro");
-        fs::create_dir_all(&read_only).unwrap();
-        fs::set_permissions(&read_only, fs::Permissions::from_mode(0o555)).unwrap();
-        let outcome = session.apply_changes(changes);
-        fs::set_permissions(&read_only, fs::Permissions::from_mode(0o755)).unwrap();
-        outcome
-    }
-
-    #[test]
-    fn a_failed_batch_leaves_no_disk_write_behind() {
-        let root = tempfile::tempdir().unwrap();
-        let mut session = session_in(root.path());
-        let before = base_records(&session);
-
-        let outcome = batch_ending_in_read_only_dir(
-            &mut session,
-            root.path(),
-            vec![upsert("Aok.luau", "X"), upsert("ro/B.luau", "Y")],
-        );
-
-        assert!(outcome.is_err());
-        assert!(!root.path().join("Aok.luau").exists());
-        assert!(!session.studio.contains_key("Aok.luau"));
-        assert_eq!(base_records(&session), before);
-        session.rescan().unwrap();
-        assert!(!root.path().join("Aok.luau").exists());
-        assert_eq!(base_records(&session), before);
-    }
-
-    #[test]
-    fn a_failed_batch_restores_the_file_it_updated() {
-        let root = tempfile::tempdir().unwrap();
-        let mut session = session_in(root.path());
-        session
-            .apply_changes(vec![upsert("Aok.luau", "A")])
-            .unwrap();
-        let before = base_records(&session);
-
-        let outcome = batch_ending_in_read_only_dir(
-            &mut session,
-            root.path(),
-            vec![upsert("Aok.luau", "B"), upsert("ro/B.luau", "Y")],
-        );
-
-        assert!(outcome.is_err());
-        assert_eq!(
-            fs::read_to_string(root.path().join("Aok.luau")).unwrap(),
-            "A"
-        );
-        assert_eq!(session.studio["Aok.luau"].content, "A");
-        assert_eq!(base_records(&session), before);
-        session.rescan().unwrap();
-        assert_eq!(
-            fs::read_to_string(root.path().join("Aok.luau")).unwrap(),
-            "A"
-        );
-        assert_eq!(base_records(&session), before);
-    }
-
-    fn blob(path: &str) -> BlobInstance {
-        BlobInstance::new(path, TERRAIN_CLASS, vec![1_u8, 2, 3])
-    }
-
-    #[test]
-    fn a_failed_blob_batch_leaves_no_blob_on_disk_or_in_the_mirror() {
-        let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("Blocker"), "a file").unwrap();
-        let mut session = Session::new(
-            root.path(),
-            StateStore::open_in_memory().unwrap(),
-            "demo",
-            None,
-            true,
-        )
-        .unwrap();
-
-        let outcome =
-            session.apply_blob_changes(vec![blob("A_Good.terrain"), blob("Blocker/B_Bad.terrain")]);
-
-        assert!(outcome.is_err());
-        assert!(!root.path().join("A_Good.terrain").exists());
-        assert!(
-            session
-                .studio_blobs
-                .as_ref()
-                .is_none_or(|blobs| !blobs.contains_key("A_Good.terrain"))
-        );
-        session.rescan().unwrap();
-        assert!(!root.path().join("A_Good.terrain").exists());
-    }
-
-    #[test]
-    fn a_failed_batch_leaves_the_activity_log_and_patch_queue_unchanged() {
-        let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("Blocker"), "a file").unwrap();
-        fs::write(root.path().join("Other.luau"), "from disk").unwrap();
-        let mut session = Session::new(
-            root.path(),
-            StateStore::open_in_memory().unwrap(),
-            "demo",
-            None,
-            true,
-        )
-        .unwrap();
-        session.studio_blobs = Some(BTreeMap::from([(
-            "Blocker/B_Bad.terrain".to_owned(),
-            blob("Blocker/B_Bad.terrain"),
-        )]));
-        let before = session.activity(0);
-        let queued_before = session.take_patches(0).1.len();
-
-        let outcome = session.apply_changes(vec![upsert("Aok.luau", "A")]);
-
-        assert!(outcome.is_err());
-        let after = session.activity(0);
-        assert_eq!(after.events.len(), before.events.len());
-        assert_eq!(after.pending, before.pending);
-        assert_eq!(session.take_patches(0).1.len(), queued_before);
-    }
-}
+mod tests;

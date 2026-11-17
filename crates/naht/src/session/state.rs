@@ -4,7 +4,7 @@ use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
 use naht_core::reconciler;
 use naht_core::state::{InstanceRecord, StateStore};
 use naht_core::vfs::{DiskVfs, EntryKind, RootedVfs, Vfs, VfsError, remove_stale_temp_files};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 impl Session {
@@ -45,6 +45,7 @@ impl Session {
             blob_next_seq: 0,
             activity: VecDeque::new(),
             activity_next_seq: 1,
+            source_roots: BTreeSet::new(),
             project_name: project_name.into(),
             id: new_session_id(),
             daemon_id: new_daemon_id()?,
@@ -106,9 +107,30 @@ impl Session {
         self.vfs.validate_path(path)
     }
 
+    /// Protects configured source directories from the emptied-directory removal a batch may trigger.
+    pub fn protect_source_roots(&mut self, roots: impl IntoIterator<Item = PathBuf>) {
+        self.source_roots
+            .extend(roots.into_iter().map(|root| case_folded_key(&root)));
+    }
+
+    pub(super) fn may_remove_emptied_dir(&self, dir: &Path) -> bool {
+        dir.components().count() > 1 && !self.source_roots.contains(&case_folded_key(dir))
+    }
+
     /// Whether `path` is currently a directory on disk, so a file batch cannot write over it.
     pub fn is_directory(&self, path: &str) -> bool {
         matches!(self.vfs.kind(Path::new(path)), Ok(EntryKind::Dir))
+    }
+
+    /// Whether every entry under `dir`, recursively, is named by `deleted`.
+    pub fn subtree_deleted_by(&self, dir: &Path, deleted: &BTreeSet<&Path>) -> bool {
+        let Ok(entries) = self.vfs.list(dir) else {
+            return false;
+        };
+        entries.iter().all(|entry| {
+            deleted.contains(entry.path.as_path())
+                && (entry.kind != EntryKind::Dir || self.subtree_deleted_by(&entry.path, deleted))
+        })
     }
 
     pub(super) fn base_snapshot(&self) -> Result<BTreeMap<String, InstanceRecord>, SessionError> {
@@ -121,8 +143,18 @@ impl Session {
     }
 }
 
+fn case_folded_key(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
+    use naht_core::protocol::Change;
     use naht_core::state::{InstanceRecord, StateStore};
 
     use crate::session::Session;
@@ -152,5 +184,38 @@ mod tests {
             vec!["Frozen.luau".to_owned()]
         );
         assert_eq!(session.info().conflicted, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_configured_source_root_keeps_its_directory_when_its_last_file_is_deleted() {
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::open_in_memory().unwrap();
+        let mut session = Session::new(root.path(), store, "demo", None, false).unwrap();
+        session.protect_source_roots([PathBuf::from("packages/Shared")]);
+        session
+            .apply_changes(vec![Change::Upsert {
+                path: "packages/Shared/A.luau".to_owned(),
+                class: "ModuleScript".to_owned(),
+                content: "return 1".to_owned(),
+            }])
+            .unwrap();
+
+        session
+            .apply_changes(vec![Change::Delete {
+                path: "packages/Shared/A.luau".to_owned(),
+            }])
+            .unwrap();
+
+        assert!(root.path().join("packages/Shared").is_dir());
+    }
+
+    #[test]
+    fn a_source_root_configured_in_one_case_protects_the_folder_in_another() {
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::open_in_memory().unwrap();
+        let mut session = Session::new(root.path(), store, "demo", None, false).unwrap();
+        session.protect_source_roots([PathBuf::from("packages/Shared")]);
+
+        assert!(!session.may_remove_emptied_dir(Path::new("packages/shared")));
     }
 }
