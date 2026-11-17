@@ -82,6 +82,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		backoff = BACKOFF_START,
 		blobBackoff = BLOB_BACKOFF_START,
 		terrainBackoff = TERRAIN_BACKOFF_START,
+		terrainInFlight = false,
 		cursor = 0,
 		blobCursor = 0,
 		epoch = 0,
@@ -397,9 +398,23 @@ function Connection._sendTerrain(self, epoch: number): boolean
 	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainBlob.MAX_VOXELS then
 		return false
 	end
+	while self.terrainInFlight do
+		task.wait()
+	end
+	if not self:_isBlobCurrent(epoch) then
+		return true
+	end
 	local blob = self.terrainBlob.read(self.terrain, region, TERRAIN_RESOLUTION)
-	if self:_isBlobCurrent(epoch) then
+	if not self:_isBlobCurrent(epoch) then
+		return true
+	end
+	self.terrainInFlight = true
+	local ok, err = pcall(function()
 		self.client:postBlobs({ { path = TERRAIN_PATH, class = "Terrain", content = blob } })
+	end)
+	self.terrainInFlight = false
+	if not ok then
+		error(err, 0)
 	end
 	return true
 end

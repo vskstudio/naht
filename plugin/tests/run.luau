@@ -1277,6 +1277,41 @@ do
 end
 
 do
+	local tree, root = studioWorld(true)
+	local arrivals = {}
+	local calls = 0
+	local client = {
+		postBlobs = function(_, _blobs)
+			calls += 1
+			local call = calls
+			if call == 1 then
+				task.wait(0.05)
+			end
+			table.insert(arrivals, call)
+		end,
+		postAck = function() end,
+	}
+	local connection = Connection.new(client, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.epoch = 1
+	task.spawn(function()
+		connection:_pushTerrain(1)
+	end)
+	task.wait(0.01)
+	connection.epoch = 2
+	task.spawn(function()
+		connection:_pushTerrain(2)
+	end)
+	task.wait(0.15)
+	connection.running = false
+	check(
+		"the newest terrain snapshot arrives last across an epoch change",
+		#arrivals == 2 and arrivals[2] == 2,
+		table.concat(arrivals, ",")
+	)
+end
+
+do
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
 	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
