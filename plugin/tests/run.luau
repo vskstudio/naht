@@ -1756,6 +1756,36 @@ end
 
 do
 	local tree, root = studioWorld(true)
+	local infos = 0
+	local client = {
+		info = function(_, _placeId)
+			infos += 1
+			return { project_name = "Demo" }
+		end,
+		patches = function(_, _cursor)
+			task.wait(0.01)
+			return { cursor = 0, patches = {} }
+		end,
+		blobs = function(_, _cursor)
+			task.wait(0.01)
+			return { cursor = 0, patches = {} }
+		end,
+		postAck = function() end,
+		postBlobs = function() end,
+		postChanges = function() end,
+	}
+	local lifecycle = Connection.new(client, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	lifecycle:start()
+	task.wait(0.05)
+	lifecycle:stop()
+	lifecycle:start()
+	task.wait(0.05)
+	lifecycle:stop()
+	check("start after a stop reconnects", infos == 2, infos)
+end
+
+do
+	local tree, root = studioWorld(true)
 	local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
 	local dir = place(tree, "Folder", "dir", root)
 	check(
