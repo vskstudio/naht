@@ -10,11 +10,11 @@
 //! | 2 | the command line is wrong, reported by `clap` |
 //! | 65 | the project's input is malformed or the request conflicts with it |
 //! | 66 | an input file or the project directory cannot be read |
-//! | 69 | the daemon is not reachable, or its port cannot be bound |
+//! | 69 | the daemon is not reachable, its port cannot be bound, another `naht serve` already holds the project, or the port answers as a daemon that is not this project's or cannot be verified |
 //! | 70 | an internal failure that is not the operator's doing |
 //! | 71 | the file watcher cannot start |
 //! | 73 | an output file or project file cannot be created |
-//! | 74 | a file or the state database cannot be read or written |
+//! | 74 | a file, the state database or the daemon lock cannot be read or written, or the lock cannot be taken on this filesystem |
 //! | 78 | the configuration is invalid |
 
 mod exit;
