@@ -411,7 +411,7 @@ async fn a_pull_follows_the_daemon_port_file_over_the_config_port() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_pull_without_a_port_file_uses_the_config_port() {
+async fn a_pull_refuses_a_daemon_on_the_config_port_when_no_port_file_records_its_id() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("demo");
     init(&root);
@@ -423,9 +423,12 @@ async fn a_pull_without_a_port_file_uses_the_config_port() {
     let out = run_pull(&root).await;
 
     assert!(
-        out.status.success(),
-        "naht pull failed: {:?} {}",
-        out.status,
+        !out.status.success(),
+        "pull must not trust an unrecorded daemon"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("records no daemon id"),
+        "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     drop(daemon);
