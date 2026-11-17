@@ -138,7 +138,8 @@ support it, `naht serve` exits 74 and does not start (it fails closed). On NFS t
 it does not exclude a daemon running on another machine.
 
 `naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured.
-`naht pull` falls back to the `naht.toml` port only when the file is absent. Both nudges wait at most 2 s
+`naht pull` falls back to the `naht.toml` port only when the file is absent, and a daemon found there is
+refused as unverified, since no id is recorded to check it against. Both nudges wait at most 2 s
 for an answer. A file left behind by a crashed daemon points at a closed port, and the nudge then does
 nothing. Before a nudge re-syncs anything, it checks that the answer's `/info` names this project (and this
 place, when `naht.toml` configures one) and that its `daemon_id` is the id recorded in the port file. A port
