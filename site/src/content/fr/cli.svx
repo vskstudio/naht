@@ -48,7 +48,13 @@ Studio. Laisse-le tourner pendant que tu travailles. Un seul daemon tourne par p
 
 ## `naht pull [path]`
 
-Demande à un daemon **en cours d'exécution** de re-synchroniser maintenant, plutôt que d'attendre le prochain événement du système de fichiers. Il interroge le daemon enregistré dans `.naht/daemon.port` (écrit par `naht serve`) et n'utilise le port de `naht.toml` que si ce fichier est absent. Il attend au plus 2 secondes une réponse. Il n'utilise qu'un daemon qui désigne ce projet : un port enregistré qui appartient à un autre projet fait échouer la commande.
+Demande à un daemon **en cours d'exécution** de re-synchroniser maintenant, plutôt que d'attendre le prochain événement du système de fichiers. Il interroge le daemon enregistré dans `.naht/daemon.port` (écrit par `naht serve`), attend au plus 2 secondes une réponse, et n'utilise qu'un daemon qui désigne ce projet et dont l'identifiant est celui enregistré dans ce fichier. La commande refuse d'agir dans les cas suivants, et le message indique pourquoi :
+
+- `.naht/daemon.port` est absent : le daemon qui répond ne peut pas être vérifié. Relance `naht serve` dans ce projet pour écrire le fichier.
+- Le fichier a été écrit par une ancienne version de naht et ne contient aucun identifiant de daemon : relance `naht serve` pour le réécrire.
+- Le port répond comme un autre daemon du nom de ce projet, pas celui enregistré : arrête cet autre daemon, puis relance `naht serve` dans ce projet.
+- Le daemon qui répond vient d'une ancienne version de naht et ne donne aucun identifiant : arrête-le, puis lance `naht serve` avec cette version de naht.
+- Un port enregistré qui appartient à un autre projet fait échouer la commande.
 
 ```sh
 naht pull

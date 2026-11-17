@@ -49,8 +49,15 @@ plugin's connection. Leave it running while you work. Only one daemon runs per p
 ## `naht pull [path]`
 
 Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event. It asks the
-daemon recorded in `.naht/daemon.port` (written by `naht serve`), and uses the `naht.toml` port only when
-that file is absent. It waits at most 2 seconds for an answer. It only uses a daemon that reports this project, so a recorded port that belongs to another project makes the pull fail.
+daemon recorded in `.naht/daemon.port` (written by `naht serve`), waits at most 2 seconds for an answer,
+and only uses a daemon that reports this project and whose id is the one recorded in that file. The pull
+is refused in these cases, and the message says why:
+
+- `.naht/daemon.port` is missing: the daemon that answers cannot be checked. Restart `naht serve` in this project to write the file.
+- The file was written by an older naht and records no daemon id: restart `naht serve` to rewrite it.
+- The port answers as another daemon with this project's name, not the one recorded: stop that daemon, then restart `naht serve` in this project.
+- The daemon answering is from an older naht and reports no daemon id: stop it, then run `naht serve` with this naht version.
+- A recorded port that belongs to another project makes the pull fail.
 
 ```sh
 naht pull

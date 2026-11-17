@@ -133,19 +133,22 @@ clean shutdown. A second `naht serve` on the same project refuses to start (exit
 exclusive lock on `.naht/daemon.lock` for its whole lifetime, taken before it writes anything. The lock
 covers only the daemon. `naht status` and `naht resolve` open `state.db` without it and rely on SQLite
 locking: every connection sets a 5 s busy timeout, and migrations run only when the schema is not current,
-so opening a current store takes no write lock. When `try_lock` is refused on a filesystem that does not
+so opening a current store takes no write lock. A migration runs in one `BEGIN IMMEDIATE` transaction, which
+takes the write lock before its first statement: it creates the tables, drops legacy asset hashes and writes
+the schema version, and rolls back as a whole if any step fails. When `try_lock` is refused on a filesystem that does not
 support it, `naht serve` exits 74 and does not start (it fails closed). On NFS the lock may be per host, so
 it does not exclude a daemon running on another machine.
 
-`naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured.
-`naht pull` falls back to the `naht.toml` port only when the file is absent, and a daemon found there is
-refused as unverified, since no id is recorded to check it against. Both nudges wait at most 2 s
-for an answer. A file left behind by a crashed daemon points at a closed port, and the nudge then does
-nothing. Before a nudge re-syncs anything, it checks that the answer's `/info` names this project (and this
-place, when `naht.toml` configures one) and that its `daemon_id` is the id recorded in the port file. A port
-that answers for another project counts as not running, and the message says so. A daemon with another id
-is refused as stale, and a port file written by an older naht, which has no id line, is refused as
-unverified; both messages ask for `naht serve` to be restarted.
+`naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured. When that
+file is absent, `naht pull` asks the `naht.toml` port and refuses whatever answers there, since no id is
+recorded to check it against; `naht resolve` skips the nudge. Both nudges wait at most 2 s for an answer. A
+file left behind by a crashed daemon points at a closed port, and the nudge then does nothing. Before a nudge
+re-syncs anything, it checks that the answer's `/info` names this project (and this place, when `naht.toml`
+configures one) and that its `daemon_id` is the id recorded in the port file. A port that answers for another
+project is reported as foreign and not re-synced. A daemon of this project's name with another id is refused
+as stale (`StaleDaemon`). A missing port file (`MissingPortFile`), a port file from an older naht with no id
+line (`UnverifiedDaemon`), and a daemon from an older naht that reports no `daemon_id` (`OlderDaemon`) are each
+refused as unverified, and each message asks for `naht serve` to be restarted.
 
 ## 6. Configuration
 
@@ -172,6 +175,10 @@ unverified; both messages ask for `naht serve` to be restarted.
   handles complex Roblox types, with usable Luau libraries. JSON is avoided for payloads; the encoding
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
+- **Compatibility.** Under `PROTOCOL_VERSION` 1, a field may be added to a message, and unknown fields are
+  ignored, so an older peer keeps working when a newer one adds one. `daemon_id` was added to `ServerInfo`
+  this way. Removing or retyping a field, or changing what a message means, is a breaking change and bumps the
+  version.
 - **Endpoints:** `GET /info` (handshake + `servePlaceId` guard), `GET /patches` (long-poll, held
   open until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the
   binary terrain channel: a separate long-poll/push pair, kept apart from the text patch channel
