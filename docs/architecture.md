@@ -176,9 +176,11 @@ refused as unverified, and each message asks for `naht serve` to be restarted.
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
 - **Compatibility.** Under `PROTOCOL_VERSION` 1, a field may be added to a message, and unknown fields are
-  ignored, so an older peer keeps working when a newer one adds one. `daemon_id` was added to `ServerInfo`
-  this way. Removing or retyping a field, or changing what a message means, is a breaking change and bumps the
-  version.
+  ignored, so an older client still reads a newer server's messages. `daemon_id` was added to `ServerInfo`
+  this way. The reverse is refused on purpose: a newer `naht pull` refuses an older daemon's handshake, one
+  with no `daemon_id`, with the `OlderDaemon` message ("from an older naht"), because it cannot tell which
+  daemon it reached. Removing or retyping a field, or changing what a message means, is a breaking change and
+  bumps the version.
 - **Endpoints:** `GET /info` (handshake + `servePlaceId` guard), `GET /patches` (long-poll, held
   open until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the
   binary terrain channel: a separate long-poll/push pair, kept apart from the text patch channel
