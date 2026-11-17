@@ -2844,6 +2844,54 @@ do
 	)
 end
 
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local posts = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				posts += 1
+				if posts == 1 then
+					error({ status = 400, message = "naht: /changes returned 400", refused = { "Bad.luau" } })
+				end
+				assert(changes[1].path == "Bad.luau")
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(0.5)
+	check(
+		"the refusal of a path is named in a Warning before the path is edited again",
+		connection.warnings["refused:Bad.luau"] ~= nil,
+		string.format("posts %d", posts)
+	)
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B2")
+	connection:_schedulePush()
+	task.wait(0.5)
+	connection.running = false
+	check(
+		"a later accepted edit to a refused path clears its refused Warning",
+		posts == 2 and connection.warnings["refused:Bad.luau"] == nil,
+		string.format("posts %d, warnings: %s", posts, table.concat(warningsOf(log), " | "))
+	)
+	check(
+		"the widget returns to Connected once the refused path is accepted",
+		lastStateOf(log) == "Connected",
+		lastStateOf(log)
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end

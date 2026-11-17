@@ -652,6 +652,9 @@ function Connection._flushPush(self, session: number)
 		if ok then
 			self.pushBackoff = PUSH_RETRY
 			self:_clearWarning("push")
+			for path in remaining do
+				self:_clearRefused(path)
+			end
 			if next(self.pendingPush) ~= nil then
 				self:_schedulePush()
 			end
@@ -696,6 +699,10 @@ function Connection._retryPush(self, remaining: { [string]: any }, err: any)
 	self:_schedulePush(delay)
 end
 
+function Connection._clearRefused(self, path: string)
+	self:_clearWarning("refused:" .. path)
+end
+
 function Connection._postChanges(self, changes: { any }): (boolean, any)
 	self.pushGate.inFlight = true
 	local ok, err = pcall(function()
@@ -715,6 +722,7 @@ function Connection._postEach(self, session: number, remaining: { [string]: any 
 		if ok then
 			remaining[path] = nil
 			self:_clearWarning("push")
+			self:_clearRefused(path)
 		elseif isTransientFailure(err) then
 			self:_retryPush(remaining, err)
 			return false
