@@ -427,7 +427,7 @@ async fn a_pull_refuses_a_daemon_on_the_config_port_when_no_port_file_records_it
         "pull must not trust an unrecorded daemon"
     );
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("records no daemon id"),
+        String::from_utf8_lossy(&out.stderr).contains("`.naht/daemon.port` is missing"),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );

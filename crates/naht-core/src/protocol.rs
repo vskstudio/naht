@@ -5,8 +5,10 @@
 //! layer: nothing above this module names `MessagePack`. Field-named encoding (`to_vec_named`) keeps
 //! the wire self-describing, so the Luau side decodes by key rather than by positional offset.
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeSet;
+use std::fmt;
 
 use crate::binary::{BlobInstance, BlobPatch};
 use crate::reconciler::{Direction, Patch};
@@ -181,6 +183,43 @@ pub fn to_msgpack<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
 /// Returns [`ProtocolError::Decode`] when `bytes` is not a valid message of type `T`.
 pub fn from_msgpack<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError> {
     Ok(rmp_serde::from_slice(bytes)?)
+}
+
+/// The field names of a `MessagePack` map, without decoding its values.
+///
+/// # Errors
+///
+/// Returns [`ProtocolError::Decode`] when `bytes` is not a `MessagePack` map.
+pub fn msgpack_field_names(bytes: &[u8]) -> Result<BTreeSet<String>, ProtocolError> {
+    let FieldNames(names) = rmp_serde::from_slice(bytes)?;
+    Ok(names)
+}
+
+struct FieldNames(BTreeSet<String>);
+
+impl<'de> Deserialize<'de> for FieldNames {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(FieldNamesVisitor).map(Self)
+    }
+}
+
+struct FieldNamesVisitor;
+
+impl<'de> Visitor<'de> for FieldNamesVisitor {
+    type Value = BTreeSet<String>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a map")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut names = BTreeSet::new();
+        while let Some(name) = map.next_key::<String>()? {
+            map.next_value::<IgnoredAny>()?;
+            names.insert(name);
+        }
+        Ok(names)
+    }
 }
 
 #[cfg(test)]

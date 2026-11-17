@@ -115,7 +115,8 @@ async fn a_pull_refuses_a_same_named_daemon_that_is_not_the_recorded_one() {
     );
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(
-        stderr.contains("not the one recorded"),
+        stderr.contains("answers as another daemon named `game`")
+            && stderr.contains("not the one recorded"),
         "the refusal is not explained: {stderr}"
     );
     daemon_a.handshake().await;

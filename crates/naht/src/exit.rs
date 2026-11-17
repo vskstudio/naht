@@ -77,6 +77,8 @@ impl From<&CommandError> for Exit {
             | CommandError::ForeignDaemon { .. }
             | CommandError::StaleDaemon { .. }
             | CommandError::UnverifiedDaemon { .. }
+            | CommandError::MissingPortFile { .. }
+            | CommandError::OlderDaemon { .. }
             | CommandError::NotNahtDaemon { .. }
             | CommandError::AlreadyRunning { .. }
             | CommandError::Bind { .. } => Self::Unavailable,
