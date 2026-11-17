@@ -169,6 +169,8 @@ function Connection.stop(self)
 	self.epoch += 1
 	self.pendingPush = {}
 	self.pushScheduled = false
+	self.warnings = {}
+	self.conflicts = {}
 	self:_detachStudio()
 	self.onState("Disconnected", nil)
 end

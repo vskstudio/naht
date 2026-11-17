@@ -1726,6 +1726,21 @@ do
 end
 
 do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection:_setWarning("blob", "terrain blob rejected: stale")
+	connection.conflicts["C.luau"] = true
+	connection:stop()
+	check("stop clears the Warnings left by the last run", next(connection.warnings) == nil)
+	check("stop clears the Conflicts left by the last run", next(connection.conflicts) == nil)
+	connection:_refreshState()
+	check("the first state after a restart is not a stale Warning", lastStateOf(log) == "Connected", lastStateOf(log))
+end
+
+do
 	local tree, root = studioWorld(true)
 	local lifecycle = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
 	lifecycle:start()
