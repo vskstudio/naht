@@ -190,31 +190,30 @@ pub(crate) fn init_class(file_name: &str) -> Option<&'static str> {
     }
 }
 
-/// Maps a text path to the file the daemon writes, so a childless init folder and its flat file are one script.
-pub fn canonical_script_path<V: Vfs + ?Sized>(vfs: &V, path: &str) -> String {
+/// Returns the folder that holds an init script path, or `None` when the path is not an init file.
+pub fn init_folder(path: &str) -> Option<&str> {
     let (parent, file_name) = split_parent(path);
-    if let Some(class) = init_class(file_name) {
-        let Some(folder) = parent else {
-            return path.to_owned();
-        };
-        let (grandparent, folder_name) = split_parent(folder);
-        let flat = join_path(grandparent, &script_file_name(class, folder_name));
-        return if vfs.exists(Path::new(&flat)) && !vfs.exists(Path::new(folder)) {
-            flat
-        } else {
-            path.to_owned()
-        };
-    }
-    if let Some((class, stem)) = script_class(file_name) {
-        let folder = join_path(parent, &stem);
-        let init = join_path(Some(&folder), init_file_name(class));
-        return if vfs.exists(Path::new(&init)) && !vfs.exists(Path::new(path)) {
-            init
-        } else {
-            path.to_owned()
-        };
-    }
-    path.to_owned()
+    init_class(file_name)?;
+    parent
+}
+
+/// Returns the flat script path that an init script's folder would be written as.
+pub fn init_flat_path(path: &str) -> Option<String> {
+    let (parent, file_name) = split_parent(path);
+    let class = init_class(file_name)?;
+    let (grandparent, folder_name) = split_parent(parent?);
+    Some(join_path(
+        grandparent,
+        &script_file_name(class, folder_name),
+    ))
+}
+
+/// Returns the init script path a flat script would be written as inside its folder.
+pub fn flat_init_path(path: &str) -> Option<String> {
+    let (parent, file_name) = split_parent(path);
+    let (class, stem) = script_class(file_name)?;
+    let folder = join_path(parent, &stem);
+    Some(join_path(Some(&folder), init_file_name(class)))
 }
 
 fn split_parent(path: &str) -> (Option<&str>, &str) {
