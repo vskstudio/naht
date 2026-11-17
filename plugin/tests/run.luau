@@ -133,6 +133,44 @@ check(
 )
 check("terrain resolution round-trip", terrainBack.resolution == 4)
 
+local function terrainHeader(nx: number, ny: number, nz: number, resolution: number): string
+	return string.pack("<i4i4i4fffffff", nx, ny, nz, 0, 0, 0, 1, 1, 1, resolution)
+end
+
+local function rejectsTerrain(name: string, blob: string)
+	local ok = pcall(Terrain.deserialize, blob)
+	check("terrain blob rejects " .. name, not ok)
+end
+
+rejectsTerrain("a truncated header", string.sub(terrainHeader(1, 1, 1, 4), 1, 20))
+rejectsTerrain("a zero dimension", terrainHeader(0, 1, 1, 4))
+rejectsTerrain("a negative dimension", terrainHeader(-1, 1, 1, 4))
+rejectsTerrain("an oversized dimension", terrainHeader(4096, 1, 1, 4))
+rejectsTerrain("a non-positive resolution", terrainHeader(1, 1, 1, 0) .. string.pack("<I2f", 1, 0.5))
+rejectsTerrain("a missing voxel", terrainHeader(1, 1, 2, 4) .. string.pack("<I2f", 1, 0.5))
+rejectsTerrain("trailing bytes", terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5) .. "\0")
+
+local regionFromStudio = {
+	CFrame = { Position = { X = 10, Y = 20, Z = 30 } },
+	Size = { X = 8, Y = 4, Z = 2 },
+}
+local fakeVoxelTerrain = {
+	ReadVoxels = function(_, _region, _resolution)
+		return { { { { Value = 1 } } } }, { { { 0.5 } } }
+	end,
+}
+local readBack = Terrain.deserialize(Terrain.read(fakeVoxelTerrain, regionFromStudio, 4))
+check(
+	"terrain read uses region min as center minus half size",
+	readBack.min.x == 6 and readBack.min.y == 18 and readBack.min.z == 29,
+	string.format("min was (%s, %s, %s)", tostring(readBack.min.x), tostring(readBack.min.y), tostring(readBack.min.z))
+)
+check(
+	"terrain read uses region max as center plus half size",
+	readBack.max.x == 14 and readBack.max.y == 22 and readBack.max.z == 31,
+	string.format("max was (%s, %s, %s)", tostring(readBack.max.x), tostring(readBack.max.y), tostring(readBack.max.z))
+)
+
 -- === MessagePack encode round-trip ===========================================================
 
 local roundtrip = MessagePack.decode(MessagePack.encode({

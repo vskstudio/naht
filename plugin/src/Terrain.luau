@@ -49,10 +49,33 @@ function Terrain.serialize(grid: Grid): string
 	return table.concat(parts)
 end
 
+local HEADER_SIZE = 40
+local VOXEL_SIZE = 6
+local MAX_DIMENSION = 2048
+
+local function checkDimension(axis: string, value: number)
+	if value < 1 or value > MAX_DIMENSION then
+		error(string.format("Terrain blob dimension %s is %d, expected 1 to %d", axis, value, MAX_DIMENSION))
+	end
+end
+
 -- Reconstruct a voxel grid from a blob produced by `serialize`.
 function Terrain.deserialize(blob: string): Grid
+	if #blob < HEADER_SIZE then
+		error(string.format("Terrain blob is %d bytes, shorter than its %d-byte header", #blob, HEADER_SIZE))
+	end
 	local nx, ny, nz, minx, miny, minz, maxx, maxy, maxz, resolution, offset =
 		string.unpack("<i4i4i4fffffff", blob)
+	checkDimension("x", nx)
+	checkDimension("y", ny)
+	checkDimension("z", nz)
+	if resolution <= 0 then
+		error(string.format("Terrain blob resolution is %g, expected a positive value", resolution))
+	end
+	local expected = HEADER_SIZE + nx * ny * nz * VOXEL_SIZE
+	if #blob ~= expected then
+		error(string.format("Terrain blob is %d bytes, expected %d for %dx%dx%d", #blob, expected, nx, ny, nz))
+	end
 
 	local materials = {}
 	local occupancies = {}
@@ -80,6 +103,20 @@ function Terrain.deserialize(blob: string): Grid
 	}
 end
 
+local function regionBounds(region: any): ({ x: number, y: number, z: number }, { x: number, y: number, z: number })
+	local center = region.CFrame.Position
+	local half = region.Size
+	return {
+		x = center.X - half.X / 2,
+		y = center.Y - half.Y / 2,
+		z = center.Z - half.Z / 2,
+	}, {
+		x = center.X + half.X / 2,
+		y = center.Y + half.Y / 2,
+		z = center.Z + half.Z / 2,
+	}
+end
+
 -- Read the terrain in `region` (a `Region2int16`/`Region3` value) to a blob. Studio-only: materials
 -- come back as `Enum.Material`, converted to their numeric value for the opaque blob.
 function Terrain.read(terrain: any, region: any, resolution: number): string
@@ -97,10 +134,11 @@ function Terrain.read(terrain: any, region: any, resolution: number): string
 			end
 		end
 	end
+	local min, max = regionBounds(region)
 	return Terrain.serialize({
 		resolution = resolution,
-		min = { x = region.CFrame.Position.X, y = region.CFrame.Position.Y, z = region.CFrame.Position.Z },
-		max = { x = region.Size.X, y = region.Size.Y, z = region.Size.Z },
+		min = min,
+		max = max,
 		materials = materialValues,
 		occupancies = occupancies,
 	})
