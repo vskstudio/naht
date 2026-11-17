@@ -99,8 +99,8 @@ All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on f
   keeps its base until Studio reports, so when Studio sends its copy back the path is a Studio-bound
   delete, not a resurrected file. Filesystem blob changes made during a session therefore wait until
   Studio posts its first blob snapshot of that session; the plugin posts one on every connect, even for
-  a place with no terrain. Those changes stay on disk and are reconciled as soon as the snapshot
-  arrives.
+  a place with no terrain, and retries that post until the daemon accepts it. Those changes stay on disk
+  and are reconciled as soon as the snapshot arrives.
 
 ## 5. State store (SQLite)
 
@@ -126,15 +126,25 @@ soon as the base advances.
 A `meta` table holds the schema version and project identity. Writes are transactional. For binary
 instances only the hash is stored (no merge base).
 
-While it runs, `naht serve` also writes its bound port to `.naht/daemon.port` (plain text, next to
-`state.db`, written through a temp file and a rename so a reader never sees a partial value) and removes
-the file on a clean shutdown. A second `naht serve` on the same project refuses to start: the daemon holds
-an exclusive lock on `.naht/daemon.lock` for its whole lifetime, taken before it writes anything.
-`naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured. `naht pull` falls back to the `naht.toml` port only
-when the file is absent. Both nudges wait at most 2 s for an answer. A file left behind by a crashed
-daemon points at a closed port, and the nudge then does nothing. Before a nudge re-syncs anything, it
-checks that the answer's `/info` names this project (and this place, when `naht.toml` configures one). A
-port that answers for another project counts as not running, and the message says so.
+While it runs, `naht serve` also writes its bound port and a random per-run daemon id to
+`.naht/daemon.port` (plain text, the port on the first line and the id on the second, next to `state.db`,
+written through a temp file and a rename so a reader never sees a partial value) and removes the file on a
+clean shutdown. A second `naht serve` on the same project refuses to start (exit 69): the daemon holds an
+exclusive lock on `.naht/daemon.lock` for its whole lifetime, taken before it writes anything. The lock
+covers only the daemon. `naht status` and `naht resolve` open `state.db` without it and rely on SQLite
+locking: every connection sets a 5 s busy timeout, and migrations run only when the schema is not current,
+so opening a current store takes no write lock. When `try_lock` is refused on a filesystem that does not
+support it, `naht serve` exits 74 and does not start (it fails closed). On NFS the lock may be per host, so
+it does not exclude a daemon running on another machine.
+
+`naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured.
+`naht pull` falls back to the `naht.toml` port only when the file is absent. Both nudges wait at most 2 s
+for an answer. A file left behind by a crashed daemon points at a closed port, and the nudge then does
+nothing. Before a nudge re-syncs anything, it checks that the answer's `/info` names this project (and this
+place, when `naht.toml` configures one) and that its `daemon_id` is the id recorded in the port file. A port
+that answers for another project counts as not running, and the message says so. A daemon with another id
+is refused as stale, and a port file written by an older naht, which has no id line, is refused as
+unverified; both messages ask for `naht serve` to be restarted.
 
 ## 6. Configuration
 
