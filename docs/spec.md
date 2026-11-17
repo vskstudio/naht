@@ -42,6 +42,20 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   protocol version was `1` when this shipped and is `2` now, after the client headers became mandatory
   (see the protocol page). The Neublox adapter that consumes it lives outside this repo.
 
+## Shipped: v0.4.0 (merged)
+
+- **Security fix GHSA-xhmf-2rv2-556x** (#72): one gate in front of every daemon route refuses a request
+  with an `Origin` header, a non-loopback `Host` or no `x-naht-client` header, which stops web pages and
+  DNS rebinding. Every client path is validated (no escape from the root, no symlink, no character
+  Windows forbids), a batch with a refused path is answered `400 {"refused_paths": [...]}` and writes
+  nothing, text batches roll back on failure, bodies are bounded in size, time, nesting and concurrency,
+  and client values are logged escaped. Protocol version 2: the plugin and the daemon must be updated
+  together.
+- **Restart safe sync** (#71): sync stays correct across a daemon restart, and the plugin and CLI
+  check that the daemon they reach is the one they expect.
+- **Plugin fixes** (#70): stop, apply, terrain and failure reporting.
+- **Core hardening** (#69): paths, atomic writes, scans and asset uploads.
+
 ## Shipped: v0.3.0 (merged)
 
 - **Workspace on the VSK Rust book** (#39): `naht-core` split into modules under 500 lines, typed
