@@ -35,6 +35,37 @@ local function check(name: string, ok: boolean, detail: string?)
 	end
 end
 
+local cleanups: { () -> () } = {}
+local WAIT_LIMIT = 5
+
+local function onCleanup(release: () -> ())
+	table.insert(cleanups, release)
+end
+
+local function suite(name: string, body: () -> ())
+	local ok, err = pcall(body)
+	for _, release in cleanups do
+		pcall(release)
+	end
+	table.clear(cleanups)
+	if not ok then
+		failures += 1
+		print("FAIL - " .. name .. ": error: " .. tostring(err))
+	end
+end
+
+local function waitFor(condition: () -> boolean): boolean
+	local waited = 0
+	while not condition() do
+		if waited >= WAIT_LIMIT then
+			return false
+		end
+		task.wait(0.05)
+		waited += 0.05
+	end
+	return true
+end
+
 local function fromHex(hex: string): string
 	return (hex:gsub("..", function(pair)
 		return string.char(tonumber(pair, 16) :: number)
@@ -399,162 +430,162 @@ local function freshApplier()
 	return tree, root, Apply.create(tree)
 end
 
-do
-	local tree, root, applier = freshApplier()
-	local shadow = place(tree, "Script", "Foo", root)
-	local folder = place(tree, "Folder", "Foo", root)
-	applier:apply({ path = "Foo/Bar.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
-	check("a Script named Foo does not hide a Folder named Foo as parent", countNamed(folder, "Bar") == 1)
-	check("the Script named Foo receives no child", #tree.children(shadow) == 0)
-end
+suite("a Script named Foo does not hide a Folder named Foo as parent", function()
+		local tree, root, applier = freshApplier()
+		local shadow = place(tree, "Script", "Foo", root)
+		local folder = place(tree, "Folder", "Foo", root)
+		applier:apply({ path = "Foo/Bar.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		check("a Script named Foo does not hide a Folder named Foo as parent", countNamed(folder, "Bar") == 1)
+		check("the Script named Foo receives no child", #tree.children(shadow) == 0)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
-	local src = tree.findChild(root, "src")
-	check("apply creates intermediate folder", src ~= nil and src.ClassName == "Folder")
-	local a = if src ~= nil then tree.findChild(src, "A") else nil
-	check("apply creates leaf with class", a ~= nil and a.ClassName == "ModuleScript")
-	check("apply sets source", a ~= nil and a.Source == "return 1")
+suite("apply creates intermediate folder", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		local src = tree.findChild(root, "src")
+		check("apply creates intermediate folder", src ~= nil and src.ClassName == "Folder")
+		local a = if src ~= nil then tree.findChild(src, "A") else nil
+		check("apply creates leaf with class", a ~= nil and a.ClassName == "ModuleScript")
+		check("apply sets source", a ~= nil and a.Source == "return 1")
 
-	applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Update", content = "return 2" })
-	check("apply update reuses node and sets source", a ~= nil and a.Source == "return 2")
-	check("apply update does not duplicate", src ~= nil and #src.children == 1)
+		applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Update", content = "return 2" })
+		check("apply update reuses node and sets source", a ~= nil and a.Source == "return 2")
+		check("apply update does not duplicate", src ~= nil and #src.children == 1)
 
-	applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Delete" })
-	check("apply delete removes node", src ~= nil and #src.children == 0)
-end
+		applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Delete" })
+		check("apply delete removes node", src ~= nil and #src.children == 0)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	applier:apply({ path = "ui/main.client.luau", class = "LocalScript", kind = "Create", content = "print('hi')" })
-	local ui = tree.findChild(root, "ui")
-	local main = if ui ~= nil then tree.findChild(ui, "main") else nil
-	check("apply strips .client.luau suffix", main ~= nil and main.Name == "main")
-	check("apply maps LocalScript class", main ~= nil and main.ClassName == "LocalScript")
-end
+suite("apply strips .client.luau suffix", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "ui/main.client.luau", class = "LocalScript", kind = "Create", content = "print('hi')" })
+		local ui = tree.findChild(root, "ui")
+		local main = if ui ~= nil then tree.findChild(ui, "main") else nil
+		check("apply strips .client.luau suffix", main ~= nil and main.Name == "main")
+		check("apply maps LocalScript class", main ~= nil and main.ClassName == "LocalScript")
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	applier:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
-	applier:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Delete" })
-	local utils = tree.findChild(root, "Utils")
-	check(
-		"delete of a file keeps a same-named folder and its children",
-		utils ~= nil and utils.ClassName == "Folder" and tree.findChild(utils, "Helper") ~= nil
-	)
-end
+suite("delete of a file keeps a same-named folder and its children", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
+		applier:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Delete" })
+		local utils = tree.findChild(root, "Utils")
+		check(
+			"delete of a file keeps a same-named folder and its children",
+			utils ~= nil and utils.ClassName == "Folder" and tree.findChild(utils, "Helper") ~= nil
+		)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	applier:apply({ path = "missing/A.luau", class = "ModuleScript", kind = "Delete" })
-	check("delete never creates missing parent folders", tree.findChild(root, "missing") == nil)
-end
+suite("delete never creates missing parent folders", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "missing/A.luau", class = "ModuleScript", kind = "Delete" })
+		check("delete never creates missing parent folders", tree.findChild(root, "missing") == nil)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	place(tree, "Folder", "x", root)
-	place(tree, "ModuleScript", "x", root)
-	applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Delete" })
-	local remaining = tree.findChild(root, "x")
-	check(
-		"delete removes only the same-class sibling among same-named instances",
-		countNamed(root, "x") == 1 and remaining ~= nil and remaining.ClassName == "Folder"
-	)
-end
+suite("delete removes only the same-class sibling among same-named instances", function()
+		local tree, root, applier = freshApplier()
+		place(tree, "Folder", "x", root)
+		place(tree, "ModuleScript", "x", root)
+		applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Delete" })
+		local remaining = tree.findChild(root, "x")
+		check(
+			"delete removes only the same-class sibling among same-named instances",
+			countNamed(root, "x") == 1 and remaining ~= nil and remaining.ClassName == "Folder"
+		)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	applier:apply({ path = "x.server.luau", class = "Script", kind = "Create", content = "s" })
-	applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Update", content = "m" })
-	applier:apply({ path = "x.server.luau", class = "Script", kind = "Delete" })
-	local survivor = tree.findChild(root, "x")
-	check(
-		"Script x then batch [x.luau upsert, x.server.luau delete] leaves a ModuleScript x",
-		countNamed(root, "x") == 1 and survivor ~= nil and survivor.ClassName == "ModuleScript"
-	)
-end
+suite("Script x then batch [x.luau upsert, x.server.luau delete] leaves a ModuleScript x", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "x.server.luau", class = "Script", kind = "Create", content = "s" })
+		applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Update", content = "m" })
+		applier:apply({ path = "x.server.luau", class = "Script", kind = "Delete" })
+		local survivor = tree.findChild(root, "x")
+		check(
+			"Script x then batch [x.luau upsert, x.server.luau delete] leaves a ModuleScript x",
+			countNamed(root, "x") == 1 and survivor ~= nil and survivor.ClassName == "ModuleScript"
+		)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Create", content = "m" })
-	applier:apply({ path = "x.server.luau", class = "Script", kind = "Update", content = "s" })
-	local x = tree.findChild(root, "x")
-	check(
-		"Upsert x.server.luau over a ModuleScript x becomes a Script",
-		countNamed(root, "x") == 1 and x ~= nil and x.ClassName == "Script" and x.Source == "s"
-	)
-end
+suite("Upsert x.server.luau over a ModuleScript x becomes a Script", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Create", content = "m" })
+		applier:apply({ path = "x.server.luau", class = "Script", kind = "Update", content = "s" })
+		local x = tree.findChild(root, "x")
+		check(
+			"Upsert x.server.luau over a ModuleScript x becomes a Script",
+			countNamed(root, "x") == 1 and x ~= nil and x.ClassName == "Script" and x.Source == "s"
+		)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	local oldModule = place(tree, "ModuleScript", "x", root)
-	place(tree, "ModuleScript", "Inner", oldModule)
-	applier:apply({ path = "x.server.luau", class = "Script", kind = "Update", content = "s" })
-	local x = tree.findChild(root, "x")
-	check(
-		"a class change moves the children of the replaced script",
-		countNamed(root, "x") == 1 and x ~= nil and x.ClassName == "Script" and tree.findChild(x, "Inner") ~= nil
-	)
-end
+suite("a class change moves the children of the replaced script", function()
+		local tree, root, applier = freshApplier()
+		local oldModule = place(tree, "ModuleScript", "x", root)
+		place(tree, "ModuleScript", "Inner", oldModule)
+		applier:apply({ path = "x.server.luau", class = "Script", kind = "Update", content = "s" })
+		local x = tree.findChild(root, "x")
+		check(
+			"a class change moves the children of the replaced script",
+			countNamed(root, "x") == 1 and x ~= nil and x.ClassName == "Script" and tree.findChild(x, "Inner") ~= nil
+		)
+end)
 
-do
-	local tree, root, applier = freshApplier()
-	applier:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
-	local folder = tree.findChild(root, "Utils")
-	local ok, err = pcall(function()
-		applier:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Update", content = "print(1)" })
-	end)
-	local script = findByClass(root, "Utils", "ModuleScript")
-	check("a same-named Folder does not block a ModuleScript", ok, tostring(err))
-	check(
-		"the ModuleScript Utils sits beside the Folder Utils with its source",
-		countNamed(root, "Utils") == 2 and script ~= nil and script.Source == "print(1)"
-	)
-	check("the Folder Utils keeps its children", folder ~= nil and tree.findChild(folder, "Helper") ~= nil)
-end
+suite("a same-named Folder does not block a ModuleScript", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
+		local folder = tree.findChild(root, "Utils")
+		local ok, err = pcall(function()
+			applier:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Update", content = "print(1)" })
+		end)
+		local script = findByClass(root, "Utils", "ModuleScript")
+		check("a same-named Folder does not block a ModuleScript", ok, tostring(err))
+		check(
+			"the ModuleScript Utils sits beside the Folder Utils with its source",
+			countNamed(root, "Utils") == 2 and script ~= nil and script.Source == "print(1)"
+		)
+		check("the Folder Utils keeps its children", folder ~= nil and tree.findChild(folder, "Helper") ~= nil)
+end)
 
-do
-	local tree, root = studioWorld(true)
-	local expected: { string } = {}
-	local writeApplier = Apply.create(tree, {
-		expect = function(path: string, content: string)
-			table.insert(expected, path .. "=" .. content)
-		end,
-		forget = function(_path: string) end,
-	})
-	local expectedBeforeWrite = -1
-	local originalSetSource = tree.setSource
-	tree.setSource = function(node: any, content: string)
-		expectedBeforeWrite = #expected
-		originalSetSource(node, content)
-	end
-	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
-	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
-	check("apply records the expected echo before the write", expectedBeforeWrite == 1)
-	check(
-		"apply records the expected echo once and not for a no-op",
-		#expected == 1 and expected[1] == "Z.luau=Q" and tree.findChild(root, "Z") ~= nil
-	)
-end
+suite("apply records the expected echo before the write", function()
+		local tree, root = studioWorld(true)
+		local expected: { string } = {}
+		local writeApplier = Apply.create(tree, {
+			expect = function(path: string, content: string)
+				table.insert(expected, path .. "=" .. content)
+			end,
+			forget = function(_path: string) end,
+		})
+		local expectedBeforeWrite = -1
+		local originalSetSource = tree.setSource
+		tree.setSource = function(node: any, content: string)
+			expectedBeforeWrite = #expected
+			originalSetSource(node, content)
+		end
+		writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
+		writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
+		check("apply records the expected echo before the write", expectedBeforeWrite == 1)
+		check(
+			"apply records the expected echo once and not for a no-op",
+			#expected == 1 and expected[1] == "Z.luau=Q" and tree.findChild(root, "Z") ~= nil
+		)
+end)
 
-do
-	local tree = studioWorld(true)
-	local forgotten: { string } = {}
-	tree.setSource = function(_node: any, _content: string)
-		error("read only")
-	end
-	local failingApplier = Apply.create(tree, {
-		expect = function(_path: string, _content: string) end,
-		forget = function(path: string)
-			table.insert(forgotten, path)
-		end,
-	})
-	local ok = pcall(function()
-		failingApplier:apply({ kind = "Upsert", path = "F.luau", class = "ModuleScript", content = "Q" })
-	end)
-	check("a failed source write is rolled back out of the echo record", not ok and forgotten[1] == "F.luau")
-end
+suite("a failed source write is rolled back out of the echo record", function()
+		local tree = studioWorld(true)
+		local forgotten: { string } = {}
+		tree.setSource = function(_node: any, _content: string)
+			error("read only")
+		end
+		local failingApplier = Apply.create(tree, {
+			expect = function(_path: string, _content: string) end,
+			forget = function(path: string)
+				table.insert(forgotten, path)
+			end,
+		})
+		local ok = pcall(function()
+			failingApplier:apply({ kind = "Upsert", path = "F.luau", class = "ModuleScript", content = "Q" })
+		end)
+		check("a failed source write is rolled back out of the echo record", not ok and forgotten[1] == "F.luau")
+end)
 
 local extentsRegion = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 16, Y = 16, Z = 16 } }
 
@@ -584,7 +615,14 @@ local function blobPatchOf(content: string)
 end
 
 local function deps(terrain: any, tree: any?)
-	return { terrain = terrain, tree = tree, apply = Apply, protocol = Protocol, terrainBlob = Terrain }
+	return {
+		terrain = terrain,
+		tree = tree,
+		apply = Apply,
+		protocol = Protocol,
+		terrainBlob = Terrain,
+		delay = function(_, _fire) end,
+	}
 end
 
 local function fakeConnection(client: any, terrain: any): any
@@ -608,62 +646,62 @@ local function lastStateOf(log: { { state: string, detail: string? } }): string
 	return if #log > 0 then log[#log].state else ""
 end
 
-do
-	local readRegion: any = nil
-	local expanded: number? = nil
-	local posts: { any } = {}
-	local terrain = extentsTerrainWith(extentsRegion, function(region)
-		readRegion = region
-	end)
-	terrain.MaxExtents.ExpandToGrid = function(_, resolution)
-		expanded = resolution
-		return extentsRegion
-	end
-	local connection = fakeConnection({
-		postBlobs = function(_, changes)
-			table.insert(posts, changes)
-		end,
-	}, terrain)
-	connection:_pushTerrain(1)
-	check("terrain push expands MaxExtents to the 4-stud grid", expanded == 4)
-	check("terrain push reads the MaxExtents region as-is", readRegion == extentsRegion)
-	check("terrain push posts one blob", #posts == 1)
-end
-
-do
-	local hugeRegion = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 1024, Y = 256, Z = 1024 } }
-	local reads = 0
-	local posts = 0
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local connection = Connection.new(
-		{
-			postBlobs = function(_, _changes)
-				posts += 1
+suite("terrain push expands MaxExtents to the 4-stud grid", function()
+		local readRegion: any = nil
+		local expanded: number? = nil
+		local posts: { any } = {}
+		local terrain = extentsTerrainWith(extentsRegion, function(region)
+			readRegion = region
+		end)
+		terrain.MaxExtents.ExpandToGrid = function(_, resolution)
+			expanded = resolution
+			return extentsRegion
+		end
+		local connection = fakeConnection({
+			postBlobs = function(_, changes)
+				table.insert(posts, changes)
 			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(hugeRegion, function()
-			reads += 1
-		end), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection:_pushTerrain(1)
-	local last = log[#log]
-	check("terrain over the voxel cap is not read", reads == 0)
-	check("terrain over the voxel cap posts nothing", posts == 0)
-	check(
-		"terrain over the voxel cap is reported through onState",
-		last ~= nil
-			and last.state == "Warning"
-			and last.detail == "terrain too large for live push, use naht build",
-		if last ~= nil then tostring(last.detail) else "no state reported"
-	)
-end
+		}, terrain)
+		connection:_pushTerrain(1)
+		check("terrain push expands MaxExtents to the 4-stud grid", expanded == 4)
+		check("terrain push reads the MaxExtents region as-is", readRegion == extentsRegion)
+		check("terrain push posts one blob", #posts == 1)
+end)
+
+suite("terrain over the voxel cap is not read", function()
+		local hugeRegion = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 1024, Y = 256, Z = 1024 } }
+		local reads = 0
+		local posts = 0
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new(
+			{
+				postBlobs = function(_, _changes)
+					posts += 1
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(hugeRegion, function()
+				reads += 1
+			end), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection:_pushTerrain(1)
+		local last = log[#log]
+		check("terrain over the voxel cap is not read", reads == 0)
+		check("terrain over the voxel cap posts nothing", posts == 0)
+		check(
+			"terrain over the voxel cap is reported through onState",
+			last ~= nil
+				and last.state == "Warning"
+				and last.detail == "terrain too large for live push, use naht build",
+			if last ~= nil then tostring(last.detail) else "no state reported"
+		)
+end)
 
 local function blobBackoffAfter(value: number): number?
 	local ok, result = pcall(Connection.nextBlobBackoff, value)
@@ -673,1016 +711,1016 @@ end
 check("blob backoff doubles from 2 seconds", blobBackoffAfter(2) == 4)
 check("blob backoff is capped at 60 seconds", blobBackoffAfter(32) == 60 and blobBackoffAfter(60) == 60)
 
-do
-	local calls: { number } = {}
-	local connection: any = nil
-	connection = fakeConnection({
-		blobs = function(_, cursor)
-			table.insert(calls, cursor)
-			if #calls == 1 then
-				return { cursor = 5, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
-			end
-			connection.epoch += 1
-			error("stop")
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	check("a failed blob keeps the blob cursor where it was", calls[2] == 0 and connection.blobCursor == 0)
-end
-
-do
-	local log, onState = stateLog()
-	local calls = 0
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			blobs = function(_, _cursor)
-				calls += 1
-				if calls == 1 then
-					return { cursor = 9, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
+suite("a failed blob keeps the blob cursor where it was", function()
+		local calls: { number } = {}
+		local connection: any = nil
+		connection = fakeConnection({
+			blobs = function(_, cursor)
+				table.insert(calls, cursor)
+				if #calls == 1 then
+					return { cursor = 5, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
 				end
 				connection.epoch += 1
 				error("stop")
 			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	local reported = false
-	for _, entry in log do
-		if
-			entry.state == "Warning"
-			and entry.detail ~= nil
-			and string.find(entry.detail, "terrain blob rejected: ", 1, true) == 1
-		then
-			reported = true
-		end
-	end
-	check("a rejected blob is reported through onState", reported)
-	check("a rejected blob keeps the blob cursor", connection.blobCursor == 0)
-end
+		}, extentsTerrainWith(extentsRegion))
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		check("a failed blob keeps the blob cursor where it was", calls[2] == 0 and connection.blobCursor == 0)
+end)
 
-do
-	local calls: { number } = {}
-	local connection: any = nil
-	connection = fakeConnection({
-		blobs = function(_, cursor)
-			table.insert(calls, cursor)
-			if #calls == 1 then
-				return { cursor = 7, patches = {} }
+suite("a rejected blob is reported through onState", function()
+		local log, onState = stateLog()
+		local calls = 0
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				blobs = function(_, _cursor)
+					calls += 1
+					if calls == 1 then
+						return { cursor = 9, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
+					end
+					connection.epoch += 1
+					error("stop")
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		local reported = false
+		for _, entry in log do
+			if
+				entry.state == "Warning"
+				and entry.detail ~= nil
+				and string.find(entry.detail, "terrain blob rejected: ", 1, true) == 1
+			then
+				reported = true
 			end
-			connection.epoch += 1
-			error("stop")
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection:_serveBlobs(1)
-	check("an empty blob batch advances the blob cursor", calls[2] == 7)
-end
+		end
+		check("a rejected blob is reported through onState", reported)
+		check("a rejected blob keeps the blob cursor", connection.blobCursor == 0)
+end)
 
-do
-	local writes = 0
-	local connection: any = nil
-	connection = fakeConnection(
-		{
+suite("an empty blob batch advances the blob cursor", function()
+		local calls: { number } = {}
+		local connection: any = nil
+		connection = fakeConnection({
+			blobs = function(_, cursor)
+				table.insert(calls, cursor)
+				if #calls == 1 then
+					return { cursor = 7, patches = {} }
+				end
+				connection.epoch += 1
+				error("stop")
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection:_serveBlobs(1)
+		check("an empty blob batch advances the blob cursor", calls[2] == 7)
+end)
+
+suite("stop during a blob poll writes no voxels", function()
+		local writes = 0
+		local connection: any = nil
+		connection = fakeConnection(
+			{
+				blobs = function(_, _cursor)
+					connection:stop()
+					return { cursor = 4, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } }
+				end,
+			},
+			extentsTerrainWith(extentsRegion, nil, function()
+				writes += 1
+			end)
+		)
+		connection:_serveBlobs(1)
+		check("stop during a blob poll writes no voxels", writes == 0 and connection.blobCursor == 0)
+end)
+
+suite("stop during the handshake leaves the state Disconnected", function()
+		local log, onState = stateLog()
+		local infoConnection: any = nil
+		local patchPolls = 0
+		local blobPosts = 0
+		local tree, root = studioWorld(true)
+		infoConnection = Connection.new(
+			{
+				info = function(_, _placeId)
+					infoConnection:stop()
+					return { project_name = "demo" }
+				end,
+				patches = function(_, _cursor)
+					patchPolls += 1
+					return { cursor = 1, patches = {} }
+				end,
+				blobs = function(_, _cursor)
+					return { cursor = 1, patches = {} }
+				end,
+				postBlobs = function(_, _changes)
+					blobPosts += 1
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		infoConnection.running = true
+		infoConnection.session = 1
+		infoConnection:_run(1)
+		check("stop during the handshake leaves the state Disconnected", lastStateOf(log) == "Disconnected", lastStateOf(log))
+		check("stop during the handshake posts no terrain", blobPosts == 0)
+		check("stop during the handshake polls no patches", patchPolls == 0)
+end)
+
+suite("stop during a patch poll applies nothing", function()
+		local tree, root = studioWorld(true)
+		local acks = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					connection:stop()
+					return {
+						cursor = 1,
+						patches = { { kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
+					}
+				end,
+				postAck = function(_, _paths)
+					acks += 1
+				end,
+			},
+			root,
+			1,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection:_serve(1)
+		check("stop during a patch poll applies nothing", tree.findChild(root, "Late") == nil)
+		check("stop during a patch poll acks nothing", acks == 0)
+end)
+
+suite("a pending push posts nothing after stop", function()
+		local posts = 0
+		local connection = fakeConnection({
+			postChanges = function(_, _changes)
+				posts += 1
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.pendingPush["x.luau"] = Protocol.delete("x.luau")
+		connection:_schedulePush()
+		connection:stop()
+		task.wait(0.5)
+		check("a pending push posts nothing after stop", posts == 0, "posts after stop: " .. tostring(posts))
+end)
+
+suite("a failing push is not retried after stop", function()
+		local attempts = 0
+		local connection = fakeConnection({
+			postChanges = function(_, _changes)
+				attempts += 1
+				error("daemon down")
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.pendingPush["x.luau"] = Protocol.delete("x.luau")
+		connection:_schedulePush()
+		task.wait(0.5)
+		connection:stop()
+		local attemptsAtStop = attempts
+		task.wait(4.5)
+		check(
+			"a failing push is not retried after stop",
+			attempts == attemptsAtStop and attemptsAtStop >= 1,
+			string.format("attempts at stop %d, final %d", attemptsAtStop, attempts)
+		)
+end)
+
+suite("a batch queued before stop is dropped, not sent after a restart", function()
+		local pushed: { string } = {}
+		local connection = fakeConnection({
+			postChanges = function(_, changes)
+				for _, change in changes do
+					table.insert(pushed, change.path)
+				end
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+		connection:_schedulePush()
+		connection:stop()
+		connection.running = true
+		connection.session = 2
+		connection.pendingPush["new.luau"] = Protocol.delete("new.luau")
+		connection:_schedulePush()
+		task.wait(0.5)
+		check(
+			"a batch queued before stop is dropped, not sent after a restart",
+			table.find(pushed, "old.luau") == nil and table.find(pushed, "new.luau") ~= nil,
+			table.concat(pushed, ",")
+		)
+end)
+
+suite("a push scheduled after a restart is sent", function()
+		local posts = 0
+		local connection = fakeConnection({
+			postChanges = function(_, _changes)
+				posts += 1
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+		connection:_schedulePush()
+		connection:stop()
+		connection.running = true
+		connection.session = 2
+		connection.pendingPush["new.luau"] = Protocol.delete("new.luau")
+		connection:_schedulePush()
+		task.wait(0.5)
+		check("a push scheduled after a restart is sent", posts == 1, "posts: " .. tostring(posts))
+end)
+
+suite("a push timer that fires after stop sends nothing", function()
+		local posts = 0
+		local connection = fakeConnection({
+			postChanges = function(_, _changes)
+				posts += 1
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+		connection:_schedulePush(0.1)
+		connection:stop()
+		connection.pendingPush["late.luau"] = Protocol.delete("late.luau")
+		task.wait(0.4)
+		check("a push timer that fires after stop sends nothing", posts == 0, "posts: " .. tostring(posts))
+end)
+
+suite("a push that fails during stop does not block the next push after restart", function()
+		local attempts = 0
+		local posts = 0
+		local connection: any = nil
+		connection = fakeConnection({
+			postChanges = function(_, _changes)
+				attempts += 1
+				if attempts == 1 then
+					connection:stop()
+					error("daemon down")
+				end
+				posts += 1
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+		connection:_schedulePush(0.1)
+		task.wait(0.3)
+		connection.running = true
+		connection.session = 2
+		connection.pendingPush["new.luau"] = Protocol.delete("new.luau")
+		connection:_schedulePush()
+		task.wait(0.5)
+		check(
+			"a push that fails during stop does not block the next push after restart",
+			posts == 1,
+			string.format("attempts %d, posts %d", attempts, posts)
+		)
+end)
+
+suite("a terrain read that finishes after stop posts nothing", function()
+		local posts = 0
+		local connection: any = nil
+		connection = fakeConnection({
+			postBlobs = function(_, _changes)
+				posts += 1
+			end,
+		}, extentsTerrainWith(extentsRegion, function()
+			connection:stop()
+		end))
+		connection:_pushTerrain(1)
+		check("a terrain read that finishes after stop posts nothing", posts == 0, "posts: " .. tostring(posts))
+end)
+
+suite("a stop during apply leaves the patch cursor where it was", function()
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		local fakeApply = {
+			create = function()
+				return {
+					apply = function()
+						connection:stop()
+					end,
+				}
+			end,
+		}
+		local harnessDeps: any = deps(extentsTerrainWith(extentsRegion), tree)
+		harnessDeps.apply = fakeApply
+		connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					return {
+						cursor = 5,
+						patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
+					}
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			1,
+			noop,
+			harnessDeps
+		)
+		connection.running = true
+		connection.session = 1
+		connection.backoff = 8
+		connection:_serve(1)
+		check("a stop during apply leaves the patch cursor where it was", connection.cursor == 0, "cursor " .. connection.cursor)
+		check("a stop during apply leaves the reconnect backoff where it was", connection.backoff == 8, "backoff " .. connection.backoff)
+end)
+
+suite("a stop during a blob poll with no patches keeps the blob cursor", function()
+		local connection: any = nil
+		connection = fakeConnection({
+			blobs = function(_, _cursor)
+				connection:stop()
+				return { cursor = 4, patches = {} }
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection:_serveBlobs(1)
+		check("a stop during a blob poll with no patches keeps the blob cursor", connection.blobCursor == 0, "cursor " .. connection.blobCursor)
+end)
+
+suite("a stop during a blob write applies no later blob", function()
+		local writes = 0
+		local connection: any = nil
+		local blob = terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)
+		connection = fakeConnection({
+			blobs = function(_, _cursor)
+				return { cursor = 4, patches = { blobPatchOf(blob), blobPatchOf(blob) } }
+			end,
+		}, extentsTerrainWith(extentsRegion, nil, function()
+			writes += 1
+			connection:stop()
+		end))
+		connection:_serveBlobs(1)
+		check("a stop during a blob write applies no later blob", writes == 1, "writes " .. tostring(writes))
+end)
+
+suite("a connect bumps the epoch before polling", function()
+		local tree, root = studioWorld(true)
+		local epochAtPoll = -1
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				info = function(_, _placeId)
+					return { project_name = "demo" }
+				end,
+				patches = function(_, _cursor)
+					epochAtPoll = connection.epoch
+					connection:stop()
+					return { cursor = 0, patches = {} }
+				end,
+				blobs = function(_, _cursor)
+					error("no blob poll expected")
+				end,
+				postBlobs = function(_, _blobs) end,
+			},
+			root,
+			1,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection:_run(1)
+		check("a connect bumps the epoch before polling", epochAtPoll == 2, "epoch " .. tostring(epochAtPoll))
+end)
+
+suite("a stop during the backoff wait leaves the backoff unchanged", function()
+		local connection: any = nil
+		connection = fakeConnection({
+			info = function(_, _placeId)
+				error("daemon down")
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.backoff = 0.05
+		task.spawn(function()
+			task.wait(0.02)
+			connection:stop()
+		end)
+		connection:_run(1)
+		check("a stop during the backoff wait leaves the backoff unchanged", connection.backoff == 0.05, "backoff " .. tostring(connection.backoff))
+end)
+
+suite("a rejected text patch sets a Warning naming the path and reason", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		lockedSource(tree, "Bad", 1000)
+		local acks: { { string } } = {}
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return {
+							cursor = 1,
+							patches = {
+								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+							},
+						}
+					end
+					error("stop")
+				end,
+				postAck = function(_, paths)
+					table.insert(acks, paths)
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		pcall(connection._serve, connection, 1)
+		local last = log[#log]
+		check(
+			"a rejected text patch sets a Warning naming the path and reason",
+			last ~= nil
+				and last.state == "Warning"
+				and last.detail ~= nil
+				and string.find(last.detail, "patch rejected: Bad.luau: ", 1, true) == 1
+				and string.find(last.detail, "Source is locked", 1, true) ~= nil,
+			if last ~= nil then tostring(last.detail) else "no state reported"
+		)
+		check("a rejected text patch is left out of the ack", #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau")
+end)
+
+suite("a rejected patch that later applies ends in Connected", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		lockedSource(tree, "Bad", 1)
+		local bad = { kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" }
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return { cursor = 1, patches = { bad } }
+					end
+					if polls == 2 then
+						return { cursor = 2, patches = { bad } }
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		pcall(connection._serve, connection, 1)
+		check("a rejected patch that later applies ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
+
+suite("a conflict plus a success in one batch ends in Conflict", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		lockedSource(tree, "Bad", 1)
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return {
+							cursor = 1,
+							patches = {
+								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" },
+								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+							},
+						}
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		pcall(connection._serve, connection, 1)
+		check(
+			"a conflict plus a success in one batch ends in Conflict",
+			lastStateOf(log) == "Conflict" and log[#log].detail == "C.luau",
+			lastStateOf(log)
+		)
+end)
+
+suite("a later success on the conflicted path ends the Conflict", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return {
+							cursor = 1,
+							patches = { { kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" } },
+						}
+					end
+					if polls == 2 then
+						return {
+							cursor = 2,
+							patches = { { kind = "Upsert", direction = "ToStudio", path = "C.luau", class = "ModuleScript", content = "C" } },
+						}
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		pcall(connection._serve, connection, 1)
+		check(
+			"a later success on the conflicted path ends the Conflict",
+			lastStateOf(log) == "Connected",
+			lastStateOf(log)
+		)
+end)
+
+suite("a Conflict is reported while a permanent Warning is set", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+		connection:_setWarning("terrain", "terrain too large for live push, use naht build")
+		connection:_setConflict("C.luau")
+		check(
+			"a Conflict is reported while a permanent Warning is set",
+			lastStateOf(log) == "Conflict" and log[#log].detail == "C.luau",
+			lastStateOf(log)
+		)
+end)
+
+suite("a blob that later applies ends the Warning in Connected", function()
+		local log, onState = stateLog()
+		local calls = 0
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				blobs = function(_, _cursor)
+					calls += 1
+					if calls == 1 then
+						return { cursor = 1, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
+					end
+					if calls == 2 then
+						return { cursor = 2, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } }
+					end
+					connection.epoch += 1
+					error("superseded")
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		check("a blob that later applies ends the Warning in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+		check("a blob that later applies resets the blob backoff", connection.blobBackoff == 2, "blob backoff " .. tostring(connection.blobBackoff))
+end)
+
+suite("the newest terrain snapshot arrives last across an epoch change", function()
+		local tree, root = studioWorld(true)
+		local arrivals = {}
+		local calls = 0
+		local client = {
+			postBlobs = function(_, _blobs)
+				calls += 1
+				local call = calls
+				if call == 1 then
+					task.wait(0.05)
+				end
+				table.insert(arrivals, call)
+			end,
+			postAck = function() end,
+		}
+		local connection = Connection.new(client, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.epoch = 1
+		task.spawn(function()
+			connection:_pushTerrain(1)
+		end)
+		task.wait(0.01)
+		connection.epoch = 2
+		task.spawn(function()
+			connection:_pushTerrain(2)
+		end)
+		task.wait(0.15)
+		connection.running = false
+		check(
+			"the newest terrain snapshot arrives last across an epoch change",
+			#arrivals == 2 and arrivals[2] == 2,
+			table.concat(arrivals, ",")
+		)
+end)
+
+suite("a batch that keeps failing to decode is reported as still retrying", function()
+		local log, onState = stateLog()
+		local calls = 0
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				blobs = function(_, _cursor)
+					calls += 1
+					if calls <= 5 then
+						error({ undecodable = true, message = "naht: undecodable blob batch: bad header" })
+					end
+					connection.epoch += 1
+					error("superseded")
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		local last = log[#log]
+		check(
+			"a batch that keeps failing to decode is reported as still retrying",
+			last ~= nil
+				and last.state == "Warning"
+				and string.find(last.detail or "", "terrain blob batch at cursor 0 keeps failing to decode, still retrying", 1, true) ~= nil,
+			last and (last.state .. ": " .. (last.detail or "")) or "no state reported"
+		)
+		check(
+			"the stalled wording no longer tells the user to restart the daemon",
+			last ~= nil and string.find(last.detail or "", "restart", 1, true) == nil,
+			last and (last.detail or "") or "no state reported"
+		)
+end)
+
+suite("a plain error that only mentions an undecodable batch is not counted as a decode failure", function()
+		local log, onState = stateLog()
+		local calls = 0
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				blobs = function(_, _cursor)
+					calls += 1
+					if calls <= 5 then
+						error("naht: undecodable blob batch: bad header")
+					end
+					connection.epoch += 1
+					error("superseded")
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		local last = log[#log]
+		check(
+			"a plain error that only mentions an undecodable batch is not counted as a decode failure",
+			last ~= nil
+				and last.state == "Warning"
+				and string.find(last.detail or "", "terrain blob poll failed: ", 1, true) ~= nil
+				and string.find(last.detail or "", "stalled", 1, true) == nil,
+			last and (last.state .. ": " .. (last.detail or "")) or "no state reported"
+		)
+end)
+
+suite("a later successful poll clears the stalled blob warning", function()
+		local log, onState = stateLog()
+		local calls = 0
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				blobs = function(_, _cursor)
+					calls += 1
+					if calls <= 5 then
+						error({ undecodable = true, message = "naht: undecodable blob batch: bad header" })
+					end
+					if calls == 6 then
+						return { cursor = 1, patches = {} }
+					end
+					connection.epoch += 1
+					error("superseded")
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		check("a later successful poll clears the stalled blob warning", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
+
+suite("a 503 on changes keeps the batch and retries it", function()
+		local log, onState = stateLog()
+		local attempts = 0
+		local seenDelays: { number } = {}
+		local keptEveryTime = true
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					attempts += 1
+					table.insert(seenDelays, connection.pushBackoff)
+					local sawOld = false
+					for _, change in changes do
+						if change.path == "old.luau" then
+							sawOld = true
+						end
+					end
+					if not sawOld then
+						keptEveryTime = false
+					end
+					if attempts <= 3 then
+						error("naht: /changes returned 503")
+					end
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+		connection:_schedulePush()
+		task.wait(0.6)
+		check(
+			"a 503 on changes keeps the batch and retries it",
+			attempts == 4 and keptEveryTime,
+			string.format("attempts %d, kept %s", attempts, tostring(keptEveryTime))
+		)
+		check(
+			"each retry after a 503 on changes waits twice as long",
+			seenDelays[1] == 0.01 and seenDelays[2] == 0.02 and seenDelays[3] == 0.04 and seenDelays[4] == 0.08,
+			table.concat(seenDelays, ",")
+		)
+		check("a successful push resets the push backoff", connection.pushBackoff == 2, tostring(connection.pushBackoff))
+		local warned: string? = nil
+		for _, entry in log do
+			if entry.state == "Warning" and warned == nil then
+				warned = entry.detail
+			end
+		end
+		check(
+			"a 503 on changes sets a Warning naming the reason",
+			warned ~= nil
+				and string.find(warned, "push failed: ", 1, true) ~= nil
+				and string.find(warned, "naht: /changes returned 503", 1, true) ~= nil,
+			tostring(warned)
+		)
+		check("a successful push after a 503 ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
+
+suite("a 503 on ack keeps the applied paths and retries them", function()
+		local log, onState = stateLog()
+		local acks: { { string } } = {}
+		local ackAttempts = 0
+		local patchCalls = 0
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					patchCalls += 1
+					if patchCalls == 1 then
+						return {
+							cursor = 1,
+							patches = {
+								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+							},
+						}
+					end
+					if patchCalls == 2 then
+						return { cursor = 1, patches = {} }
+					end
+					error("stop")
+				end,
+				postAck = function(_, paths)
+					ackAttempts += 1
+					if ackAttempts == 1 then
+						error("naht: /ack returned 503")
+					end
+					table.insert(acks, paths)
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.ackBackoff = 0.01
+		pcall(connection._serve, connection, 1)
+		check(
+			"a 503 on ack keeps the applied paths and retries them",
+			ackAttempts == 2 and #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau",
+			string.format("attempts %d, acks %d", ackAttempts, #acks)
+		)
+		local warned = false
+		for _, entry in log do
+			local detail = entry.detail or ""
+			if
+				entry.state == "Warning"
+				and string.find(detail, "ack failed: ", 1, true) ~= nil
+				and string.find(detail, "naht: /ack returned 503", 1, true) ~= nil
+			then
+				warned = true
+			end
+		end
+		check("a 503 on ack sets a Warning naming the reason", warned, lastStateOf(log))
+		check("a successful ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
+
+suite("a connect with a frozen path reports it as a Conflict and never Connected", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				info = function(_, _placeId)
+					return { protocol_version = 1, project_name = "demo", conflicted = { "Frozen.luau" } }
+				end,
+				patches = function(_, _cursor)
+					connection:stop()
+					return { cursor = 0, patches = {} }
+				end,
+				blobs = function(_, _cursor)
+					task.wait()
+					return { cursor = 0, patches = {} }
+				end,
+				postBlobs = function() end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection:_run(1)
+		local conflictSeen = false
+		local connectedSeen = false
+		for _, entry in log do
+			if entry.state == "Conflict" and entry.detail == "Frozen.luau" then
+				conflictSeen = true
+			end
+			if entry.state == "Connected" then
+				connectedSeen = true
+			end
+		end
+		check(
+			"a connect with a frozen path reports it as a Conflict and never Connected",
+			conflictSeen and not connectedSeen,
+			"states: " .. table.concat((function()
+				local names = {}
+				for _, entry in log do
+					table.insert(names, entry.state .. "(" .. tostring(entry.detail) .. ")")
+				end
+				return names
+			end)(), " ")
+		)
+end)
+
+suite("a blob Conflict is reported", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.epoch = 1
+		connection:_applyBlobBatch(1, { cursor = 1, patches = { { kind = "Conflict", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain" } } })
+		check("a blob Conflict is reported", lastStateOf(log) == "Conflict", lastStateOf(log))
+		connection:_applyBlobBatch(1, { cursor = 2, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } })
+		check("a later blob success on the same path ends the blob Conflict", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
+
+suite("a terrain push under the cap clears the too-large Warning", function()
+		local log, onState = stateLog()
+		local region = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 1024, Y = 256, Z = 1024 } }
+		local posts = 0
+		local tree, root = studioWorld(true)
+		local connection = Connection.new(
+			{
+				postBlobs = function(_, _changes)
+					posts += 1
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(region), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection:_pushTerrain(1)
+		region.Size = { X = 8, Y = 8, Z = 8 }
+		connection:_pushTerrain(1)
+		check("a terrain push under the cap clears the too-large Warning", lastStateOf(log) == "Connected", lastStateOf(log))
+		check("a terrain push under the cap posts its blob", posts == 1, "posts " .. tostring(posts))
+end)
+
+suite("a stop between patch poll and apply writes nothing", function()
+		local tree, root = studioWorld(true)
+		local acks = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					connection:stop()
+					return {
+						cursor = 3,
+						patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
+					}
+				end,
+				postAck = function(_, _paths)
+					acks += 1
+				end,
+			},
+			root,
+			1,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection:_serve(1)
+		check("a stop between patch poll and apply writes nothing", countNamed(root, "A") == 0, "A count " .. countNamed(root, "A"))
+		check("a stop between patch poll and apply acks nothing", acks == 0, "acks " .. tostring(acks))
+end)
+
+suite("a stop between blob poll and apply writes no blob", function()
+		local writes = 0
+		local connection: any = nil
+		connection = fakeConnection({
 			blobs = function(_, _cursor)
 				connection:stop()
 				return { cursor = 4, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } }
 			end,
-		},
-		extentsTerrainWith(extentsRegion, nil, function()
+		}, extentsTerrainWith(extentsRegion, nil, function()
 			writes += 1
-		end)
-	)
-	connection:_serveBlobs(1)
-	check("stop during a blob poll writes no voxels", writes == 0 and connection.blobCursor == 0)
-end
-
-do
-	local log, onState = stateLog()
-	local infoConnection: any = nil
-	local patchPolls = 0
-	local blobPosts = 0
-	local tree, root = studioWorld(true)
-	infoConnection = Connection.new(
-		{
-			info = function(_, _placeId)
-				infoConnection:stop()
-				return { project_name = "demo" }
-			end,
-			patches = function(_, _cursor)
-				patchPolls += 1
-				return { cursor = 1, patches = {} }
-			end,
-			blobs = function(_, _cursor)
-				return { cursor = 1, patches = {} }
-			end,
-			postBlobs = function(_, _changes)
-				blobPosts += 1
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	infoConnection.running = true
-	infoConnection.session = 1
-	infoConnection:_run(1)
-	check("stop during the handshake leaves the state Disconnected", lastStateOf(log) == "Disconnected", lastStateOf(log))
-	check("stop during the handshake posts no terrain", blobPosts == 0)
-	check("stop during the handshake polls no patches", patchPolls == 0)
-end
-
-do
-	local tree, root = studioWorld(true)
-	local acks = 0
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				connection:stop()
-				return {
-					cursor = 1,
-					patches = { { kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
-				}
-			end,
-			postAck = function(_, _paths)
-				acks += 1
-			end,
-		},
-		root,
-		1,
-		noop,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection:_serve(1)
-	check("stop during a patch poll applies nothing", tree.findChild(root, "Late") == nil)
-	check("stop during a patch poll acks nothing", acks == 0)
-end
-
-do
-	local posts = 0
-	local connection = fakeConnection({
-		postChanges = function(_, _changes)
-			posts += 1
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.pendingPush["x.luau"] = Protocol.delete("x.luau")
-	connection:_schedulePush()
-	connection:stop()
-	task.wait(0.5)
-	check("a pending push posts nothing after stop", posts == 0, "posts after stop: " .. tostring(posts))
-end
-
-do
-	local attempts = 0
-	local connection = fakeConnection({
-		postChanges = function(_, _changes)
-			attempts += 1
-			error("daemon down")
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.pendingPush["x.luau"] = Protocol.delete("x.luau")
-	connection:_schedulePush()
-	task.wait(0.5)
-	connection:stop()
-	local attemptsAtStop = attempts
-	task.wait(4.5)
-	check(
-		"a failing push is not retried after stop",
-		attempts == attemptsAtStop and attemptsAtStop >= 1,
-		string.format("attempts at stop %d, final %d", attemptsAtStop, attempts)
-	)
-end
-
-do
-	local pushed: { string } = {}
-	local connection = fakeConnection({
-		postChanges = function(_, changes)
-			for _, change in changes do
-				table.insert(pushed, change.path)
-			end
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
-	connection:_schedulePush()
-	connection:stop()
-	connection.running = true
-	connection.session = 2
-	connection.pendingPush["new.luau"] = Protocol.delete("new.luau")
-	connection:_schedulePush()
-	task.wait(0.5)
-	check(
-		"a batch queued before stop is dropped, not sent after a restart",
-		table.find(pushed, "old.luau") == nil and table.find(pushed, "new.luau") ~= nil,
-		table.concat(pushed, ",")
-	)
-end
-
-do
-	local posts = 0
-	local connection = fakeConnection({
-		postChanges = function(_, _changes)
-			posts += 1
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
-	connection:_schedulePush()
-	connection:stop()
-	connection.running = true
-	connection.session = 2
-	connection.pendingPush["new.luau"] = Protocol.delete("new.luau")
-	connection:_schedulePush()
-	task.wait(0.5)
-	check("a push scheduled after a restart is sent", posts == 1, "posts: " .. tostring(posts))
-end
-
-do
-	local posts = 0
-	local connection = fakeConnection({
-		postChanges = function(_, _changes)
-			posts += 1
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
-	connection:_schedulePush(0.1)
-	connection:stop()
-	connection.pendingPush["late.luau"] = Protocol.delete("late.luau")
-	task.wait(0.4)
-	check("a push timer that fires after stop sends nothing", posts == 0, "posts: " .. tostring(posts))
-end
-
-do
-	local attempts = 0
-	local posts = 0
-	local connection: any = nil
-	connection = fakeConnection({
-		postChanges = function(_, _changes)
-			attempts += 1
-			if attempts == 1 then
-				connection:stop()
-				error("daemon down")
-			end
-			posts += 1
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
-	connection:_schedulePush(0.1)
-	task.wait(0.3)
-	connection.running = true
-	connection.session = 2
-	connection.pendingPush["new.luau"] = Protocol.delete("new.luau")
-	connection:_schedulePush()
-	task.wait(0.5)
-	check(
-		"a push that fails during stop does not block the next push after restart",
-		posts == 1,
-		string.format("attempts %d, posts %d", attempts, posts)
-	)
-end
-
-do
-	local posts = 0
-	local connection: any = nil
-	connection = fakeConnection({
-		postBlobs = function(_, _changes)
-			posts += 1
-		end,
-	}, extentsTerrainWith(extentsRegion, function()
-		connection:stop()
-	end))
-	connection:_pushTerrain(1)
-	check("a terrain read that finishes after stop posts nothing", posts == 0, "posts: " .. tostring(posts))
-end
-
-do
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	local fakeApply = {
-		create = function()
-			return {
-				apply = function()
-					connection:stop()
-				end,
-			}
-		end,
-	}
-	local harnessDeps: any = deps(extentsTerrainWith(extentsRegion), tree)
-	harnessDeps.apply = fakeApply
-	connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				return {
-					cursor = 5,
-					patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
-				}
-			end,
-			postAck = function(_, _paths) end,
-		},
-		root,
-		1,
-		noop,
-		harnessDeps
-	)
-	connection.running = true
-	connection.session = 1
-	connection.backoff = 8
-	connection:_serve(1)
-	check("a stop during apply leaves the patch cursor where it was", connection.cursor == 0, "cursor " .. connection.cursor)
-	check("a stop during apply leaves the reconnect backoff where it was", connection.backoff == 8, "backoff " .. connection.backoff)
-end
-
-do
-	local connection: any = nil
-	connection = fakeConnection({
-		blobs = function(_, _cursor)
-			connection:stop()
-			return { cursor = 4, patches = {} }
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection:_serveBlobs(1)
-	check("a stop during a blob poll with no patches keeps the blob cursor", connection.blobCursor == 0, "cursor " .. connection.blobCursor)
-end
-
-do
-	local writes = 0
-	local connection: any = nil
-	local blob = terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)
-	connection = fakeConnection({
-		blobs = function(_, _cursor)
-			return { cursor = 4, patches = { blobPatchOf(blob), blobPatchOf(blob) } }
-		end,
-	}, extentsTerrainWith(extentsRegion, nil, function()
-		writes += 1
-		connection:stop()
-	end))
-	connection:_serveBlobs(1)
-	check("a stop during a blob write applies no later blob", writes == 1, "writes " .. tostring(writes))
-end
-
-do
-	local tree, root = studioWorld(true)
-	local epochAtPoll = -1
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			info = function(_, _placeId)
-				return { project_name = "demo" }
-			end,
-			patches = function(_, _cursor)
-				epochAtPoll = connection.epoch
-				connection:stop()
-				return { cursor = 0, patches = {} }
-			end,
-			blobs = function(_, _cursor)
-				error("no blob poll expected")
-			end,
-			postBlobs = function(_, _blobs) end,
-		},
-		root,
-		1,
-		noop,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection:_run(1)
-	check("a connect bumps the epoch before polling", epochAtPoll == 2, "epoch " .. tostring(epochAtPoll))
-end
-
-do
-	local connection: any = nil
-	connection = fakeConnection({
-		info = function(_, _placeId)
-			error("daemon down")
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.backoff = 0.05
-	task.spawn(function()
-		task.wait(0.02)
-		connection:stop()
-	end)
-	connection:_run(1)
-	check("a stop during the backoff wait leaves the backoff unchanged", connection.backoff == 0.05, "backoff " .. tostring(connection.backoff))
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	lockedSource(tree, "Bad", 1000)
-	local acks: { { string } } = {}
-	local polls = 0
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				polls += 1
-				if polls == 1 then
-					return {
-						cursor = 1,
-						patches = {
-							{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
-							{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
-						},
-					}
-				end
-				error("stop")
-			end,
-			postAck = function(_, paths)
-				table.insert(acks, paths)
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	pcall(connection._serve, connection, 1)
-	local last = log[#log]
-	check(
-		"a rejected text patch sets a Warning naming the path and reason",
-		last ~= nil
-			and last.state == "Warning"
-			and last.detail ~= nil
-			and string.find(last.detail, "patch rejected: Bad.luau: ", 1, true) == 1
-			and string.find(last.detail, "Source is locked", 1, true) ~= nil,
-		if last ~= nil then tostring(last.detail) else "no state reported"
-	)
-	check("a rejected text patch is left out of the ack", #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau")
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	lockedSource(tree, "Bad", 1)
-	local bad = { kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" }
-	local polls = 0
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				polls += 1
-				if polls == 1 then
-					return { cursor = 1, patches = { bad } }
-				end
-				if polls == 2 then
-					return { cursor = 2, patches = { bad } }
-				end
-				error("stop")
-			end,
-			postAck = function(_, _paths) end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	pcall(connection._serve, connection, 1)
-	check("a rejected patch that later applies ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	lockedSource(tree, "Bad", 1)
-	local polls = 0
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				polls += 1
-				if polls == 1 then
-					return {
-						cursor = 1,
-						patches = {
-							{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
-							{ kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" },
-							{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
-						},
-					}
-				end
-				error("stop")
-			end,
-			postAck = function(_, _paths) end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	pcall(connection._serve, connection, 1)
-	check(
-		"a conflict plus a success in one batch ends in Conflict",
-		lastStateOf(log) == "Conflict" and log[#log].detail == "C.luau",
-		lastStateOf(log)
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local polls = 0
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				polls += 1
-				if polls == 1 then
-					return {
-						cursor = 1,
-						patches = { { kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" } },
-					}
-				end
-				if polls == 2 then
-					return {
-						cursor = 2,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "C.luau", class = "ModuleScript", content = "C" } },
-					}
-				end
-				error("stop")
-			end,
-			postAck = function(_, _paths) end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	pcall(connection._serve, connection, 1)
-	check(
-		"a later success on the conflicted path ends the Conflict",
-		lastStateOf(log) == "Connected",
-		lastStateOf(log)
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
-	connection:_setWarning("terrain", "terrain too large for live push, use naht build")
-	connection:_setConflict("C.luau")
-	check(
-		"a Conflict is reported while a permanent Warning is set",
-		lastStateOf(log) == "Conflict" and log[#log].detail == "C.luau",
-		lastStateOf(log)
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local calls = 0
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			blobs = function(_, _cursor)
-				calls += 1
-				if calls == 1 then
-					return { cursor = 1, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
-				end
-				if calls == 2 then
-					return { cursor = 2, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } }
-				end
-				connection.epoch += 1
-				error("superseded")
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	check("a blob that later applies ends the Warning in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
-	check("a blob that later applies resets the blob backoff", connection.blobBackoff == 2, "blob backoff " .. tostring(connection.blobBackoff))
-end
-
-do
-	local tree, root = studioWorld(true)
-	local arrivals = {}
-	local calls = 0
-	local client = {
-		postBlobs = function(_, _blobs)
-			calls += 1
-			local call = calls
-			if call == 1 then
-				task.wait(0.05)
-			end
-			table.insert(arrivals, call)
-		end,
-		postAck = function() end,
-	}
-	local connection = Connection.new(client, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
-	connection.running = true
-	connection.epoch = 1
-	task.spawn(function()
-		connection:_pushTerrain(1)
-	end)
-	task.wait(0.01)
-	connection.epoch = 2
-	task.spawn(function()
-		connection:_pushTerrain(2)
-	end)
-	task.wait(0.15)
-	connection.running = false
-	check(
-		"the newest terrain snapshot arrives last across an epoch change",
-		#arrivals == 2 and arrivals[2] == 2,
-		table.concat(arrivals, ",")
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local calls = 0
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			blobs = function(_, _cursor)
-				calls += 1
-				if calls <= 5 then
-					error({ undecodable = true, message = "naht: undecodable blob batch: bad header" })
-				end
-				connection.epoch += 1
-				error("superseded")
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	local last = log[#log]
-	check(
-		"a batch that keeps failing to decode is reported as still retrying",
-		last ~= nil
-			and last.state == "Warning"
-			and string.find(last.detail or "", "terrain blob batch at cursor 0 keeps failing to decode, still retrying", 1, true) ~= nil,
-		last and (last.state .. ": " .. (last.detail or "")) or "no state reported"
-	)
-	check(
-		"the stalled wording no longer tells the user to restart the daemon",
-		last ~= nil and string.find(last.detail or "", "restart", 1, true) == nil,
-		last and (last.detail or "") or "no state reported"
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local calls = 0
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			blobs = function(_, _cursor)
-				calls += 1
-				if calls <= 5 then
-					error("naht: undecodable blob batch: bad header")
-				end
-				connection.epoch += 1
-				error("superseded")
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	local last = log[#log]
-	check(
-		"a plain error that only mentions an undecodable batch is not counted as a decode failure",
-		last ~= nil
-			and last.state == "Warning"
-			and string.find(last.detail or "", "terrain blob poll failed: ", 1, true) ~= nil
-			and string.find(last.detail or "", "stalled", 1, true) == nil,
-		last and (last.state .. ": " .. (last.detail or "")) or "no state reported"
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local calls = 0
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			blobs = function(_, _cursor)
-				calls += 1
-				if calls <= 5 then
-					error({ undecodable = true, message = "naht: undecodable blob batch: bad header" })
-				end
-				if calls == 6 then
-					return { cursor = 1, patches = {} }
-				end
-				connection.epoch += 1
-				error("superseded")
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	check("a later successful poll clears the stalled blob warning", lastStateOf(log) == "Connected", lastStateOf(log))
-end
-
-do
-	local log, onState = stateLog()
-	local attempts = 0
-	local seenDelays: { number } = {}
-	local keptEveryTime = true
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				attempts += 1
-				table.insert(seenDelays, connection.pushBackoff)
-				local sawOld = false
-				for _, change in changes do
-					if change.path == "old.luau" then
-						sawOld = true
-					end
-				end
-				if not sawOld then
-					keptEveryTime = false
-				end
-				if attempts <= 3 then
-					error("naht: /changes returned 503")
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
-	connection:_schedulePush()
-	task.wait(0.6)
-	check(
-		"a 503 on changes keeps the batch and retries it",
-		attempts == 4 and keptEveryTime,
-		string.format("attempts %d, kept %s", attempts, tostring(keptEveryTime))
-	)
-	check(
-		"each retry after a 503 on changes waits twice as long",
-		seenDelays[1] == 0.01 and seenDelays[2] == 0.02 and seenDelays[3] == 0.04 and seenDelays[4] == 0.08,
-		table.concat(seenDelays, ",")
-	)
-	check("a successful push resets the push backoff", connection.pushBackoff == 2, tostring(connection.pushBackoff))
-	local warned: string? = nil
-	for _, entry in log do
-		if entry.state == "Warning" and warned == nil then
-			warned = entry.detail
-		end
-	end
-	check(
-		"a 503 on changes sets a Warning naming the reason",
-		warned ~= nil
-			and string.find(warned, "push failed: ", 1, true) ~= nil
-			and string.find(warned, "naht: /changes returned 503", 1, true) ~= nil,
-		tostring(warned)
-	)
-	check("a successful push after a 503 ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
-end
-
-do
-	local log, onState = stateLog()
-	local acks: { { string } } = {}
-	local ackAttempts = 0
-	local patchCalls = 0
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				patchCalls += 1
-				if patchCalls == 1 then
-					return {
-						cursor = 1,
-						patches = {
-							{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
-						},
-					}
-				end
-				if patchCalls == 2 then
-					return { cursor = 1, patches = {} }
-				end
-				error("stop")
-			end,
-			postAck = function(_, paths)
-				ackAttempts += 1
-				if ackAttempts == 1 then
-					error("naht: /ack returned 503")
-				end
-				table.insert(acks, paths)
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.ackBackoff = 0.01
-	pcall(connection._serve, connection, 1)
-	check(
-		"a 503 on ack keeps the applied paths and retries them",
-		ackAttempts == 2 and #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau",
-		string.format("attempts %d, acks %d", ackAttempts, #acks)
-	)
-	local warned = false
-	for _, entry in log do
-		local detail = entry.detail or ""
-		if
-			entry.state == "Warning"
-			and string.find(detail, "ack failed: ", 1, true) ~= nil
-			and string.find(detail, "naht: /ack returned 503", 1, true) ~= nil
-		then
-			warned = true
-		end
-	end
-	check("a 503 on ack sets a Warning naming the reason", warned, lastStateOf(log))
-	check("a successful ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			info = function(_, _placeId)
-				return { protocol_version = 1, project_name = "demo", conflicted = { "Frozen.luau" } }
-			end,
-			patches = function(_, _cursor)
-				connection:stop()
-				return { cursor = 0, patches = {} }
-			end,
-			blobs = function(_, _cursor)
-				task.wait()
-				return { cursor = 0, patches = {} }
-			end,
-			postBlobs = function() end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection:_run(1)
-	local conflictSeen = false
-	local connectedSeen = false
-	for _, entry in log do
-		if entry.state == "Conflict" and entry.detail == "Frozen.luau" then
-			conflictSeen = true
-		end
-		if entry.state == "Connected" then
-			connectedSeen = true
-		end
-	end
-	check(
-		"a connect with a frozen path reports it as a Conflict and never Connected",
-		conflictSeen and not connectedSeen,
-		"states: " .. table.concat((function()
-			local names = {}
-			for _, entry in log do
-				table.insert(names, entry.state .. "(" .. tostring(entry.detail) .. ")")
-			end
-			return names
-		end)(), " ")
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
-	connection.running = true
-	connection.epoch = 1
-	connection:_applyBlobBatch(1, { cursor = 1, patches = { { kind = "Conflict", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain" } } })
-	check("a blob Conflict is reported", lastStateOf(log) == "Conflict", lastStateOf(log))
-	connection:_applyBlobBatch(1, { cursor = 2, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } })
-	check("a later blob success on the same path ends the blob Conflict", lastStateOf(log) == "Connected", lastStateOf(log))
-end
-
-do
-	local log, onState = stateLog()
-	local region = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 1024, Y = 256, Z = 1024 } }
-	local posts = 0
-	local tree, root = studioWorld(true)
-	local connection = Connection.new(
-		{
-			postBlobs = function(_, _changes)
-				posts += 1
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(region), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection:_pushTerrain(1)
-	region.Size = { X = 8, Y = 8, Z = 8 }
-	connection:_pushTerrain(1)
-	check("a terrain push under the cap clears the too-large Warning", lastStateOf(log) == "Connected", lastStateOf(log))
-	check("a terrain push under the cap posts its blob", posts == 1, "posts " .. tostring(posts))
-end
-
-do
-	local tree, root = studioWorld(true)
-	local acks = 0
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				connection:stop()
-				return {
-					cursor = 3,
-					patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
-				}
-			end,
-			postAck = function(_, _paths)
-				acks += 1
-			end,
-		},
-		root,
-		1,
-		noop,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection:_serve(1)
-	check("a stop between patch poll and apply writes nothing", countNamed(root, "A") == 0, "A count " .. countNamed(root, "A"))
-	check("a stop between patch poll and apply acks nothing", acks == 0, "acks " .. tostring(acks))
-end
-
-do
-	local writes = 0
-	local connection: any = nil
-	connection = fakeConnection({
-		blobs = function(_, _cursor)
-			connection:stop()
-			return { cursor = 4, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } }
-		end,
-	}, extentsTerrainWith(extentsRegion, nil, function()
-		writes += 1
-	end))
-	connection:_serveBlobs(1)
-	check("a stop between blob poll and apply writes no blob", writes == 0, "writes " .. tostring(writes))
-	check("a stop between blob poll and apply keeps the blob cursor", connection.blobCursor == 0, "cursor " .. tostring(connection.blobCursor))
-end
+		end))
+		connection:_serveBlobs(1)
+		check("a stop between blob poll and apply writes no blob", writes == 0, "writes " .. tostring(writes))
+		check("a stop between blob poll and apply keeps the blob cursor", connection.blobCursor == 0, "cursor " .. tostring(connection.blobCursor))
+end)
 
 local function warningsOf(log: { { state: string, detail: string? } }): { string }
 	local found = {}
@@ -1703,246 +1741,246 @@ local function terrainConnection(client: any, onState: (string, string?) -> (), 
 	return connection
 end
 
-do
-	local attempts = 0
-	local accepted: { any } = {}
-	local connection = fakeConnection({
-		postBlobs = function(_, changes)
-			attempts += 1
-			if attempts == 1 then
+suite("a failed first terrain post is retried", function()
+		local attempts = 0
+		local accepted: { any } = {}
+		local connection = fakeConnection({
+			postBlobs = function(_, changes)
+				attempts += 1
+				if attempts == 1 then
+					error("daemon down")
+				end
+				table.insert(accepted, changes)
+			end,
+		}, extentsTerrainWith(extentsRegion))
+		connection.terrainBackoff = 0.01
+		connection:_pushTerrain(1)
+		check("a failed first terrain post is retried", attempts == 2, "attempts " .. tostring(attempts))
+		check("the retried terrain snapshot is accepted once", #accepted == 1, "accepted " .. tostring(#accepted))
+		check(
+			"the accepted snapshot is the terrain read from the region",
+			#accepted == 1 and accepted[1][1].content == Terrain.read(extentsTerrainWith(extentsRegion), extentsRegion, 4)
+		)
+		check("the terrain backoff returns to its start after acceptance", connection.terrainBackoff == 1, tostring(connection.terrainBackoff))
+end)
+
+suite("a stop during the terrain retry wait posts no further attempt", function()
+		local attempts = 0
+		local log, onState = stateLog()
+		local connection: any = nil
+		connection = terrainConnection({
+			postBlobs = function(_, _changes)
+				attempts += 1
 				error("daemon down")
-			end
-			table.insert(accepted, changes)
-		end,
-	}, extentsTerrainWith(extentsRegion))
-	connection.terrainBackoff = 0.01
-	connection:_pushTerrain(1)
-	check("a failed first terrain post is retried", attempts == 2, "attempts " .. tostring(attempts))
-	check("the retried terrain snapshot is accepted once", #accepted == 1, "accepted " .. tostring(#accepted))
-	check(
-		"the accepted snapshot is the terrain read from the region",
-		#accepted == 1 and accepted[1][1].content == Terrain.read(extentsTerrainWith(extentsRegion), extentsRegion, 4)
-	)
-	check("the terrain backoff returns to its start after acceptance", connection.terrainBackoff == 1, tostring(connection.terrainBackoff))
-end
-
-do
-	local attempts = 0
-	local log, onState = stateLog()
-	local connection: any = nil
-	connection = terrainConnection({
-		postBlobs = function(_, _changes)
-			attempts += 1
-			error("daemon down")
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection.terrainBackoff = 0.2
-	task.spawn(function()
-		task.wait(0.05)
-		connection:stop()
-	end)
-	connection:_pushTerrain(1)
-	check("a stop during the terrain retry wait posts no further attempt", attempts == 1, "attempts " .. tostring(attempts))
-	check("a stop during the terrain retry leaves Disconnected as the last state", lastStateOf(log) == "Disconnected", lastStateOf(log))
-end
-
-do
-	local log, onState = stateLog()
-	local connection: any = nil
-	connection = terrainConnection({
-		postBlobs = function(_, _changes)
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection.terrainBackoff = 0.2
+		task.spawn(function()
+			task.wait(0.05)
 			connection:stop()
-			error("daemon down")
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection:_pushTerrain(1)
-	check(
-		"a terrain post that fails during stop sets no Warning",
-		#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
-		lastStateOf(log)
-	)
-end
+		end)
+		connection:_pushTerrain(1)
+		check("a stop during the terrain retry wait posts no further attempt", attempts == 1, "attempts " .. tostring(attempts))
+		check("a stop during the terrain retry leaves Disconnected as the last state", lastStateOf(log) == "Disconnected", lastStateOf(log))
+end)
 
-do
-	local attempts = 0
-	local log, onState = stateLog()
-	local connection: any = nil
-	connection = terrainConnection({
-		postBlobs = function(_, _changes)
-			attempts += 1
-			error("daemon down")
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection.terrainBackoff = 0.01
-	task.spawn(function()
-		task.wait(0.05)
-		connection:stop()
-	end)
-	connection:_pushTerrain(1)
-	local found = warningsOf(log)
-	check(
-		"a terrain post that keeps failing sets a Warning naming the reason",
-		#found >= 2
-			and string.find(found[1], "terrain push failed: ", 1, true) ~= nil
-			and string.find(found[1], "daemon down", 1, true) ~= nil,
-		"warnings " .. tostring(#found)
-	)
-end
-
-do
-	local attempts = 0
-	local log, onState = stateLog()
-	local connection = terrainConnection({
-		postBlobs = function(_, _changes)
-			attempts += 1
-			if attempts == 1 then
+suite("a terrain post that fails during stop sets no Warning", function()
+		local log, onState = stateLog()
+		local connection: any = nil
+		connection = terrainConnection({
+			postBlobs = function(_, _changes)
+				connection:stop()
 				error("daemon down")
-			end
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection.terrainBackoff = 0.01
-	connection:_pushTerrain(1)
-	check("the failed terrain post raises one Warning", #warningsOf(log) == 1, "warnings " .. tostring(#warningsOf(log)))
-	check("a terrain post that succeeds clears the Warning", lastStateOf(log) == "Connected", lastStateOf(log))
-end
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection:_pushTerrain(1)
+		check(
+			"a terrain post that fails during stop sets no Warning",
+			#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
+			lastStateOf(log)
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local polls = 0
-	local connection: any = nil
-	connection = terrainConnection({
-		blobs = function(_, _cursor)
-			polls += 1
-			if polls > 1 then
-				connection.epoch += 1
-			end
-			error("boom")
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	local last = log[#log]
-	check("a blob poll failure while running is retried until superseded", polls == 2, "polls " .. tostring(polls))
-	check(
-		"a blob poll failure while running sets a Warning naming the reason",
-		last ~= nil
-			and last.state == "Warning"
-			and last.detail ~= nil
-			and string.find(last.detail, "terrain blob poll failed: ", 1, true) ~= nil
-			and string.find(last.detail, "boom", 1, true) ~= nil,
-		lastStateOf(log)
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local connection: any = nil
-	connection = terrainConnection({
-		blobs = function(_, _cursor)
+suite("a terrain post that keeps failing sets a Warning naming the reason", function()
+		local attempts = 0
+		local log, onState = stateLog()
+		local connection: any = nil
+		connection = terrainConnection({
+			postBlobs = function(_, _changes)
+				attempts += 1
+				error("daemon down")
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection.terrainBackoff = 0.01
+		task.spawn(function()
+			task.wait(0.05)
 			connection:stop()
-			error("boom")
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection:_serveBlobs(1)
-	check(
-		"a blob poll failure after stop sets no Warning",
-		#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
-		lastStateOf(log)
-	)
-end
+		end)
+		connection:_pushTerrain(1)
+		local found = warningsOf(log)
+		check(
+			"a terrain post that keeps failing sets a Warning naming the reason",
+			#found >= 2
+				and string.find(found[1], "terrain push failed: ", 1, true) ~= nil
+				and string.find(found[1], "daemon down", 1, true) ~= nil,
+			"warnings " .. tostring(#found)
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local connection: any = nil
-	connection = terrainConnection({
-		blobs = function(_, _cursor)
-			connection.epoch += 1
-			error("boom")
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection:_serveBlobs(1)
-	check("a blob poll failure after a reconnect sets no Warning", #warningsOf(log) == 0, "warnings " .. tostring(#warningsOf(log)))
-end
+suite("the failed terrain post raises one Warning", function()
+		local attempts = 0
+		local log, onState = stateLog()
+		local connection = terrainConnection({
+			postBlobs = function(_, _changes)
+				attempts += 1
+				if attempts == 1 then
+					error("daemon down")
+				end
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection.terrainBackoff = 0.01
+		connection:_pushTerrain(1)
+		check("the failed terrain post raises one Warning", #warningsOf(log) == 1, "warnings " .. tostring(#warningsOf(log)))
+		check("a terrain post that succeeds clears the Warning", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
 
-do
-	local log, onState = stateLog()
-	local calls = 0
-	local connection: any = nil
-	connection = terrainConnection({
-		blobs = function(_, _cursor)
-			calls += 1
-			if calls == 1 then
-				error("timeout")
-			end
-			if calls > 2 then
+suite("a blob poll failure while running is retried until superseded", function()
+		local log, onState = stateLog()
+		local polls = 0
+		local connection: any = nil
+		connection = terrainConnection({
+			blobs = function(_, _cursor)
+				polls += 1
+				if polls > 1 then
+					connection.epoch += 1
+				end
+				error("boom")
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		local last = log[#log]
+		check("a blob poll failure while running is retried until superseded", polls == 2, "polls " .. tostring(polls))
+		check(
+			"a blob poll failure while running sets a Warning naming the reason",
+			last ~= nil
+				and last.state == "Warning"
+				and last.detail ~= nil
+				and string.find(last.detail, "terrain blob poll failed: ", 1, true) ~= nil
+				and string.find(last.detail, "boom", 1, true) ~= nil,
+			lastStateOf(log)
+		)
+end)
+
+suite("a blob poll failure after stop sets no Warning", function()
+		local log, onState = stateLog()
+		local connection: any = nil
+		connection = terrainConnection({
+			blobs = function(_, _cursor)
+				connection:stop()
+				error("boom")
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection:_serveBlobs(1)
+		check(
+			"a blob poll failure after stop sets no Warning",
+			#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
+			lastStateOf(log)
+		)
+end)
+
+suite("a blob poll failure after a reconnect sets no Warning", function()
+		local log, onState = stateLog()
+		local connection: any = nil
+		connection = terrainConnection({
+			blobs = function(_, _cursor)
 				connection.epoch += 1
+				error("boom")
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection:_serveBlobs(1)
+		check("a blob poll failure after a reconnect sets no Warning", #warningsOf(log) == 0, "warnings " .. tostring(#warningsOf(log)))
+end)
+
+suite("a transient blob poll failure is retried", function()
+		local log, onState = stateLog()
+		local calls = 0
+		local connection: any = nil
+		connection = terrainConnection({
+			blobs = function(_, _cursor)
+				calls += 1
+				if calls == 1 then
+					error("timeout")
+				end
+				if calls > 2 then
+					connection.epoch += 1
+				end
+				return { cursor = 6, patches = {} }
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection.blobBackoff = 0.01
+		connection:_serveBlobs(1)
+		local warned = false
+		local clearedAfterWarning = false
+		for _, entry in log do
+			if entry.state == "Warning" and entry.detail ~= nil and string.find(entry.detail, "terrain blob poll failed: ", 1, true) == 1 then
+				warned = true
+			elseif warned and entry.state == "Connected" then
+				clearedAfterWarning = true
 			end
-			return { cursor = 6, patches = {} }
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection.blobBackoff = 0.01
-	connection:_serveBlobs(1)
-	local warned = false
-	local clearedAfterWarning = false
-	for _, entry in log do
-		if entry.state == "Warning" and entry.detail ~= nil and string.find(entry.detail, "terrain blob poll failed: ", 1, true) == 1 then
-			warned = true
-		elseif warned and entry.state == "Connected" then
-			clearedAfterWarning = true
 		end
-	end
-	check("a transient blob poll failure is retried", calls >= 2, "calls " .. tostring(calls))
-	check("the blob cursor advances once the retry succeeds", connection.blobCursor == 6, "cursor " .. tostring(connection.blobCursor))
-	check("the blob poll Warning is set, then cleared by the retry", warned and clearedAfterWarning and lastStateOf(log) == "Connected", lastStateOf(log))
-end
+		check("a transient blob poll failure is retried", calls >= 2, "calls " .. tostring(calls))
+		check("the blob cursor advances once the retry succeeds", connection.blobCursor == 6, "cursor " .. tostring(connection.blobCursor))
+		check("the blob poll Warning is set, then cleared by the retry", warned and clearedAfterWarning and lastStateOf(log) == "Connected", lastStateOf(log))
+end)
 
-do
-	local log, onState = stateLog()
-	local connection: any = nil
-	connection = terrainConnection({
-		blobs = function(_, _cursor)
+suite("a stop during a blob poll sets no Warning", function()
+		local log, onState = stateLog()
+		local connection: any = nil
+		connection = terrainConnection({
+			blobs = function(_, _cursor)
+				connection:stop()
+				return { cursor = 1, patches = {} }
+			end,
+		}, onState, extentsTerrainWith(extentsRegion))
+		connection:_serveBlobs(1)
+		check(
+			"a stop during a blob poll sets no Warning",
+			#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
+			lastStateOf(log)
+		)
+end)
+
+suite("a stop during a blob write leaves Disconnected as the last state, not a refreshed state", function()
+		local log, onState = stateLog()
+		local connection: any = nil
+		local blob = terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)
+		connection = terrainConnection({
+			blobs = function(_, _cursor)
+				return { cursor = 1, patches = { blobPatchOf(blob) } }
+			end,
+		}, onState, extentsTerrainWith(extentsRegion, nil, function()
 			connection:stop()
-			return { cursor = 1, patches = {} }
-		end,
-	}, onState, extentsTerrainWith(extentsRegion))
-	connection:_serveBlobs(1)
-	check(
-		"a stop during a blob poll sets no Warning",
-		#warningsOf(log) == 0 and lastStateOf(log) == "Disconnected",
-		lastStateOf(log)
-	)
-end
+		end))
+		connection.warnings["blob"] = "terrain blob rejected: earlier"
+		connection:_serveBlobs(1)
+		check(
+			"a stop during a blob write leaves Disconnected as the last state, not a refreshed state",
+			lastStateOf(log) == "Disconnected",
+			lastStateOf(log)
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local connection: any = nil
-	local blob = terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)
-	connection = terrainConnection({
-		blobs = function(_, _cursor)
-			return { cursor = 1, patches = { blobPatchOf(blob) } }
-		end,
-	}, onState, extentsTerrainWith(extentsRegion, nil, function()
-		connection:stop()
-	end))
-	connection.warnings["blob"] = "terrain blob rejected: earlier"
-	connection:_serveBlobs(1)
-	check(
-		"a stop during a blob write leaves Disconnected as the last state, not a refreshed state",
-		lastStateOf(log) == "Disconnected",
-		lastStateOf(log)
-	)
-end
-
-do
-	local voxels = Terrain.voxelCount(1024, 1024, 64, 4)
-	local blob = string.pack("<i4i4i4fffffff", 256, 256, 16, 0, 0, 0, 1, 1, 1, 4) .. string.rep("\0", 6 * voxels)
-	local body = Protocol.encodeBlobs({ { path = "Terrain.terrain", class = "Terrain", content = blob } })
-	local daemonBodyLimit = 64 * 1024 * 1024
-	check("the largest region the cap admits is exactly MAX_VOXELS", voxels == Terrain.MAX_VOXELS, "voxels " .. tostring(voxels))
-	check("the worst-case blob is a 40-byte header plus 6 bytes per voxel", #blob == 40 + 6 * Terrain.MAX_VOXELS, "bytes " .. tostring(#blob))
-	check("the MessagePack envelope around the worst-case blob is under 256 bytes", #body - #blob < 256, "envelope " .. tostring(#body - #blob))
-	check("the worst-case terrain body is under the 64 MiB daemon body limit", #body < daemonBodyLimit, "body " .. tostring(#body))
-end
+suite("the largest region the cap admits is exactly MAX_VOXELS", function()
+		local voxels = Terrain.voxelCount(1024, 1024, 64, 4)
+		local blob = string.pack("<i4i4i4fffffff", 256, 256, 16, 0, 0, 0, 1, 1, 1, 4) .. string.rep("\0", 6 * voxels)
+		local body = Protocol.encodeBlobs({ { path = "Terrain.terrain", class = "Terrain", content = blob } })
+		local daemonBodyLimit = 64 * 1024 * 1024
+		check("the largest region the cap admits is exactly MAX_VOXELS", voxels == Terrain.MAX_VOXELS, "voxels " .. tostring(voxels))
+		check("the worst-case blob is a 40-byte header plus 6 bytes per voxel", #blob == 40 + 6 * Terrain.MAX_VOXELS, "bytes " .. tostring(#blob))
+		check("the MessagePack envelope around the worst-case blob is under 256 bytes", #body - #blob < 256, "envelope " .. tostring(#body - #blob))
+		check("the worst-case terrain body is under the 64 MiB daemon body limit", #body < daemonBodyLimit, "body " .. tostring(#body))
+end)
 
 local function echoConnection(syncEcho: boolean)
 	local tree, root, flush = studioWorld(syncEcho)
@@ -1978,313 +2016,313 @@ local function editStudio(node: any, content: string)
 	node.sourceChanged:Fire()
 end
 
-do
-	local connection, node = echoConnection(true)
-	editStudio(node, "B")
-	editStudio(node, "A")
-	local pushed = connection.pendingPush["Z.luau"]
-	check(
-		"sync echo: edit to B then revert to A pushes A",
-		pushed ~= nil and pushed.content == "A",
-		if pushed ~= nil then "pushed " .. tostring(pushed.content) else "nothing pushed"
-	)
-	connection:stop()
-end
+suite("sync echo: edit to B then revert to A pushes A", function()
+		local connection, node = echoConnection(true)
+		editStudio(node, "B")
+		editStudio(node, "A")
+		local pushed = connection.pendingPush["Z.luau"]
+		check(
+			"sync echo: edit to B then revert to A pushes A",
+			pushed ~= nil and pushed.content == "A",
+			if pushed ~= nil then "pushed " .. tostring(pushed.content) else "nothing pushed"
+		)
+		connection:stop()
+end)
 
-do
-	local connection, node, flush = echoConnection(false)
-	flush()
-	editStudio(node, "B")
-	editStudio(node, "A")
-	local pushed = connection.pendingPush["Z.luau"]
-	check(
-		"deferred echo: edit to B then revert to A pushes A",
-		pushed ~= nil and pushed.content == "A",
-		if pushed ~= nil then "pushed " .. tostring(pushed.content) else "nothing pushed"
-	)
-	connection:stop()
-end
+suite("deferred echo: edit to B then revert to A pushes A", function()
+		local connection, node, flush = echoConnection(false)
+		flush()
+		editStudio(node, "B")
+		editStudio(node, "A")
+		local pushed = connection.pendingPush["Z.luau"]
+		check(
+			"deferred echo: edit to B then revert to A pushes A",
+			pushed ~= nil and pushed.content == "A",
+			if pushed ~= nil then "pushed " .. tostring(pushed.content) else "nothing pushed"
+		)
+		connection:stop()
+end)
 
-do
-	local connection, _node, flush = echoConnection(false)
-	flush()
-	check("a deferred echo of the applied source is dropped", connection.pendingPush["Z.luau"] == nil)
-	connection:stop()
-end
+suite("a deferred echo of the applied source is dropped", function()
+		local connection, _node, flush = echoConnection(false)
+		flush()
+		check("a deferred echo of the applied source is dropped", connection.pendingPush["Z.luau"] == nil)
+		connection:stop()
+end)
 
-do
-	local connection, node, flush, tree, root = echoConnection(false)
-	flush()
-	tree.destroy(node)
-	local recreated = tree.createInstance("ModuleScript", "Z")
-	recreated.Source = "A"
-	tree.setParent(recreated, root)
-	local pushed = connection.pendingPush["Z.luau"]
-	check(
-		"a script deleted and recreated with its applied source is pushed",
-		pushed ~= nil and pushed.kind == "Upsert" and pushed.content == "A",
-		if pushed ~= nil then "pushed " .. tostring(pushed.kind) else "nothing pushed"
-	)
-	connection:stop()
-end
+suite("a script deleted and recreated with its applied source is pushed", function()
+		local connection, node, flush, tree, root = echoConnection(false)
+		flush()
+		tree.destroy(node)
+		local recreated = tree.createInstance("ModuleScript", "Z")
+		recreated.Source = "A"
+		tree.setParent(recreated, root)
+		local pushed = connection.pendingPush["Z.luau"]
+		check(
+			"a script deleted and recreated with its applied source is pushed",
+			pushed ~= nil and pushed.kind == "Upsert" and pushed.content == "A",
+			if pushed ~= nil then "pushed " .. tostring(pushed.kind) else "nothing pushed"
+		)
+		connection:stop()
+end)
 
-do
-	local connection = echoConnection(true)
-	check("a synchronous echo of the applied source is dropped", connection.pendingPush["Z.luau"] == nil)
-	connection:stop()
-end
+suite("a synchronous echo of the applied source is dropped", function()
+		local connection = echoConnection(true)
+		check("a synchronous echo of the applied source is dropped", connection.pendingPush["Z.luau"] == nil)
+		connection:stop()
+end)
 
-do
-	local tree, root = studioWorld(true)
-	local acked: { string } = {}
-	local blockedPolls = 0
-	place(tree, "Folder", "Utils", root)
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				blockedPolls += 1
-				if blockedPolls == 1 then
-					return {
-						cursor = 1,
-						patches = {
-							{ kind = "Upsert", direction = "ToStudio", path = "Utils.luau", class = "ModuleScript", content = "x" },
-							{ kind = "Upsert", direction = "ToStudio", path = "Other.luau", class = "ModuleScript", content = "y" },
-						},
-					}
-				end
-				error("stop")
-			end,
-			postAck = function(_, paths)
-				acked = paths
-			end,
-		},
-		root,
-		1,
-		noop,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	pcall(connection._serve, connection, 1)
-	check(
-		"a same-named folder does not block a patch, so it is acked",
-		#acked == 2 and acked[1] == "Utils.luau" and acked[2] == "Other.luau",
-		"acked " .. table.concat(acked, ",")
-	)
-end
+suite("a same-named folder does not block a patch, so it is acked", function()
+		local tree, root = studioWorld(true)
+		local acked: { string } = {}
+		local blockedPolls = 0
+		place(tree, "Folder", "Utils", root)
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					blockedPolls += 1
+					if blockedPolls == 1 then
+						return {
+							cursor = 1,
+							patches = {
+								{ kind = "Upsert", direction = "ToStudio", path = "Utils.luau", class = "ModuleScript", content = "x" },
+								{ kind = "Upsert", direction = "ToStudio", path = "Other.luau", class = "ModuleScript", content = "y" },
+							},
+						}
+					end
+					error("stop")
+				end,
+				postAck = function(_, paths)
+					acked = paths
+				end,
+			},
+			root,
+			1,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		pcall(connection._serve, connection, 1)
+		check(
+			"a same-named folder does not block a patch, so it is acked",
+			#acked == 2 and acked[1] == "Utils.luau" and acked[2] == "Other.luau",
+			"acked " .. table.concat(acked, ",")
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local connection = Connection.new(
-		{
+suite("stop reports Disconnected", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new(
+			{
+				info = function(_, _placeId)
+					error("offline")
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection:stop()
+		check("stop reports Disconnected", lastStateOf(log) == "Disconnected")
+end)
+
+suite("stop clears the Warnings left by the last run", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.session = 1
+		connection:_setWarning("blob", "terrain blob rejected: stale")
+		connection.conflicts["C.luau"] = true
+		connection:stop()
+		check("stop clears the Warnings left by the last run", next(connection.warnings) == nil)
+		check("stop clears the Conflicts left by the last run", next(connection.conflicts) == nil)
+		connection:_refreshState()
+		check("the first state after a restart is not a stale Warning", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
+
+suite("start attaches one set of Studio listeners", function()
+		local tree, root = studioWorld(true)
+		local lifecycle = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		lifecycle:start()
+		check("start attaches one set of Studio listeners", root.DescendantAdded:count() == 1)
+		lifecycle:stop()
+		check("stop detaches the Studio listeners", root.DescendantAdded:count() == 0)
+		lifecycle:start()
+		lifecycle:start()
+		check("restart does not stack Studio listeners", root.DescendantAdded:count() == 1)
+		lifecycle:stop()
+		check("second stop detaches the Studio listeners", root.DescendantAdded:count() == 0)
+end)
+
+suite("start after a stop reconnects", function()
+		local tree, root = studioWorld(true)
+		local infos = 0
+		local client = {
 			info = function(_, _placeId)
-				error("offline")
+				infos += 1
+				return { project_name = "Demo" }
 			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection:stop()
-	check("stop reports Disconnected", lastStateOf(log) == "Disconnected")
-end
+			patches = function(_, _cursor)
+				task.wait(0.01)
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				task.wait(0.01)
+				return { cursor = 0, patches = {} }
+			end,
+			postAck = function() end,
+			postBlobs = function() end,
+			postChanges = function() end,
+		}
+		local lifecycle = Connection.new(client, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		lifecycle:start()
+		task.wait(0.05)
+		lifecycle:stop()
+		lifecycle:start()
+		task.wait(0.05)
+		lifecycle:stop()
+		check("start after a stop reconnects", infos == 2, infos)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
-	connection.running = true
-	connection.session = 1
-	connection:_setWarning("blob", "terrain blob rejected: stale")
-	connection.conflicts["C.luau"] = true
-	connection:stop()
-	check("stop clears the Warnings left by the last run", next(connection.warnings) == nil)
-	check("stop clears the Conflicts left by the last run", next(connection.conflicts) == nil)
-	connection:_refreshState()
-	check("the first state after a restart is not a stale Warning", lastStateOf(log) == "Connected", lastStateOf(log))
-end
-
-do
-	local tree, root = studioWorld(true)
-	local lifecycle = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
-	lifecycle:start()
-	check("start attaches one set of Studio listeners", root.DescendantAdded:count() == 1)
-	lifecycle:stop()
-	check("stop detaches the Studio listeners", root.DescendantAdded:count() == 0)
-	lifecycle:start()
-	lifecycle:start()
-	check("restart does not stack Studio listeners", root.DescendantAdded:count() == 1)
-	lifecycle:stop()
-	check("second stop detaches the Studio listeners", root.DescendantAdded:count() == 0)
-end
-
-do
-	local tree, root = studioWorld(true)
-	local infos = 0
-	local client = {
-		info = function(_, _placeId)
-			infos += 1
-			return { project_name = "Demo" }
-		end,
-		patches = function(_, _cursor)
-			task.wait(0.01)
-			return { cursor = 0, patches = {} }
-		end,
-		blobs = function(_, _cursor)
-			task.wait(0.01)
-			return { cursor = 0, patches = {} }
-		end,
-		postAck = function() end,
-		postBlobs = function() end,
-		postChanges = function() end,
-	}
-	local lifecycle = Connection.new(client, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
-	lifecycle:start()
-	task.wait(0.05)
-	lifecycle:stop()
-	lifecycle:start()
-	task.wait(0.05)
-	lifecycle:stop()
-	check("start after a stop reconnects", infos == 2, infos)
-end
-
-do
-	local tree, root = studioWorld(true)
-	local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
-	local dir = place(tree, "Folder", "dir", root)
-	check(
-		"path of a plain script keeps its folders",
-		connection:_pathOf(place(tree, "ModuleScript", "ok", dir)) == "dir/ok.luau"
-	)
-	check("path skips a name containing a slash", connection:_pathOf(place(tree, "ModuleScript", "a/b", root)) == nil)
-	check("path skips a name containing a backslash", connection:_pathOf(place(tree, "ModuleScript", "a\\b", root)) == nil)
-	check("path skips a name containing NUL", connection:_pathOf(place(tree, "ModuleScript", "a\0b", root)) == nil)
-	check(
-		"path skips a folder whose name contains a slash",
-		connection:_pathOf(place(tree, "ModuleScript", "leaf", place(tree, "Folder", "x/y", root))) == nil
-	)
-	check("path skips a ModuleScript named x.server", connection:_pathOf(place(tree, "ModuleScript", "x.server", root)) == nil)
-	check("path skips a ModuleScript named x.client", connection:_pathOf(place(tree, "ModuleScript", "x.client", root)) == nil)
-	check("path skips a ModuleScript named x.luau", connection:_pathOf(place(tree, "ModuleScript", "x.luau", root)) == nil)
-end
-
-do
-	local tree, root = studioWorld(true)
-	local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
-	local parityNames = serde.decode("json", fs.readFile("crates/naht-core/tests/fixtures/project_path_names.json"))
-	local dir = place(tree, "Folder", "Dir", root)
-	for _, name in parityNames.refused do
-		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
-		check(string.format("path skips a folder named %q, as the daemon refuses it", name), connection:_pathOf(leaf) == nil)
-	end
-	for _, name in parityNames.accepted do
-		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
+suite("path of a plain script keeps its folders", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local dir = place(tree, "Folder", "dir", root)
 		check(
-			string.format("path keeps a folder named %q, as the daemon accepts it", name),
-			connection:_pathOf(leaf) == "Dir/" .. name .. "/Leaf.luau"
+			"path of a plain script keeps its folders",
+			connection:_pathOf(place(tree, "ModuleScript", "ok", dir)) == "dir/ok.luau"
 		)
-	end
-	for _, name in parityNames.pluginOnlyRefused do
-		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
+		check("path skips a name containing a slash", connection:_pathOf(place(tree, "ModuleScript", "a/b", root)) == nil)
+		check("path skips a name containing a backslash", connection:_pathOf(place(tree, "ModuleScript", "a\\b", root)) == nil)
+		check("path skips a name containing NUL", connection:_pathOf(place(tree, "ModuleScript", "a\0b", root)) == nil)
 		check(
-			string.format("path skips a folder named %q, which the plugin refuses even though the daemon splits it", name),
-			connection:_pathOf(leaf) == nil
+			"path skips a folder whose name contains a slash",
+			connection:_pathOf(place(tree, "ModuleScript", "leaf", place(tree, "Folder", "x/y", root))) == nil
 		)
-	end
-end
+		check("path skips a ModuleScript named x.server", connection:_pathOf(place(tree, "ModuleScript", "x.server", root)) == nil)
+		check("path skips a ModuleScript named x.client", connection:_pathOf(place(tree, "ModuleScript", "x.client", root)) == nil)
+		check("path skips a ModuleScript named x.luau", connection:_pathOf(place(tree, "ModuleScript", "x.luau", root)) == nil)
+end)
 
-do
-	local tree, root = studioWorld(true)
-	local warnings: { string } = {}
-	local dependencies = deps(extentsTerrainWith(extentsRegion), tree)
-	dependencies.warn = function(message: string)
-		table.insert(warnings, message)
-	end
-	local connection = Connection.new({}, root, 1, noop, dependencies)
-	local suffixed = place(tree, "ModuleScript", "x.server", root)
-	connection:_pathOf(suffixed)
-	connection:_pathOf(suffixed)
-	check("a script-suffixed name is warned once", #warnings == 1, "warnings: " .. tostring(#warnings))
-end
+suite("block at line 2204", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local parityNames = serde.decode("json", fs.readFile("crates/naht-core/tests/fixtures/project_path_names.json"))
+		local dir = place(tree, "Folder", "Dir", root)
+		for _, name in parityNames.refused do
+			local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
+			check(string.format("path skips a folder named %q, as the daemon refuses it", name), connection:_pathOf(leaf) == nil)
+		end
+		for _, name in parityNames.accepted do
+			local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
+			check(
+				string.format("path keeps a folder named %q, as the daemon accepts it", name),
+				connection:_pathOf(leaf) == "Dir/" .. name .. "/Leaf.luau"
+			)
+		end
+		for _, name in parityNames.pluginOnlyRefused do
+			local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, dir))
+			check(
+				string.format("path skips a folder named %q, which the plugin refuses even though the daemon splits it", name),
+				connection:_pathOf(leaf) == nil
+			)
+		end
+end)
 
-do
-	local tree, root = studioWorld(true)
-	local polls = 0
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				polls += 1
-				if polls == 1 then
-					return { cursor = 1, patches = {} }
-				end
-				error("stop")
-			end,
-			postAck = function(_, _paths) end,
-		},
-		root,
-		1,
-		noop,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.backoff = 8
-	pcall(connection._serve, connection, 1)
-	check("a completed poll resets the reconnect backoff", connection.backoff == 1)
-end
+suite("a script-suffixed name is warned once", function()
+		local tree, root = studioWorld(true)
+		local warnings: { string } = {}
+		local dependencies = deps(extentsTerrainWith(extentsRegion), tree)
+		dependencies.warn = function(message: string)
+			table.insert(warnings, message)
+		end
+		local connection = Connection.new({}, root, 1, noop, dependencies)
+		local suffixed = place(tree, "ModuleScript", "x.server", root)
+		connection:_pathOf(suffixed)
+		connection:_pathOf(suffixed)
+		check("a script-suffixed name is warned once", #warnings == 1, "warnings: " .. tostring(#warnings))
+end)
 
-do
-	local tree, root = studioWorld(true)
-	place(tree, "ModuleScript", "Mod", root).Source = "X"
-	local polls = 0
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				polls += 1
-				if polls == 1 then
-					return { cursor = 1, patches = { { kind = "Upsert", path = "Mod.luau", class = "ModuleScript", content = "X" } } }
-				end
-				error("stop")
-			end,
-			postAck = function(_, _paths) end,
-		},
-		root,
-		1,
-		noop,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	pcall(connection._serve, connection, 1)
-	check("an apply that changes nothing records no echo", connection.lastApplied["Mod.luau"] == nil)
-end
+suite("a completed poll resets the reconnect backoff", function()
+		local tree, root = studioWorld(true)
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return { cursor = 1, patches = {} }
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			1,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.backoff = 8
+		pcall(connection._serve, connection, 1)
+		check("a completed poll resets the reconnect backoff", connection.backoff == 1)
+end)
 
-do
-	local tree, root = studioWorld(false)
-	local polls = 0
-	local connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				polls += 1
-				if polls == 1 then
-					return { cursor = 1, patches = { { kind = "Upsert", path = "New.luau", class = "ModuleScript", content = "Y" } } }
-				end
-				error("stop")
-			end,
-			postAck = function(_, _paths) end,
-		},
-		root,
-		1,
-		noop,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	pcall(connection._serve, connection, 1)
-	check("an apply that writes records its echo", connection.lastApplied["New.luau"] == "Y")
-end
+suite("an apply that changes nothing records no echo", function()
+		local tree, root = studioWorld(true)
+		place(tree, "ModuleScript", "Mod", root).Source = "X"
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return { cursor = 1, patches = { { kind = "Upsert", path = "Mod.luau", class = "ModuleScript", content = "X" } } }
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			1,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		pcall(connection._serve, connection, 1)
+		check("an apply that changes nothing records no echo", connection.lastApplied["Mod.luau"] == nil)
+end)
+
+suite("an apply that writes records its echo", function()
+		local tree, root = studioWorld(false)
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return { cursor = 1, patches = { { kind = "Upsert", path = "New.luau", class = "ModuleScript", content = "Y" } } }
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			1,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		pcall(connection._serve, connection, 1)
+		check("an apply that writes records its echo", connection.lastApplied["New.luau"] == "Y")
+end)
 
 local luau = require("@lune/luau")
 for _, path in
@@ -2346,819 +2384,881 @@ local function textPushProbe(failFirst: boolean)
 	return events, accepted
 end
 
-do
-	local events, accepted = textPushProbe(true)
-	local overlapped = false
-	local open = 0
-	for _, event in events do
-		if string.sub(event, 1, 5) == "start" then
-			open += 1
-			if open > 1 then
-				overlapped = true
+suite("an edit during an in-flight text push never starts a second post", function()
+		local events, accepted = textPushProbe(true)
+		local overlapped = false
+		local open = 0
+		for _, event in events do
+			if string.sub(event, 1, 5) == "start" then
+				open += 1
+				if open > 1 then
+					overlapped = true
+				end
+			else
+				open -= 1
 			end
-		else
-			open -= 1
 		end
-	end
-	check(
-		"an edit during an in-flight text push never starts a second post",
-		not overlapped,
-		table.concat(events, " | ")
-	)
-	check(
-		"after the in-flight text push fails with a 503 the daemon ends with the newest edit",
-		accepted[#accepted] == "v2",
-		"accepted: " .. table.concat(accepted, ",")
-	)
-end
+		check(
+			"an edit during an in-flight text push never starts a second post",
+			not overlapped,
+			table.concat(events, " | ")
+		)
+		check(
+			"after the in-flight text push fails with a 503 the daemon ends with the newest edit",
+			accepted[#accepted] == "v2",
+			"accepted: " .. table.concat(accepted, ",")
+		)
+end)
 
-do
-	local events = textPushProbe(false)
-	check(
-		"a text push waits for the in-flight post to return before the next one starts",
-		table.concat(events, " | ") == "start v1 | end v1 | start v2 | end v2",
-		table.concat(events, " | ")
-	)
-end
+suite("a text push waits for the in-flight post to return before the next one starts", function()
+		local events = textPushProbe(false)
+		check(
+			"a text push waits for the in-flight post to return before the next one starts",
+			table.concat(events, " | ") == "start v1 | end v1 | start v2 | end v2",
+			table.concat(events, " | ")
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local posts: { { string } } = {}
-	local accepted: { string } = {}
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				local paths = {}
-				for _, change in changes do
-					table.insert(paths, change.path)
-				end
-				table.insert(posts, paths)
-				if table.find(paths, "Config: v2/Leaf.luau") ~= nil then
-					error({
-						status = 400,
-						message = "naht: /changes returned 400",
-						refused = { "Config: v2/Leaf.luau" },
-					})
-				end
-				for _, path in paths do
-					table.insert(accepted, path)
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["Good.luau"] = Protocol.upsert("Good.luau", "ModuleScript", "G")
-	connection.pendingPush["Config: v2/Leaf.luau"] = Protocol.upsert("Config: v2/Leaf.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(0.8)
-	connection.running = false
-	local refusedPosts = 0
-	for _, paths in posts do
-		if table.find(paths, "Config: v2/Leaf.luau") ~= nil then
-			refusedPosts += 1
+suite("a path the daemon refuses is posted once and never retried", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local posts: { { string } } = {}
+		local accepted: { string } = {}
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					local paths = {}
+					for _, change in changes do
+						table.insert(paths, change.path)
+					end
+					table.insert(posts, paths)
+					if table.find(paths, "Config: v2/Leaf.luau") ~= nil then
+						error({
+							status = 400,
+							message = "naht: /changes returned 400",
+							refused = { "Config: v2/Leaf.luau" },
+						})
+					end
+					for _, path in paths do
+						table.insert(accepted, path)
+					end
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["Good.luau"] = Protocol.upsert("Good.luau", "ModuleScript", "G")
+		connection.pendingPush["Config: v2/Leaf.luau"] = Protocol.upsert("Config: v2/Leaf.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(0.8)
+		connection.running = false
+		local refusedPosts = 0
+		for _, paths in posts do
+			if table.find(paths, "Config: v2/Leaf.luau") ~= nil then
+				refusedPosts += 1
+			end
 		end
-	end
-	check(
-		"a path the daemon refuses is posted once and never retried",
-		refusedPosts == 1,
-		string.format("posted %d times", refusedPosts)
-	)
-	check(
-		"the good path in the same batch is accepted after the refusal",
-		table.find(accepted, "Good.luau") ~= nil,
-		table.concat(accepted, ",")
-	)
-	local warnedText = table.concat(warningsOf(log), "\n")
-	check(
-		"the refused path is named in a Warning",
-		string.find(warnedText, "Config: v2/Leaf.luau", 1, true) ~= nil,
-		warnedText
-	)
-	check(
-		"the refused path is not merged back into the pending pushes",
-		connection.pendingPush["Config: v2/Leaf.luau"] == nil,
-		"still pending"
-	)
-end
+		check(
+			"a path the daemon refuses is posted once and never retried",
+			refusedPosts == 1,
+			string.format("posted %d times", refusedPosts)
+		)
+		check(
+			"the good path in the same batch is accepted after the refusal",
+			table.find(accepted, "Good.luau") ~= nil,
+			table.concat(accepted, ",")
+		)
+		local warnedText = table.concat(warningsOf(log), "\n")
+		check(
+			"the refused path is named in a Warning",
+			string.find(warnedText, "Config: v2/Leaf.luau", 1, true) ~= nil,
+			warnedText
+		)
+		check(
+			"the refused path is not merged back into the pending pushes",
+			connection.pendingPush["Config: v2/Leaf.luau"] == nil,
+			"still pending"
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local attempts = 0
-	local keptEveryTime = true
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				attempts += 1
-				if #changes ~= 1 or changes[1].path ~= "old.luau" then
-					keptEveryTime = false
-				end
-				if attempts <= 2 then
-					error({ status = 503, message = "naht: /changes returned 503", refused = {} })
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
-	connection:_schedulePush()
-	task.wait(0.6)
-	connection.running = false
-	check(
-		"a 503 raised as a status error keeps the batch and retries it",
-		attempts == 3 and keptEveryTime,
-		string.format("attempts %d, kept %s", attempts, tostring(keptEveryTime))
-	)
-end
+suite("a 503 raised as a status error keeps the batch and retries it", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local attempts = 0
+		local keptEveryTime = true
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					attempts += 1
+					if #changes ~= 1 or changes[1].path ~= "old.luau" then
+						keptEveryTime = false
+					end
+					if attempts <= 2 then
+						error({ status = 503, message = "naht: /changes returned 503", refused = {} })
+					end
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+		connection:_schedulePush()
+		task.wait(0.6)
+		connection.running = false
+		check(
+			"a 503 raised as a status error keeps the batch and retries it",
+			attempts == 3 and keptEveryTime,
+			string.format("attempts %d, kept %s", attempts, tostring(keptEveryTime))
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local attempts = 0
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, _changes)
-				attempts += 1
-				error({ status = 400, message = "naht: /changes returned 400", refused = {} })
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(0.6)
-	connection.running = false
-	check(
-		"a 400 that names no path drops the batch after one attempt",
-		attempts == 1 and next(connection.pendingPush) == nil,
-		string.format("attempts %d", attempts)
-	)
-	local refusalText = table.concat(warningsOf(log), "\n")
-	check(
-		"a 400 that names no path sets a Warning with the refusal",
-		string.find(refusalText, "naht: /changes returned 400", 1, true) ~= nil,
-		refusalText
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local ackAttempts = 0
-	local patchCalls = 0
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				patchCalls += 1
-				if patchCalls == 1 then
-					return {
-						cursor = 1,
-						patches = {
-							{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
-						},
-					}
-				end
-				if patchCalls == 2 then
-					return { cursor = 1, patches = {} }
-				end
-				error("stop")
-			end,
-			postAck = function(_, _paths)
-				ackAttempts += 1
-				error({ status = 400, message = "naht: /ack returned 400", refused = {} })
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.ackBackoff = 0.01
-	pcall(connection._serve, connection, 1)
-	check("a refused ack is not retried", ackAttempts == 1, string.format("attempts %d", ackAttempts))
-	local refusedText = table.concat(warningsOf(log), "\n")
-	check(
-		"a refused ack sets a Warning naming the refusal",
-		string.find(refusedText, "ack refused: naht: /ack returned 400", 1, true) ~= nil,
-		refusedText
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local ackAttempts = 0
-	local patchCalls = 0
-	local lengths: { number } = {}
-	local tree, root = studioWorld(true)
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			patches = function(_, _cursor)
-				patchCalls += 1
-				if patchCalls == 1 then
-					local same = { kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" }
-					return { cursor = 1, patches = { same, same } }
-				end
-				if patchCalls == 2 or patchCalls == 3 then
-					return { cursor = 1, patches = {} }
-				end
-				error("stop")
-			end,
-			postAck = function(_, paths)
-				ackAttempts += 1
-				table.insert(lengths, #paths)
-				if ackAttempts <= 2 then
-					error({ status = 503, message = "naht: /ack returned 503", refused = {} })
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.ackBackoff = 0.01
-	pcall(connection._serve, connection, 1)
-	check(
-		"a transient ack failure retries one entry per path",
-		ackAttempts == 3 and lengths[1] == 1 and lengths[2] == 1 and lengths[3] == 1,
-		table.concat(lengths, ",")
-	)
-	check("a transient ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local posts: { string } = {}
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				local content = changes[1].content
-				table.insert(posts, content)
-				if content == "v1" then
-					task.wait(0.3)
-					error({ status = 400, message = "naht: /changes returned 400", refused = { "Bad.luau" } })
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "v1")
-	connection:_schedulePush()
-	local waited = 0
-	while #posts == 0 and waited < 100 do
-		task.wait(0.01)
-		waited += 1
-	end
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "v2")
-	connection:_schedulePush()
-	task.wait(1)
-	connection.running = false
-	check(
-		"an edit made during a refused post is sent once the refusal drops the only path",
-		table.concat(posts, ",") == "v1,v2",
-		"posts: " .. table.concat(posts, ",")
-	)
-end
-
-do
-	local events: { string } = {}
-	local accepted: { string } = {}
-	local function clientFor(slow: boolean)
-		return {
-			postChanges = function(_, changes)
-				local content = changes[1].content
-				table.insert(events, "start " .. content)
-				task.wait(if slow then 0.5 else 0.05)
-				table.insert(events, "end " .. content)
-				table.insert(accepted, content)
-			end,
-		}
-	end
-	local tree, root = studioWorld(true)
-	local _, onState = stateLog()
-	local old = Connection.new(clientFor(true), root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
-	old.running = true
-	old.session = 1
-	old.epoch = 1
-	old.pushBackoff = 0.01
-	old.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v1")
-	old:_schedulePush()
-	local waited = 0
-	while #events == 0 and waited < 100 do
-		task.wait(0.01)
-		waited += 1
-	end
-	old:stop()
-	local fresh = Connection.new(clientFor(false), root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
-	fresh.running = true
-	fresh.session = 1
-	fresh.epoch = 1
-	fresh.pushBackoff = 0.01
-	fresh.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v2")
-	fresh:_schedulePush()
-	task.wait(1.5)
-	fresh.running = false
-	check(
-		"after a stop and start the new connection waits for the old post before its own",
-		table.concat(events, " | ") == "start v1 | end v1 | start v2 | end v2",
-		table.concat(events, " | ")
-	)
-	check(
-		"after a stop and start the daemon ends with the newest edit",
-		accepted[#accepted] == "v2",
-		"accepted: " .. table.concat(accepted, ",")
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local posts: { string } = {}
-	local accepted: { string } = {}
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				local paths = {}
-				for _, change in changes do
-					table.insert(paths, change.path)
-				end
-				table.insert(posts, table.concat(paths, "+"))
-				if table.find(paths, "Bad.luau") ~= nil then
+suite("a 400 that names no path drops the batch after one attempt", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local attempts = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, _changes)
+					attempts += 1
 					error({ status = 400, message = "naht: /changes returned 400", refused = {} })
-				end
-				for _, path in paths do
-					table.insert(accepted, path)
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["Good.luau"] = Protocol.upsert("Good.luau", "ModuleScript", "G")
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(0.8)
-	connection.running = false
-	local badPosts = 0
-	for _, post in posts do
-		if string.find(post, "Bad.luau", 1, true) ~= nil then
-			badPosts += 1
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(0.6)
+		connection.running = false
+		check(
+			"a 400 that names no path drops the batch after one attempt",
+			attempts == 1 and next(connection.pendingPush) == nil,
+			string.format("attempts %d", attempts)
+		)
+		local refusalText = table.concat(warningsOf(log), "\n")
+		check(
+			"a 400 that names no path sets a Warning with the refusal",
+			string.find(refusalText, "naht: /changes returned 400", 1, true) ~= nil,
+			refusalText
+		)
+end)
+
+suite("a refused ack is not retried", function()
+		local log, onState = stateLog()
+		local ackAttempts = 0
+		local patchCalls = 0
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					patchCalls += 1
+					if patchCalls == 1 then
+						return {
+							cursor = 1,
+							patches = {
+								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+							},
+						}
+					end
+					if patchCalls == 2 then
+						return { cursor = 1, patches = {} }
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths)
+					ackAttempts += 1
+					error({ status = 400, message = "naht: /ack returned 400", refused = {} })
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.ackBackoff = 0.01
+		pcall(connection._serve, connection, 1)
+		check("a refused ack is not retried", ackAttempts == 1, string.format("attempts %d", ackAttempts))
+		local refusedText = table.concat(warningsOf(log), "\n")
+		check(
+			"a refused ack sets a Warning naming the refusal",
+			string.find(refusedText, "ack refused: naht: /ack returned 400", 1, true) ~= nil,
+			refusedText
+		)
+end)
+
+suite("a transient ack failure retries one entry per path", function()
+		local log, onState = stateLog()
+		local ackAttempts = 0
+		local patchCalls = 0
+		local lengths: { number } = {}
+		local tree, root = studioWorld(true)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					patchCalls += 1
+					if patchCalls == 1 then
+						local same = { kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" }
+						return { cursor = 1, patches = { same, same } }
+					end
+					if patchCalls == 2 or patchCalls == 3 then
+						return { cursor = 1, patches = {} }
+					end
+					error("stop")
+				end,
+				postAck = function(_, paths)
+					ackAttempts += 1
+					table.insert(lengths, #paths)
+					if ackAttempts <= 2 then
+						error({ status = 503, message = "naht: /ack returned 503", refused = {} })
+					end
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.ackBackoff = 0.01
+		pcall(connection._serve, connection, 1)
+		check(
+			"a transient ack failure retries one entry per path",
+			ackAttempts == 3 and lengths[1] == 1 and lengths[2] == 1 and lengths[3] == 1,
+			table.concat(lengths, ",")
+		)
+		check("a transient ack retry ends in Connected", lastStateOf(log) == "Connected", lastStateOf(log))
+end)
+
+suite("an edit made during a refused post is sent once the refusal drops the only path", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local posts: { string } = {}
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					local content = changes[1].content
+					table.insert(posts, content)
+					if content == "v1" then
+						task.wait(0.3)
+						error({ status = 400, message = "naht: /changes returned 400", refused = { "Bad.luau" } })
+					end
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "v1")
+		connection:_schedulePush()
+		local waited = 0
+		while #posts == 0 and waited < 100 do
+			task.wait(0.01)
+			waited += 1
 		end
-	end
-	check(
-		"a 400 that names no path posts the batch once and then each path alone",
-		badPosts == 2 and #posts == 3,
-		"posts: " .. table.concat(posts, " | ")
-	)
-	check(
-		"a path accepted alone after an unnamed refusal of its batch is sent",
-		table.find(accepted, "Good.luau") ~= nil and #accepted == 1,
-		"accepted: " .. table.concat(accepted, ",")
-	)
-	local warnedText = table.concat(warningsOf(log), "\n")
-	check(
-		"the path refused alone is named in a Warning",
-		string.find(warnedText, "not synced, the daemon refused Bad.luau", 1, true) ~= nil,
-		warnedText
-	)
-end
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "v2")
+		connection:_schedulePush()
+		task.wait(1)
+		connection.running = false
+		check(
+			"an edit made during a refused post is sent once the refusal drops the only path",
+			table.concat(posts, ",") == "v1,v2",
+			"posts: " .. table.concat(posts, ",")
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local attempts = 0
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, _changes)
-				attempts += 1
-				error({ status = 500, message = "naht: /changes returned 500", refused = {} })
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(1.5)
-	connection.running = false
-	check(
-		"a /changes 500 that keeps recurring is dropped after a bounded number of attempts",
-		attempts == 3 and next(connection.pendingPush) == nil,
-		string.format("attempts %d", attempts)
-	)
-	check(
-		"the batch dropped after repeated 500s is named in a Warning",
-		string.find(table.concat(warningsOf(log), "\n"), "not synced, the daemon kept failing on Bad.luau", 1, true) ~= nil,
-		table.concat(warningsOf(log), "\n")
-	)
-end
+suite("after a stop and start the new connection waits for the old post before its own", function()
+		local events: { string } = {}
+		local accepted: { string } = {}
+		local function clientFor(slow: boolean)
+			return {
+				postChanges = function(_, changes)
+					local content = changes[1].content
+					table.insert(events, "start " .. content)
+					task.wait(if slow then 0.5 else 0.05)
+					table.insert(events, "end " .. content)
+					table.insert(accepted, content)
+				end,
+			}
+		end
+		local tree, root = studioWorld(true)
+		local _, onState = stateLog()
+		local old = Connection.new(clientFor(true), root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+		old.running = true
+		old.session = 1
+		old.epoch = 1
+		old.pushBackoff = 0.01
+		old.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v1")
+		old:_schedulePush()
+		local waited = 0
+		while #events == 0 and waited < 100 do
+			task.wait(0.01)
+			waited += 1
+		end
+		old:stop()
+		local fresh = Connection.new(clientFor(false), root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+		fresh.running = true
+		fresh.session = 1
+		fresh.epoch = 1
+		fresh.pushBackoff = 0.01
+		fresh.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v2")
+		fresh:_schedulePush()
+		task.wait(1.5)
+		fresh.running = false
+		check(
+			"after a stop and start the new connection waits for the old post before its own",
+			table.concat(events, " | ") == "start v1 | end v1 | start v2 | end v2",
+			table.concat(events, " | ")
+		)
+		check(
+			"after a stop and start the daemon ends with the newest edit",
+			accepted[#accepted] == "v2",
+			"accepted: " .. table.concat(accepted, ",")
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local statuses = { 503, 503, 503, 503, 503, 503, 503, 503, 503, 503 }
-	local attempts = 0
-	local accepted: { string } = {}
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				attempts += 1
-				local status = statuses[attempts]
-				if status ~= nil then
-					error({ status = status, message = "naht: /changes returned " .. status, refused = {} })
-				end
-				table.insert(accepted, changes[1].path)
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.001
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(2)
-	connection.running = false
-	check(
-		"ten 503s in a row are each retried and the batch is still accepted after them",
-		attempts == 11 and #accepted == 1,
-		string.format("attempts %d, accepted %d", attempts, #accepted)
-	)
-	check(
-		"no batch is dropped while its failures are transient",
-		string.find(table.concat(warningsOf(log), "\n"), "not synced", 1, true) == nil,
-		table.concat(warningsOf(log), "\n")
-	)
-end
+suite("a 400 that names no path posts the batch once and then each path alone", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local posts: { string } = {}
+		local accepted: { string } = {}
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					local paths = {}
+					for _, change in changes do
+						table.insert(paths, change.path)
+					end
+					table.insert(posts, table.concat(paths, "+"))
+					if table.find(paths, "Bad.luau") ~= nil then
+						error({ status = 400, message = "naht: /changes returned 400", refused = {} })
+					end
+					for _, path in paths do
+						table.insert(accepted, path)
+					end
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["Good.luau"] = Protocol.upsert("Good.luau", "ModuleScript", "G")
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(0.8)
+		connection.running = false
+		local badPosts = 0
+		for _, post in posts do
+			if string.find(post, "Bad.luau", 1, true) ~= nil then
+				badPosts += 1
+			end
+		end
+		check(
+			"a 400 that names no path posts the batch once and then each path alone",
+			badPosts == 2 and #posts == 3,
+			"posts: " .. table.concat(posts, " | ")
+		)
+		check(
+			"a path accepted alone after an unnamed refusal of its batch is sent",
+			table.find(accepted, "Good.luau") ~= nil and #accepted == 1,
+			"accepted: " .. table.concat(accepted, ",")
+		)
+		local warnedText = table.concat(warningsOf(log), "\n")
+		check(
+			"the path refused alone is named in a Warning",
+			string.find(warnedText, "not synced, the daemon refused Bad.luau", 1, true) ~= nil,
+			warnedText
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local posts = 0
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				posts += 1
-				if posts == 1 then
-					error({ status = 400, message = "naht: /changes returned 400", refused = { "Bad.luau" } })
-				end
-				assert(changes[1].path == "Bad.luau")
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(0.5)
-	check(
-		"the refusal of a path is named in a Warning before the path is edited again",
-		connection.warnings["refused:Bad.luau"] ~= nil,
-		string.format("posts %d", posts)
-	)
-	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B2")
-	connection:_schedulePush()
-	task.wait(0.5)
-	connection.running = false
-	check(
-		"a later accepted edit to a refused path clears its refused Warning",
-		posts == 2 and connection.warnings["refused:Bad.luau"] == nil,
-		string.format("posts %d, warnings: %s", posts, table.concat(warningsOf(log), " | "))
-	)
-	check(
-		"the widget returns to Connected once the refused path is accepted",
-		lastStateOf(log) == "Connected",
-		lastStateOf(log)
-	)
-end
-
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local script = { 500, nil, 500, 500, nil }
-	local calls = 0
-	local accepted = {}
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				calls += 1
-				local outcome = script[calls]
-				if outcome == 500 then
+suite("a /changes 500 that keeps recurring is dropped after a bounded number of attempts", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local attempts = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, _changes)
+					attempts += 1
 					error({ status = 500, message = "naht: /changes returned 500", refused = {} })
-				end
-				table.insert(accepted, changes[1].path)
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
-	connection:_schedulePush()
-	task.wait(0.5)
-	connection.pushBackoff = 0.01
-	connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
-	connection:_schedulePush()
-	task.wait(1)
-	connection.running = false
-	check(
-		"a 500 that is followed by an accepted post does not count toward the bound of consecutive 500s",
-		table.concat(accepted, ",") == "A.luau,B.luau" and next(connection.pendingPush) == nil,
-		string.format("calls %d, accepted: %s", calls, table.concat(accepted, ","))
-	)
-	check(
-		"no path is reported as kept failing after a 500 that was followed by an accepted post",
-		string.find(table.concat(warningsOf(log), "\n"), "kept failing", 1, true) == nil,
-		table.concat(warningsOf(log), "\n")
-	)
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(1.5)
+		connection.running = false
+		check(
+			"a /changes 500 that keeps recurring is dropped after a bounded number of attempts",
+			attempts == 3 and next(connection.pendingPush) == nil,
+			string.format("attempts %d", attempts)
+		)
+		check(
+			"the batch dropped after repeated 500s is named in a Warning",
+			string.find(table.concat(warningsOf(log), "\n"), "not synced, the daemon kept failing on Bad.luau", 1, true) ~= nil,
+			table.concat(warningsOf(log), "\n")
+		)
+end)
+
+suite("ten 503s in a row are each retried and the batch is still accepted after them", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local statuses = { 503, 503, 503, 503, 503, 503, 503, 503, 503, 503 }
+		local attempts = 0
+		local accepted: { string } = {}
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					attempts += 1
+					local status = statuses[attempts]
+					if status ~= nil then
+						error({ status = status, message = "naht: /changes returned " .. status, refused = {} })
+					end
+					table.insert(accepted, changes[1].path)
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.001
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(2)
+		connection.running = false
+		check(
+			"ten 503s in a row are each retried and the batch is still accepted after them",
+			attempts == 11 and #accepted == 1,
+			string.format("attempts %d, accepted %d", attempts, #accepted)
+		)
+		check(
+			"no batch is dropped while its failures are transient",
+			string.find(table.concat(warningsOf(log), "\n"), "not synced", 1, true) == nil,
+			table.concat(warningsOf(log), "\n")
+		)
+end)
+
+suite("the refusal of a path is named in a Warning before the path is edited again", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local posts = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					posts += 1
+					if posts == 1 then
+						error({ status = 400, message = "naht: /changes returned 400", refused = { "Bad.luau" } })
+					end
+					assert(changes[1].path == "Bad.luau")
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(0.5)
+		check(
+			"the refusal of a path is named in a Warning before the path is edited again",
+			connection.warnings["refused:Bad.luau"] ~= nil,
+			string.format("posts %d", posts)
+		)
+		connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B2")
+		connection:_schedulePush()
+		task.wait(0.5)
+		connection.running = false
+		check(
+			"a later accepted edit to a refused path clears its refused Warning",
+			posts == 2 and connection.warnings["refused:Bad.luau"] == nil,
+			string.format("posts %d, warnings: %s", posts, table.concat(warningsOf(log), " | "))
+		)
+		check(
+			"the widget returns to Connected once the refused path is accepted",
+			lastStateOf(log) == "Connected",
+			lastStateOf(log)
+		)
+end)
+
+suite("a 500 that is followed by an accepted post does not count toward the bound of consecutive 500s", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local script = { 500, nil, 500, 500, nil }
+		local calls = 0
+		local accepted = {}
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					calls += 1
+					local outcome = script[calls]
+					if outcome == 500 then
+						error({ status = 500, message = "naht: /changes returned 500", refused = {} })
+					end
+					table.insert(accepted, changes[1].path)
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		task.wait(0.5)
+		connection.pushBackoff = 0.01
+		connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(1)
+		connection.running = false
+		check(
+			"a 500 that is followed by an accepted post does not count toward the bound of consecutive 500s",
+			table.concat(accepted, ",") == "A.luau,B.luau" and next(connection.pendingPush) == nil,
+			string.format("calls %d, accepted: %s", calls, table.concat(accepted, ","))
+		)
+		check(
+			"no path is reported as kept failing after a 500 that was followed by an accepted post",
+			string.find(table.concat(warningsOf(log), "\n"), "kept failing", 1, true) == nil,
+			table.concat(warningsOf(log), "\n")
+		)
+end)
+
+local function hangUntilReleased(hold: { done: boolean })
+	if not waitFor(function()
+		return hold.done
+	end) then
+		check("a hung post is released by its test within the bound", false, "the bound expired")
+	end
 end
 
-do
-	local log, onState = stateLog()
+local function fireWatchdog(watchdogs: { () -> () }, index: number)
+	if not waitFor(function()
+		return watchdogs[index] ~= nil
+	end) then
+		check("the watchdog of post " .. index .. " is armed within the bound", false, "no watchdog was armed")
+		return
+	end
+	watchdogs[index]()
+end
+
+local function abandoningConnection(onState: any, holds: { [number]: { done: boolean } })
+	for _, hold in holds do
+		onCleanup(function()
+			hold.done = true
+		end)
+	end
 	local tree, root = studioWorld(true)
-	local watchdogs = {}
-	local gate = { issued = 0, flight = nil }
-	local released = false
-	local posts = {}
-	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
-	hungDeps.pushGate = gate
-	hungDeps.delay = function(_, fire)
+	local dependencies: any = deps(extentsTerrainWith(extentsRegion), tree)
+	dependencies.pushGate = { issued = 0, flight = nil }
+	local watchdogs: { () -> () } = {}
+	dependencies.delay = function(_, fire)
 		table.insert(watchdogs, fire)
 	end
+	local sent: { { any } } = {}
 	local connection: any = nil
 	connection = Connection.new(
 		{
 			postChanges = function(_, changes)
-				table.insert(posts, changes[1])
-				if #posts == 1 then
-					while not released do
-						task.wait(0.05)
-					end
+				table.insert(sent, changes)
+				local hold = holds[#sent]
+				if hold ~= nil then
+					hangUntilReleased(hold)
 				end
 			end,
+			info = function(_, _placeId)
+				return { project_name = "demo" }
+			end,
+			patches = function(_, _cursor)
+				error("no poll expected")
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, _paths) end,
 		},
 		root,
 		1,
 		onState,
-		hungDeps
+		dependencies
 	)
 	connection.running = true
 	connection.session = 1
 	connection.epoch = 1
 	connection.pushBackoff = 0.01
-	local first = Protocol.upsert("A.luau", "ModuleScript", "A")
-	connection.pendingPush["A.luau"] = first
-	connection:_schedulePush()
-	task.wait(0.5)
-	watchdogs[1]()
-	task.wait(0.5)
-	released = true
-	task.wait(0.2)
-	connection.running = false
-	check(
-		"a hung post with no later edit is abandoned by the watchdog and its batch is sent again",
-		#posts == 2 and rawequal(posts[1], first) and rawequal(posts[2], first),
-		string.format("posts %d", #posts)
-	)
-	check(
-		"the abandoned post is named in a Warning",
-		string.find(table.concat(warningsOf(log), "\n"), "push abandoned", 1, true) ~= nil,
-		table.concat(warningsOf(log), "\n")
-	)
+	return connection, sent, watchdogs
 end
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local watchdogs = {}
-	local gate = { issued = 0, flight = nil }
-	local released = false
-	local posts = {}
-	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
-	hungDeps.pushGate = gate
-	hungDeps.delay = function(_, fire)
-		table.insert(watchdogs, fire)
-	end
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, changes)
-				table.insert(posts, changes[1])
-				if #posts == 1 then
-					while not released do
-						task.wait(0.05)
-					end
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		hungDeps
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
-	connection:_schedulePush()
-	task.wait(0.5)
-	local newer = Protocol.upsert("A.luau", "ModuleScript", "A2")
-	connection.pendingPush["A.luau"] = newer
-	watchdogs[1]()
-	task.wait(0.5)
-	released = true
-	task.wait(0.2)
-	connection.running = false
-	check(
-		"a newer pending edit to a path wins over the batch restored from an abandoned post",
-		#posts == 2 and rawequal(posts[2], newer),
-		string.format("posts %d", #posts)
-	)
-end
+suite("a hung post with no later edit is abandoned by the watchdog and its batch is sent again", function()
+		local hold = { done = false }
+		local log, onState = stateLog()
+		local connection, sent, watchdogs = abandoningConnection(onState, { [1] = hold })
+		local first = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection.pendingPush["A.luau"] = first
+		connection:_schedulePush()
+		fireWatchdog(watchdogs, 1)
+		task.wait(0.5)
+		check(
+			"a hung post with no later edit is abandoned by the watchdog and its batch is sent again",
+			#sent == 2 and rawequal(sent[1][1], first) and rawequal(sent[2][1], first),
+			string.format("posts %d", #sent)
+		)
+		check(
+			"the abandoned post is named in a Warning",
+			string.find(table.concat(warningsOf(log), "\n"), "push abandoned", 1, true) ~= nil,
+			table.concat(warningsOf(log), " | ")
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local watchdogs = {}
-	local gate = { issued = 0, flight = nil }
-	local releasedFirst = false
-	local releasedSecond = false
-	local calls = 0
-	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
-	hungDeps.pushGate = gate
-	hungDeps.delay = function(_, fire)
-		table.insert(watchdogs, fire)
-	end
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, _changes)
-				calls += 1
-				local mine = calls
-				if mine == 1 then
-					while not releasedFirst do
-						task.wait(0.05)
-					end
-				elseif mine == 2 then
-					while not releasedSecond do
-						task.wait(0.05)
-					end
-				end
-			end,
-		},
-		root,
-		1,
-		onState,
-		hungDeps
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
-	connection:_schedulePush()
-	task.wait(0.5)
-	watchdogs[1]()
-	task.wait(0.5)
-	local newerToken = gate.flight and gate.flight.token
-	releasedFirst = true
-	task.wait(0.5)
-	check(
-		"a late return from an abandoned post does not release the gate of the newer post",
-		calls == 2 and gate.flight ~= nil and gate.flight.token == newerToken,
-		string.format("calls %d, flight %s", calls, tostring(gate.flight and gate.flight.token))
-	)
-	connection.pendingPush["C.luau"] = Protocol.upsert("C.luau", "ModuleScript", "C")
-	connection:_schedulePush()
-	task.wait(0.5)
-	check(
-		"no third post is sent while the newer post is still in flight",
-		calls == 2,
-		string.format("calls %d", calls)
-	)
-	releasedSecond = true
-	task.wait(0.5)
-	connection.running = false
-	check(
-		"the push after the newer post returns is sent and the gate is released",
-		calls == 3 and gate.flight == nil,
-		string.format("calls %d", calls)
-	)
-end
+suite("a newer pending edit to a path wins over the batch restored from an abandoned post", function()
+		local hold = { done = false }
+		local _, onState = stateLog()
+		local connection, sent, watchdogs = abandoningConnection(onState, { [1] = hold })
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		task.wait(0.5)
+		local newer = Protocol.upsert("A.luau", "ModuleScript", "A2")
+		connection.pendingPush["A.luau"] = newer
+		fireWatchdog(watchdogs, 1)
+		task.wait(0.5)
+		check(
+			"a newer pending edit to a path wins over the batch restored from an abandoned post",
+			#sent == 2 and rawequal(sent[2][1], newer),
+			string.format("posts %d", #sent)
+		)
+end)
 
-do
-	local log, onState = stateLog()
-	local tree, root = studioWorld(true)
-	local script = { 500, 503, 500, 503, 500 }
-	local calls = 0
-	local connection: any = nil
-	connection = Connection.new(
-		{
-			postChanges = function(_, _changes)
-				calls += 1
-				local status = script[calls]
-				error({ status = status, message = "naht: /changes returned " .. tostring(status), refused = {} })
-			end,
-		},
-		root,
-		1,
-		onState,
-		deps(extentsTerrainWith(extentsRegion), tree)
-	)
-	connection.running = true
-	connection.session = 1
-	connection.epoch = 1
-	connection.pushBackoff = 0.01
-	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
-	connection:_schedulePush()
-	task.wait(2)
-	connection.running = false
-	check(
-		"a 500 alternating with a 503 is still dropped at the third 500",
-		calls == 5 and next(connection.pendingPush) == nil,
-		string.format("calls %d", calls)
-	)
-	check(
-		"the batch dropped at the third alternating 500 is named in a Warning",
-		string.find(table.concat(warningsOf(log), "\n"), "not synced, the daemon kept failing on A.luau", 1, true) ~= nil,
-		table.concat(warningsOf(log), "\n")
-	)
-end
+suite("a late return from an abandoned post does not release the gate of the newer post", function()
+		local firstHold = { done = false }
+		local secondHold = { done = false }
+		local _, onState = stateLog()
+		local connection, sent, watchdogs = abandoningConnection(onState, { [1] = firstHold, [2] = secondHold })
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 1)
+		task.wait(0.5)
+		local newerToken = connection.pushGate.flight and connection.pushGate.flight.token
+		firstHold.done = true
+		task.wait(0.5)
+		check(
+			"a late return from an abandoned post does not release the gate of the newer post",
+			#sent == 2 and connection.pushGate.flight ~= nil and connection.pushGate.flight.token == newerToken,
+			string.format("posts %d", #sent)
+		)
+		connection.pendingPush["C.luau"] = Protocol.upsert("C.luau", "ModuleScript", "C")
+		connection:_schedulePush()
+		task.wait(0.5)
+		check(
+			"no third post is sent while the newer post is still in flight",
+			#sent == 2,
+			string.format("posts %d", #sent)
+		)
+		secondHold.done = true
+		task.wait(0.5)
+		check(
+			"the push after the newer post returns is sent and the gate is released",
+			#sent == 3 and connection.pushGate.flight == nil,
+			string.format("posts %d", #sent)
+		)
+end)
+
+suite("a third consecutive abandonment stops the automatic re-send", function()
+		local hold = { done = false }
+		local _, onState = stateLog()
+		local connection, sent, watchdogs = abandoningConnection(onState, { hold, hold, hold })
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		fireWatchdog(watchdogs, 1)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 2)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 3)
+		task.wait(0.5)
+		check(
+			"a third consecutive abandonment stops the automatic re-send",
+			#sent == 3 and watchdogs[4] == nil,
+			string.format("posts %d", #sent)
+		)
+		check(
+			"the batch of the third abandoned post is kept pending",
+			connection.pendingPush["A.luau"] ~= nil,
+			"nothing pending"
+		)
+		check(
+			"the held batch raises a Warning that the daemon is not answering",
+			string.find(connection.warnings.push or "", "not answering", 1, true) ~= nil,
+			tostring(connection.warnings.push)
+		)
+		connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(0.5)
+		check(
+			"the next edit sends the held batch together with the new edit",
+			#sent == 4 and #sent[4] == 2,
+			string.format("posts %d", #sent)
+		)
+		check(
+			"the accepted post clears the not-answering Warning",
+			connection.warnings.push == nil,
+			tostring(connection.warnings.push)
+		)
+end)
+
+suite("a reconnect sends the batch held after three abandonments", function()
+		local hold = { done = false }
+		local _, onState = stateLog()
+		local connection, sent, watchdogs = abandoningConnection(onState, { hold, hold, hold })
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		fireWatchdog(watchdogs, 1)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 2)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 3)
+		task.wait(0.5)
+		connection.client.patches = function(_, _cursor)
+			task.wait(0.5)
+			connection:stop()
+			return { cursor = 0, patches = {} }
+		end
+		connection:_run(1)
+		check(
+			"a reconnect sends the batch held after three abandonments",
+			#sent == 4,
+			string.format("posts %d", #sent)
+		)
+end)
+
+suite("an accepted post resets the count, so three more consecutive abandonments are needed to stop the re-send", function()
+		local hold = { done = false }
+		local _, onState = stateLog()
+		local connection, sent, watchdogs = abandoningConnection(onState, { [1] = hold, [3] = hold, [4] = hold, [5] = hold })
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		fireWatchdog(watchdogs, 1)
+		task.wait(0.5)
+		connection.pendingPush["C.luau"] = Protocol.upsert("C.luau", "ModuleScript", "C")
+		connection:_schedulePush()
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 3)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 4)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 5)
+		task.wait(0.5)
+		check(
+			"an accepted post resets the count, so three more consecutive abandonments are needed to stop the re-send",
+			#sent == 5 and watchdogs[6] == nil,
+			string.format("posts %d", #sent)
+		)
+		check(
+			"the batch is kept pending after the third abandonment that follows the reset",
+			connection.pendingPush["C.luau"] ~= nil,
+			"nothing pending"
+		)
+end)
+
+suite("a 500 alternating with a 503 is still dropped at the third 500", function()
+		local log, onState = stateLog()
+		local tree, root = studioWorld(true)
+		local script = { 500, 503, 500, 503, 500 }
+		local calls = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, _changes)
+					calls += 1
+					local status = script[calls]
+					error({ status = status, message = "naht: /changes returned " .. tostring(status), refused = {} })
+				end,
+			},
+			root,
+			1,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection.pushBackoff = 0.01
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		task.wait(2)
+		connection.running = false
+		check(
+			"a 500 alternating with a 503 is still dropped at the third 500",
+			calls == 5 and next(connection.pendingPush) == nil,
+			string.format("calls %d", calls)
+		)
+		check(
+			"the batch dropped at the third alternating 500 is named in a Warning",
+			string.find(table.concat(warningsOf(log), "\n"), "not synced, the daemon kept failing on A.luau", 1, true) ~= nil,
+			table.concat(warningsOf(log), "\n")
+		)
+end)
 
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
