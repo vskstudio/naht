@@ -83,3 +83,21 @@ fn a_blob_patch_leaves_the_queue_once_the_plugin_moves_its_cursor_past_it() {
 
     assert!(session.blob_queue.is_empty());
 }
+
+#[test]
+fn an_unchanged_patch_keeps_its_delivered_seq_across_a_rescan() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_in(root.path());
+    fs::write(root.path().join("A.luau"), "one").unwrap();
+    session.rescan().unwrap();
+    let delivered = session.queue["A.luau"].0;
+    fs::write(root.path().join("B.luau"), "two").unwrap();
+    session.rescan().unwrap();
+
+    session.ack(&[delivered]).unwrap();
+
+    assert!(!session.queue.contains_key("A.luau"));
+    let (_, patches) = session.take_patches(0);
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0].patch.path, "B.luau");
+}
