@@ -173,7 +173,7 @@ instances only the hash is stored (no merge base).
   poll, doubles the wait on each further failure, and caps it at 15 s. The terrain blob loop
   (`_serveBlobs` in `plugin/src/Connection.luau`) runs apart from it: a failed `GET /blobs` poll, or a
   batch that does not apply, is retried at the same cursor after a wait that starts at 2 s, doubles, and
-  caps at 60 s. A cleanly applied batch resets that wait to 2 s. After five consecutive undecodable
+  caps at 60 s. A cleanly applied batch resets that wait to 2 s. The `/blobs` cursor is the ack: the daemon drops each queued blob patch below the cursor a poll sends, and the plugin keeps its blob cursor across a reconnect to the same daemon session. After five consecutive undecodable
   responses the blob channel shows a `keeps failing to decode, still retrying` Warning, and it keeps
   retrying: it never gives up while the connection runs.
 - **Long-poll wake-ups never race the queue.** A parked `/patches` or `/blobs` request enrols its

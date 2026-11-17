@@ -102,8 +102,9 @@ impl Session {
         self.blob_queue.values().any(|(seq, _)| *seq >= cursor)
     }
 
-    /// Every queued blob patch at or beyond `cursor`, in sequence order, with the cursor to send next.
-    pub fn take_blob_patches(&self, cursor: u64) -> (u64, Vec<BlobPatch>) {
+    /// Blob patches from `cursor` on, in order; earlier ones are acked and dropped.
+    pub fn take_blob_patches(&mut self, cursor: u64) -> (u64, Vec<BlobPatch>) {
+        self.blob_queue.retain(|_, (seq, _)| *seq >= cursor);
         let mut entries: Vec<&(u64, BlobPatch)> = self
             .blob_queue
             .values()

@@ -22,7 +22,7 @@ it needs HTTP/2, which `HttpService` does not support.
 | `GET /info` | Handshake: protocol/server version, project name, session id. Triggers a re-diff against persisted state on (re)connect. |
 | `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. |
 | `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
-| `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. |
+| `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. The cursor is the ack: queued blob patches below it are dropped. |
 | `POST /blobs` | Studio → daemon blob changes (terrain voxels). |
 | `POST /ack` | The plugin confirms, by sequence number, which patches it actually applied. Gates the base advance. |
 | `GET /heartbeat` | Liveness ping; drives the explicit connection state. |

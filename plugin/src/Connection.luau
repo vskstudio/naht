@@ -336,9 +336,9 @@ function Connection._run(self, session: number)
 			self:_schedulePush()
 			if info.session_id ~= self.sessionId then
 				self.cursor = 0
+				self.blobCursor = 0
 				self.sessionId = info.session_id
 			end
-			self.blobCursor = 0
 			self.epoch += 1
 			local epoch = self.epoch
 			task.spawn(function()

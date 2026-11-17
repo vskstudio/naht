@@ -1195,6 +1195,57 @@ suite("a reconnect to a restarted daemon session starts the cursor at 0", functi
 		)
 end)
 
+suite("a reconnect to the same daemon session resumes the blob cursor it held", function()
+		local tree, root = studioWorld(true)
+		local blobCursors: { number } = {}
+		local textPolls = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				info = function(_, _placeId)
+					return { project_name = "demo", session_id = "s1" }
+				end,
+				patches = function(_, _cursor)
+					textPolls += 1
+					if textPolls == 1 then
+						return { cursor = 0, patches = {} }
+					elseif textPolls == 2 then
+						error("daemon down")
+					end
+					connection:stop()
+					return { cursor = 0, patches = {} }
+				end,
+				blobs = function(_, cursor)
+					table.insert(blobCursors, cursor)
+					if #blobCursors == 1 then
+						return { cursor = 5, patches = {} }
+					end
+					error("no blob patch expected")
+				end,
+				postBlobs = function(_, _blobs) end,
+			},
+			root,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.backoff = 0.01
+		connection.blobBackoff = 0.01
+		connection:_run(1)
+		local resumed = true
+		for index = 2, #blobCursors do
+			if blobCursors[index] ~= 5 then
+				resumed = false
+			end
+		end
+		check(
+			"a reconnect to the same daemon session resumes the blob cursor it held",
+			resumed,
+			"blob cursors " .. table.concat(blobCursors, ",")
+		)
+end)
+
 suite("a rejected text patch holds the cursor at its seq so the next poll asks for it again", function()
 		local _, onState = stateLog()
 		local tree, root = studioWorld(true)

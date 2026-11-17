@@ -339,15 +339,15 @@ async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQue
 
     let notified = enrol_waiter(&state.blobs_ready);
     {
-        let session = state.session.lock().await;
+        let mut session = state.session.lock().await;
         if session.has_blobs_after(cursor) {
-            return blob_batch(&session, cursor);
+            return blob_batch(&mut session, cursor);
         }
     }
     let _parked = time::timeout(state.long_poll, notified).await;
 
-    let session = state.session.lock().await;
-    blob_batch(&session, cursor)
+    let mut session = state.session.lock().await;
+    blob_batch(&mut session, cursor)
 }
 
 async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
@@ -421,7 +421,7 @@ fn patch_batch(session: &Session, cursor: u64) -> Response {
     msgpack(&PatchBatch { cursor, patches })
 }
 
-fn blob_batch(session: &Session, cursor: u64) -> Response {
+fn blob_batch(session: &mut Session, cursor: u64) -> Response {
     let (cursor, patches) = session.take_blob_patches(cursor);
     msgpack(&BlobPatchBatch { cursor, patches })
 }

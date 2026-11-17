@@ -63,6 +63,8 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   (`SequencedPatch`, flattened on the wire). `POST /ack` takes `{seqs: [...]}` in place of `{paths: [...]}`:
   an acked patch leaves the queue and advances its base, and an ack for a superseded sequence is a no-op.
   The plugin holds its cursor at the first patch it rejected, so the next poll asks for it again.
+- **Blob cursor as ack**: the `/blobs` cursor is the plugin's ack. The plugin advances it only past a batch it
+  applied in full, and the daemon drops every queued blob patch below the cursor a poll sends.
 
 - **`POST /changes` response**: a batch whose every change is accepted is answered `200` with an empty body.
   A batch with any refused change is refused whole: `400` with a JSON body `{"refused_paths": [...]}` naming
