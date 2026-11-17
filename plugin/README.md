@@ -11,7 +11,7 @@ mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core)
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec for the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/blobs`, `/ack`, `/heartbeat`) |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Terrain.luau` | Read/write terrain voxels (`ReadVoxels`/`WriteVoxels`) as an opaque binary blob |
 | `src/Connection.luau` | Handshake, long-poll + apply, edit push, reconnect with backoff |
@@ -49,7 +49,7 @@ Behaviour notes:
   Only a Studio error while writing the source rejects a patch.
 - Folders on the way to a file are matched only against non-script containers. A `Script` named `Foo`
   never hides a `Folder` named `Foo`: `Foo/Bar.luau` goes under the folder.
-- Instance names containing `/`, `\`, `:` or NUL, and folder names that are empty, `.` or `..`, are not synced,
+- Instance names containing `/`, `\`, `:`, `< > " | ? *` or a control byte (0x00 to 0x1F, NUL included), and folder names that are empty, `.` or `..`, are not synced,
   because the daemon refuses them as project paths. The daemon splits a path on both `/` and `\`, so an inner `\`
   would become nested folders on disk, and the plugin refuses every name that contains one. The daemon itself
   accepts an inner `\` as a separator and rejects a leading one or one that leaves an empty folder name, so this rule is stricter than the daemon on purpose. A `ModuleScript` whose name ends in `.server`, `.client` or `.luau` is not synced
@@ -110,6 +110,13 @@ Behaviour notes:
   `ack failed: <reason>`, and its paths stay unacked until the ack succeeds. An ack the daemon refuses with any
   other status is not retried: the widget shows `Warning` with `ack refused: <reason>` until Stop, and those
   paths are dropped from the unacked list.
+
+Every request carries `x-naht-client: plugin` and `x-naht-place-id` (the id of the open place). The
+daemon answers `403` to a request without the client header, with a body that starts with the token
+`outdated-plugin`, and to a place id that differs from the project's `servePlaceId` when one is set. A plugin
+built for protocol version 1 sends no client header and does not know that token: it keeps showing
+`Reconnecting` with the 403 reason, so update the plugin to match the daemon (protocol version 2). Only a
+plugin built for version 2 stops at `Disconnected` with the update message.
 
 ## Tests
 

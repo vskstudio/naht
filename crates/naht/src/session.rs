@@ -16,6 +16,7 @@ mod inbound;
 mod queue;
 mod rescan;
 mod state;
+mod transaction;
 
 use getrandom::{Error as RandomError, fill};
 use naht_core::binary::{BlobInstance, BlobPatch};
@@ -23,7 +24,7 @@ use naht_core::protocol::SyncEvent;
 use naht_core::reconciler::{Patch, ReconcileError, TextInstance};
 use naht_core::state::{StateError, StateStore};
 use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -57,6 +58,7 @@ pub struct Session {
     store: StateStore,
     /// The last-known Studio side, keyed by project-relative path. Advances on ack, never on send.
     studio: BTreeMap<String, TextInstance>,
+    journal: Option<transaction::Journal>,
     /// Queued filesystem → Studio patches, keyed by path so a re-diff replaces rather than appends.
     /// Each carries a monotonically increasing sequence so the long-poll can resume from a cursor.
     queue: BTreeMap<String, (u64, Patch)>,
@@ -75,6 +77,7 @@ pub struct Session {
     activity: VecDeque<SyncEvent>,
     /// The seq to stamp on the next recorded event; monotonic within this session.
     activity_next_seq: u64,
+    source_roots: BTreeSet<String>,
     project_name: String,
     id: String,
     daemon_id: String,

@@ -162,7 +162,7 @@ impl Vfs for DiskVfs {
             source,
         })?;
         let result = if metadata.is_dir() {
-            fs::remove_dir_all(path)
+            fs::remove_dir(path)
         } else {
             fs::remove_file(path)
         };
@@ -210,6 +210,31 @@ mod tests {
             "the write must replace the file, not truncate it in place"
         );
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn remove_refuses_a_directory_that_still_has_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("Tree")).unwrap();
+        fs::write(dir.path().join("Tree").join("Deep.luau"), "deep").unwrap();
+
+        let result = DiskVfs::new().remove(&dir.path().join("Tree"));
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("Tree").join("Deep.luau")).unwrap(),
+            "deep"
+        );
+    }
+
+    #[test]
+    fn remove_takes_an_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("Empty")).unwrap();
+
+        DiskVfs::new().remove(&dir.path().join("Empty")).unwrap();
+
+        assert!(!dir.path().join("Empty").exists());
     }
 
     #[test]

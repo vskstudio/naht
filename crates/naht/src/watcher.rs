@@ -51,7 +51,7 @@ pub fn spawn(root: &Path, state: Arc<AppState>) -> Result<impl Drop + use<>, Wat
                         match state.with_session(Session::rescan).await {
                             Ok(Ok(())) => {}
                             Ok(Err(error)) => {
-                                tracing::warn!(target: "naht::watcher", %error, "rescan failed");
+                                tracing::warn!(target: "naht::watcher", ?error, "rescan failed");
                             }
                             Err(error) => {
                                 tracing::warn!(target: "naht::watcher", %error, "rescan task failed");

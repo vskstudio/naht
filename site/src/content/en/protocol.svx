@@ -19,13 +19,43 @@ it needs HTTP/2, which `HttpService` does not support.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /info` | Handshake: protocol/server version, project name, session id, and the `servePlaceId` guard. Triggers a re-diff against persisted state on (re)connect. |
+| `GET /info` | Handshake: protocol/server version, project name, session id. Triggers a re-diff against persisted state on (re)connect. |
 | `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. |
 | `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
 | `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. |
 | `POST /blobs` | Studio → daemon blob changes (terrain voxels). |
 | `POST /ack` | The plugin confirms which patches it actually applied. Gates the base advance. |
 | `GET /heartbeat` | Liveness ping; drives the explicit connection state. |
+
+## Access control
+
+The daemon checks every route before its handler runs. A request is refused with `403` when:
+
+- it carries an `Origin` header, which browsers add to cross-site requests;
+- its `Host` is not `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, which stops web pages that
+  rebind a DNS name to the loopback address;
+- it lacks the `x-naht-client` header. A browser cannot send a custom header to another origin without a
+  preflight, and the daemon never answers one;
+- the project sets `[serve] place_id` and the `x-naht-place-id` header is missing or differs.
+
+These checks stop browsers and DNS rebinding. They are not authentication: any process on the machine that
+reaches the port and sends the headers is accepted, so on a shared machine the operating system account is
+what protects the project. The threat model is in `SECURITY.md`.
+
+Writes are checked against what they may touch. `POST /changes` takes a MessagePack map `{changes: [...]}`,
+where each change is `{Upsert: {path, class, content}}` or `{Delete: {path}}`. It accepts only visible paths
+that map to a Studio script. A batch with any refused change is refused whole: the daemon answers `400` with a
+JSON body `{"refused_paths": [...]}` listing every refused path in batch order, and nothing in the batch is
+written. A batch with every change accepted is answered `200` with an empty body, and a path through a symlink
+is refused. A malformed body is `400`. If the valid
+changes cannot be applied, the batch is answered `500` and the daemon's Studio mirror is restored to its state
+before the batch. `POST /blobs` accepts only visible `.terrain` files, and anything else is `400` and writes
+nothing.
+
+At most two POST requests read and handle a body at once, and a third waits for a slot with no time limit of
+its own. Each body is capped at 64 MiB and answered `413` when larger. The 15-second timer covers only the read
+of the body, which is answered `408` when it stalls, and a body that ends early or is malformed is answered
+`400`. A request head that stalls for ten seconds is dropped.
 
 ## The handshake (`GET /info`)
 
@@ -34,13 +64,13 @@ name, a session id, and the optional `serve_place_id`. Two guards live here:
 
 - **Version gate**: a protocol-version mismatch is reported instead of syncing against an incompatible
   peer. Upgrade the CLI and plugin together. See [Installation](#/docs/installation).
-- **`servePlaceId` guard**: if the project sets `[serve] place_id`, the daemon only proceeds with the
-  Studio session whose place id matches. A mismatch is rejected here, before any source moves.
+- **`servePlaceId` guard**: if the project sets `[serve] place_id`, every request must carry the matching
+  `x-naht-place-id` header. A mismatch is refused before any source moves (see Access control).
 
 <Callout type="important">
 
 The `servePlaceId` guard is the cheap insurance that stops you pouring one game's source into another.
-A mismatch fails at the handshake. Nothing is written.
+A mismatch fails on the first request. Nothing is written.
 
 </Callout>
 
@@ -63,5 +93,9 @@ backbone of Naht's reconnect safety, detailed in the [Sync engine](#/docs/sync-e
 
 ## Versioning
 
-The protocol carries an integer `PROTOCOL_VERSION` (currently `1`). It is part of the handshake so the
+The protocol carries an integer `PROTOCOL_VERSION` (currently `2`). It is part of the handshake so the
 two halves can refuse to talk across an incompatible boundary instead of corrupting state.
+
+The client headers `x-naht-client` and `x-naht-place-id` are required on every request and came with
+version `2`. A plugin built for version `1` is refused on every route, and it reports that it is outdated
+and stops reconnecting. Upgrade the CLI and the plugin together.

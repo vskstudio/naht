@@ -55,12 +55,14 @@ export type Codec = {
 	binary: (bytes: string) -> any,
 }
 
-local PROTOCOL_VERSION = 1
+local PROTOCOL_VERSION = 2
 
 local function new(MessagePack: Codec)
 	local Protocol = {}
 
 	Protocol.PROTOCOL_VERSION = PROTOCOL_VERSION
+	Protocol.OUTDATED_PLUGIN_TOKEN = "outdated-plugin"
+	Protocol.INCOMPATIBLE_VERSION = "naht: incompatible protocol version"
 
 	function Protocol.decodeInfo(bytes: string): ServerInfo
 		return MessagePack.decode(bytes)
@@ -68,12 +70,17 @@ local function new(MessagePack: Codec)
 
 	function Protocol.assertCompatible(info: ServerInfo): ServerInfo
 		if info.protocol_version ~= Protocol.PROTOCOL_VERSION then
+			local hint = if info.protocol_version > Protocol.PROTOCOL_VERSION
+				then "update the naht plugin"
+				else "update the naht daemon"
 			error(
-				"naht: incompatible protocol version (daemon "
-					.. tostring(info.protocol_version)
-					.. ", plugin "
-					.. tostring(Protocol.PROTOCOL_VERSION)
-					.. ")"
+				string.format(
+					"%s (daemon %s, plugin %s): %s",
+					Protocol.INCOMPATIBLE_VERSION,
+					tostring(info.protocol_version),
+					tostring(Protocol.PROTOCOL_VERSION),
+					hint
+				)
 			)
 		end
 		return info

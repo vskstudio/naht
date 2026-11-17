@@ -14,7 +14,7 @@ use naht_core::vfs::DiskVfs;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -47,20 +47,27 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
             }
         }
         Ok(Err(error)) => {
-            tracing::warn!(target: "naht::serve", %error, "startup warnings skipped: tree unreadable");
+            tracing::warn!(target: "naht::serve", ?error, "startup warnings skipped: tree unreadable");
         }
         Err(error) => {
             tracing::warn!(target: "naht::serve", %error, "startup warnings skipped: snapshot task failed");
         }
     }
     let store = open_store(&root)?;
-    let session = Session::new(
+    let mut session = Session::new(
         root.clone(),
         store,
         config.project_name(&root),
         config.serve.place_id,
         config.terrain_sync(),
     )?;
+    session.protect_source_roots(
+        config
+            .tree
+            .iter()
+            .filter_map(|node| node.path.as_deref())
+            .map(PathBuf::from),
+    );
     let daemon_id = session.daemon_id().to_owned();
     let state = AppState::new(session, LONG_POLL);
     state

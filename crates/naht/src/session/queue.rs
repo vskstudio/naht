@@ -1,4 +1,5 @@
 use super::Session;
+use super::transaction::Outbound;
 use super::{ACTIVITY_CAP, SessionError};
 use naht_core::binary::BlobPatch;
 use naht_core::protocol::{EventKind, Outcome, SyncActivity, SyncEvent};
@@ -56,13 +57,17 @@ impl Session {
     }
 
     pub(super) fn enqueue_blob(&mut self, patch: BlobPatch) {
+        self.emit(Outbound::QueueBlob(patch));
+    }
+
+    fn push_blob_patch(&mut self, patch: BlobPatch) {
         tracing::info!(
             target: "naht::sync",
-            path = %patch.path,
+            path = ?patch.path,
             kind = ?patch.kind,
             "blob patch emitted"
         );
-        self.record_event(
+        self.push_event(
             patch.path.clone(),
             Direction::ToStudio,
             EventKind::Blob,
@@ -114,9 +119,13 @@ impl Session {
     }
 
     pub(super) fn enqueue(&mut self, patch: Patch) {
+        self.emit(Outbound::Queue(patch));
+    }
+
+    fn push_patch(&mut self, patch: Patch) {
         tracing::info!(
             target: "naht::sync",
-            path = %patch.path,
+            path = ?patch.path,
             kind = ?patch.kind,
             "patch emitted"
         );
@@ -125,7 +134,52 @@ impl Session {
         self.next_seq = self.next_seq.saturating_add(1);
     }
 
+    pub(super) fn set_unacked(&mut self, key: &str, pending: Option<Patch>) {
+        self.emit(Outbound::Unacked(key.to_owned(), pending));
+    }
+
     pub(super) fn record_event(
+        &mut self,
+        path: String,
+        direction: Direction,
+        kind: EventKind,
+        outcome: Outcome,
+    ) {
+        self.emit(Outbound::Event {
+            path,
+            direction,
+            kind,
+            outcome,
+        });
+    }
+
+    fn emit(&mut self, outbound: Outbound) {
+        match self.journal.as_mut() {
+            Some(journal) => journal.outbox.push(outbound),
+            None => self.apply(outbound),
+        }
+    }
+
+    pub(super) fn apply(&mut self, outbound: Outbound) {
+        match outbound {
+            Outbound::Event {
+                path,
+                direction,
+                kind,
+                outcome,
+            } => self.push_event(path, direction, kind, outcome),
+            Outbound::Queue(patch) => self.push_patch(patch),
+            Outbound::QueueBlob(patch) => self.push_blob_patch(patch),
+            Outbound::Unacked(key, Some(pending)) => {
+                self.unacked.insert(key, pending);
+            }
+            Outbound::Unacked(key, None) => {
+                self.unacked.remove(&key);
+            }
+        }
+    }
+
+    fn push_event(
         &mut self,
         path: String,
         direction: Direction,

@@ -81,26 +81,8 @@ All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on f
 - **Text:** 3-way merge with the last-sync content as the base. Clean merge → written, base advanced.
 - **Unmergeable text:** git-style markers (`<<<<<<< FS` / `=======` / `>>>>>>> Studio`) written into
   the file, the path marked *conflicted* in SQLite, and sync for that path **frozen** until
-  `naht resolve` confirms the markers are gone. The base of a frozen path holds the Studio content
-  at freeze time, so `naht resolve` only lifts the freeze and then asks the running daemon, found through
-  `.naht/daemon.port`, to reconcile (`GET /info`, 2 s timeout): the resolved file is sent to Studio as an
-  update at once, and the stale Studio text is never written back over it. With no daemon running, or one
-  that does not answer in time, the next sync event does it. Studio edits
-  that arrive while the path is frozen are kept in `studio_sides`, so the next reconcile after a
-  resolve (even after a restart) merges against the latest Studio text, or conflicts again, and never
-  overwrites it.
+  `naht resolve` confirms the markers are gone.
 - **Binary:** file-level conflict, never auto-merged.
-- **Restart:** a session opens with its Studio mirror seeded from the persisted text bases, overridden
-  by the tracked Studio sides of frozen paths. An unchanged file is therefore not read as a Studio
-  deletion, and an edit made while the daemon was down is sent to Studio as an update. Blobs are never
-  seeded from the filesystem: nothing is reconciled until Studio reports its blob snapshot (on plugin
-  connect), and a base whose path that snapshot omits is dropped first, so a blob re-created on disk is
-  created in Studio, never matched against an old base. A blob deleted on disk while the daemon was down
-  keeps its base until Studio reports, so when Studio sends its copy back the path is a Studio-bound
-  delete, not a resurrected file. Filesystem blob changes made during a session therefore wait until
-  Studio posts its first blob snapshot of that session; the plugin posts one on every connect, even for
-  a place with no terrain, and retries that post until the daemon accepts it. Those changes stay on disk
-  and are reconciled as soon as the snapshot arrives.
 
 ## 5. State store (SQLite)
 
@@ -114,41 +96,12 @@ Per instance, keyed by stable GUID:
 | `path` | filesystem path it maps to |
 | `class` | Roblox class name |
 | `content_hash` | fast change detection |
-| `base_content` (BLOB) | last-synced content: the **base** for 3-way text merge (text only); for a frozen path, the Studio content |
+| `base_content` (BLOB) | last-synced content: the **base** for 3-way text merge (text only) |
 | `mtime` | filesystem modification time |
 | `conflicted` | whether this path is frozen pending resolution |
 
-A `studio_sides` table (`path`, `class`, `content`) holds the latest Studio side of a path that is
-frozen or was frozen and not yet re-based; `content` is `NULL` when Studio deleted the instance, and
-`class` is then the class the base recorded. It seeds the Studio mirror on restart and is cleared as
-soon as the base advances.
-
 A `meta` table holds the schema version and project identity. Writes are transactional. For binary
 instances only the hash is stored (no merge base).
-
-While it runs, `naht serve` also writes its bound port and a random per-run daemon id to
-`.naht/daemon.port` (plain text, the port on the first line and the id on the second, next to `state.db`,
-written through a temp file and a rename so a reader never sees a partial value) and removes the file on a
-clean shutdown. A second `naht serve` on the same project refuses to start (exit 69): the daemon holds an
-exclusive lock on `.naht/daemon.lock` for its whole lifetime, taken before it writes anything. The lock
-covers only the daemon. `naht status` and `naht resolve` open `state.db` without it and rely on SQLite
-locking: every connection sets a 5 s busy timeout, and migrations run only when the schema is not current,
-so opening a current store takes no write lock. A migration runs in one `BEGIN IMMEDIATE` transaction, which
-takes the write lock before its first statement: it creates the tables, drops legacy asset hashes and writes
-the schema version, and rolls back as a whole if any step fails. When `try_lock` is refused on a filesystem that does not
-support it, `naht serve` exits 74 and does not start (it fails closed). On NFS the lock may be per host, so
-it does not exclude a daemon running on another machine.
-
-`naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured. When that
-file is absent, `naht pull` asks the `naht.toml` port and refuses whatever answers there, since no id is
-recorded to check it against; `naht resolve` skips the nudge. Both nudges wait at most 2 s for an answer. A
-file left behind by a crashed daemon points at a closed port, and the nudge then does nothing. Before a nudge
-re-syncs anything, it checks that the answer's `/info` names this project (and this place, when `naht.toml`
-configures one) and that its `daemon_id` is the id recorded in the port file. A port that answers for another
-project is reported as foreign and not re-synced. A daemon of this project's name with another id is refused
-as stale (`StaleDaemon`). A missing port file (`MissingPortFile`), a port file from an older naht with no id
-line (`UnverifiedDaemon`), and a daemon from an older naht that reports no `daemon_id` (`OlderDaemon`) are each
-refused as unverified, and each message asks for `naht serve` to be restarted.
 
 ## 6. Configuration
 
@@ -175,24 +128,53 @@ refused as unverified, and each message asks for `naht serve` to be restarted.
   handles complex Roblox types, with usable Luau libraries. JSON is avoided for payloads; the encoding
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
-- **Compatibility.** Under `PROTOCOL_VERSION` 1, a field may be added to a message, and unknown fields are
-  ignored, so an older client still reads a newer server's messages. `daemon_id` was added to `ServerInfo`
-  this way. The reverse is refused on purpose: a newer `naht pull` refuses an older daemon's handshake, one
-  with no `daemon_id`, with the `OlderDaemon` message ("from an older naht"), because it cannot tell which
-  daemon it reached. Removing or retyping a field, or changing what a message means, is a breaking change and
-  bumps the version.
-- **Endpoints:** `GET /info` (handshake + `servePlaceId` guard), `GET /patches` (long-poll, held
+- **Endpoints:** `GET /info` (handshake), `GET /patches` (long-poll, held
   open until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the
   binary terrain channel: a separate long-poll/push pair, kept apart from the text patch channel
   because blobs are synced opaquely with no diff/merge), `POST /ack` (the plugin confirms which
   patches it applied), `GET /heartbeat` (liveness ping), `GET /activity` (read-only live sync feed:
   a `pending` count plus a bounded ring buffer of recent completed sync events with a `since`
   cursor, for an external consumer; additive, no protocol-version bump).
+- **Trust boundary:** one middleware gates every route before any handler runs, and answers `403`
+  when the request carries an `Origin` header, when its `Host` is not exactly one of `127.0.0.1:<port>`,
+  `localhost:<port>` or `[::1]:<port>` (this stops a web page or a DNS-rebinding host from reading or
+  writing through the daemon), when `x-naht-client` is missing or empty (a custom header forces a browser
+  preflight that the daemon never answers), or, when `servePlaceId` is set, when `x-naht-place-id` is
+  missing or differs. The 403 body names the reason, and for a missing client header it starts with the token
+  `outdated-plugin`. `POST /changes` accepts only visible paths the mapper turns into a Studio script: a batch
+  with any refused change is refused whole, answered `400` with `{"refused_paths": [...]}` naming every refused
+  path, and nothing in it is written; a batch with every change accepted is answered `200` with an empty body.
+  `POST /blobs` accepts only visible `.terrain` files; anything else is `400`
+  and writes nothing. At most two POST requests read and handle a body at once: each holds a slot from the
+  start of its body read until its handler returns, so a third POST waits for a slot, with no time limit of
+  its own. Each body is capped at 64 MiB and answered `413` when it is larger. The 15-second timer covers only
+  the read of the body: a body that stalls past it is answered `408`, and a body that ends early or is
+  malformed is answered `400`. Time spent by a handler on the session is not covered by that timer. A request
+  head that stalls for ten seconds is dropped. The raw body bytes held at once are therefore at most 128 MiB.
+- **What the gate is not:** it stops browsers and DNS rebinding. It does not authenticate local processes.
+  The daemon trusts any process on the machine that reaches loopback and sends these headers, and the
+  place guard is a safety check against syncing into the wrong game, not authentication. The threat model
+  is stated in [`SECURITY.md`](../SECURITY.md).
+- **Header timeout and keep-alive:** the ten-second header timeout also closes an idle keep-alive
+  connection after ten seconds. Clients must not depend on connection reuse: `Client.luau` makes no
+  assumption about it, and a request that finds its connection closed is retried by the connection loop.
+- **Protocol version 2:** the `x-naht-client` and `x-naht-place-id` headers are required on every request
+  and came with version 2. A plugin built for version 1 sends no client header, so every route answers it
+  `403`, and that plugin does not recognise the token: it keeps showing `Reconnecting` with the 403 reason
+  and must be updated. The clean stop at `Disconnected` with the update message applies only to plugins
+  built from version 2, which match the `outdated-plugin` token.
 - **Resilience** is the headline feature here, because it is exactly what Rojo and Argon get wrong:
-  heartbeat, automatic reconnect with backoff, an explicit connection-state indicator, and: on
-  reconnect: a **re-diff against the persisted state** rather than a blind re-push. Studio-bound
-  patches are **ack-gated**: a patch's base advances only once the plugin acks it, so a half-applied
-  batch re-diffs the rest instead of treating them as synced.
+  heartbeat, automatic reconnect, an explicit connection-state indicator, and: on reconnect: a
+  **re-diff against the persisted state** rather than a blind re-push. Studio-bound patches are
+  **ack-gated**: a patch's base advances only once the plugin acks it, so a half-applied batch re-diffs
+  the rest instead of treating them as synced.
+- **Retry backoff** is per channel. The text connection loop waits 1 s after a failed handshake or
+  poll, doubles the wait on each further failure, and caps it at 15 s. The terrain blob loop
+  (`_serveBlobs` in `plugin/src/Connection.luau`) runs apart from it: a failed `GET /blobs` poll, or a
+  batch that does not apply, is retried at the same cursor after a wait that starts at 2 s, doubles, and
+  caps at 60 s. A cleanly applied batch resets that wait to 2 s. After five consecutive undecodable
+  responses the blob channel shows a `keeps failing to decode, still retrying` Warning, and it keeps
+  retrying: it never gives up while the connection runs.
 - **Long-poll wake-ups never race the queue.** A parked `/patches` or `/blobs` request enrols its
   `Notified` future *before* it checks the queue, and `enable()` registers that waiter immediately. A
   change that enqueues and notifies between the check and the await is then captured, not lost.
@@ -206,13 +188,17 @@ refused as unverified, and each message asks for `naht serve` to be restarted.
   root cause of Rojo's data-loss crashes (`.unwrap()` on `PermissionDenied`).
 - A failed write **pauses the affected path** and surfaces the error; it never kills the session and
   never discards the pending change.
-- A source file that cannot be read or decoded (non-UTF-8, dangling symlink) is skipped and logged as a warning; the rest of the tree still syncs.
+- A source file that cannot be read or decoded (non-UTF-8, or a symlink) is skipped and logged as a warning; the rest of the tree still syncs. A symlink, live or dangling, is recorded as skipped and is never read through, so its target never reaches Studio.
+- A `POST /changes` batch whose valid changes fail to apply is answered `500`, and nothing it did survives. It runs inside a transaction that journals each disk write (the previous content, or its absence, and any parent directory it created), each base record it changes and each Studio or blob mirror entry it writes. On failure, or on a panic, those are restored in reverse order, so a later batch cannot replay it and a rescan finds nothing to do (`a_failed_batch_leaves_no_disk_write_behind`, `a_panic_inside_a_batch_restores_the_state_it_had_changed`). `POST /blobs` runs in the same transaction, so a failed blob batch leaves no blob on disk or in the mirror (`a_failed_blob_batch_leaves_no_blob_on_disk_or_in_the_mirror`). The reconciler removes files only. After a batch's deletes, each directory above a deleted path is removed only when the batch left it empty, deepest first (`remove_if_emptied`), and that removal is journaled so a rollback recreates it. The project root, each top-level directory and each configured `[[tree]]` path are never removed (`the_last_file_deleted_under_a_top_level_source_root_keeps_the_root`, `a_configured_source_root_keeps_its_directory_when_its_last_file_is_deleted`). The walk considers only directories at depth two or deeper, so a directory directly under the project root (such as `src` or `packages`) is never removed by it, configured or not. A configured `[[tree]]` path is matched case-insensitively, so a folder whose name differs only in case from a configured path is kept as well (`a_source_root_configured_in_one_case_protects_the_folder_in_another`). A directory that still holds any entry, including a non-synced file such as `notes.txt`, is kept and the batch answers `200` (`an_emptied_folder_that_still_holds_a_non_synced_file_is_kept_with_200`). A directory the disk refuses to remove is kept, and the batch still answers `200` (`a_folder_the_disk_refuses_to_remove_keeps_the_batch_and_answers_200`). `DiskVfs::remove` and `MemoryVfs::remove` delete a directory only when it is empty (`remove_dir`), so no path through reconcile or rollback can delete a tree: a directory that still holds files survives (`a_batch_cannot_remove_a_directory_so_its_files_survive_a_failed_batch`, `removing_a_directory_outside_a_batch_keeps_its_files`, `remove_refuses_a_directory_that_still_has_files`). The activity events, queued patches and unacked changes a batch makes are held until it commits and dropped on failure, so a failed batch leaves the activity log and the patch queue unchanged (`a_failed_batch_leaves_the_activity_log_and_patch_queue_unchanged`). A panic during `commit` would leave the disk committed and the outbox partly applied; this is not reachable without an out-of-memory abort.
+- A `POST` answer always reflects what was applied. The 35-second request timeout (the long-poll window plus ten seconds) wraps only the `GET` routes, so no `POST` handler is ever cut off after it has started applying: a batch is answered with the outcome of the apply that actually ran, never `408` after it ran. A `POST` is bounded before it applies, never while it applies: it waits at most ten seconds (`POST_WAIT`) for one of two body slots and for the session lock, and past either bound it is answered `503` with nothing applied (`a_post_waiting_longer_than_the_bound_for_the_session_lock_gets_503_and_applies_nothing`). Past the per-route limit of 64 requests in flight, a `POST` is shed at once with `503` (`a_post_beyond_the_concurrency_limit_is_shed_with_503`). Once a `POST` holds the lock its apply is untimed, and it holds its body slot until its handler returns, even if the client has gone. Replaying a batch that was already applied, immediately after it, leaves the disk and the Studio mirror unchanged and emits no patch (`a_batch_replayed_after_its_answer_was_lost_changes_nothing`).
+- A `POST /changes` batch with any refused change is refused before anything applies: `400` with a JSON body `{"refused_paths": [...]}` naming every refused path in batch order. A change is refused when its path is not a visible Studio script path, has a segment holding a character Windows forbids in file names (`< > " | ? *`, or a control byte (0x00 to 0x1F, NUL included), on every host), escapes the project root or goes through a symlink, or is an `Upsert` naming a path now held by a directory (a file replaced by a directory on disk, then edited in Studio; `text_batches_name_every_refused_path_in_the_body`, `a_text_batch_naming_a_path_that_is_now_a_directory_is_refused_400_naming_it`). A `Delete` on a directory is accepted only when the same batch deletes every on-disk entry under it, recursively: the directory is then removed, deepest first (`a_batch_deleting_a_folder_and_all_its_children_removes_the_directory`). A `Delete` on a directory whose entries the batch leaves in place is refused and named (`a_batch_deleting_a_folder_while_its_children_remain_is_refused_naming_it`). The `POST /blobs` directory case uses the same JSON `400` with `{"refused_paths": [...]}` naming each path held by a directory, and nothing applies (`a_blob_batch_naming_a_path_that_is_now_a_directory_is_refused_400_naming_it`). Known limit: every later Studio edit to a directory path is refused the same way until the user removes or renames the directory on disk. The plugin drops the named paths with a Warning and posts the rest of the batch.
 - A path the scan could not see (an unreadable file, or one under an ignored directory) is left alone on both sides and in the base: it is neither deleted nor overwritten by a Studio edit.
 - A write never follows a symlink. A live or dangling link at the target is refused with `VfsError::Symlink`, and nothing behind it is created or changed.
 - Temp files (`.<name>.<pid>.<n>.naht-tmp`) untouched for ten minutes are removed when a session opens, outside the walk's ignored directories. Younger ones are left alone, so a write running in another process (a second daemon or a concurrent `naht` command) is not broken. A temp file whose modification time cannot be read is kept.
 - `thiserror` in `naht-core`, `anyhow` at the binary boundary.
-- **Safety guard:** `servePlaceId`: the daemon refuses to sync into a Studio session whose place id
-  doesn't match the project, preventing source from landing in the wrong game.
+- **Safety guard:** `servePlaceId`: when the project sets it, every request must carry the matching
+  `x-naht-place-id` header (`403` otherwise), so source does not land in a different game. It is a safety
+  check, not authentication (see the trust boundary in §7).
 
 ## 9. Limits & workarounds
 
@@ -239,31 +225,25 @@ not a v1 blocker.
   simulated-Studio scenarios, including conflict and reconnect.
 - **Plugin:** a minimal Luau harness, added once the protocol stabilizes.
 
-## 11. Known gaps & operational notes
+## 11. Known limitations and follow-ups
 
+- **Local processes are trusted (open).** The loopback gate of §7 stops browsers and DNS rebinding but
+  does not authenticate the caller. Any process that can reach the daemon's port and sends the two
+  headers can read and write the project, so on a machine shared by several accounts, any of them can
+  do the same. Follow-up, not implemented: a per-daemon secret that the plugin presents on every request,
+  or a peer-credential check on a Unix domain socket (`SO_PEERCRED`) that accepts only the owning
+  account's processes. Either one closes the gap for shared machines.
+- **The place guard is a safety check (open).** `servePlaceId` stops a session bound to the wrong place
+  from syncing, but the place id is a value the client sends, so it is not a credential.
 - **Frozen binary paths have no unfreeze (C8).** When both sides change a blob, its path freezes, and the resolve API has no way to clear that freeze. Choosing which side wins on resolve is a decision still open, and the fix touches the persist layer (`reconciler/persist.rs`).
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.
-- **Directory with `init.luau` (N13).** On the daemon side a directory holding an `init.luau` is one `ModuleScript` with children. The plugin does not apply that shape yet: it creates a `Folder` for the directory and a `ModuleScript` named `init` inside it, so Studio's tree differs from the daemon's. Applying it needs the directory node to become the module itself, which `plugin/src/Apply.luau` does not do. The same holds for `init.server.luau` and `init.client.luau`.
-- **Wiped checkout while the daemon is down.** If the project directory is emptied or moved while
-  `naht serve` is stopped, the restart re-diffs every synced file as deleted on disk, and each one
-  becomes a Studio delete (30 files gone on disk means 30 Studio deletes). Live sync does the same.
-  Not changed yet. Proposed guard: hold any batch of deletions above a threshold (for example 10 or
-  a quarter of the synced paths, whichever is larger), leave those paths untouched, and surface them
-  in `naht status` until the user confirms the deletion through an explicit command (not yet designed).
-- **Filesystem blobs wait for a Studio report that may never come.** The plugin pushes its terrain
-  snapshot on each connect (`plugin/src/Connection.luau:110` calls `_pushTerrain`, which posts at
-  `:209-211`). If `Terrain.read` fails (`:203-208`) or the post fails, the error is swallowed, so the
-  daemon gets no snapshot for that connection and filesystem blob changes stay held until the next
-  connect. A plugin without the blob channel never polls `/blobs`, so blob sync cannot work with it at
-  all. The plugin must retry its terrain snapshot until the daemon accepts it, and report a persistent
-  failure. Not changed: a daemon-side timeout would have to assume that an unreported Studio has no terrain,
-  and filesystem terrain could then overwrite Studio's real terrain.
-- **A Studio snapshot can overwrite a pending ToStudio blob.** A `POST /blobs` replaces the session's
-  mirror, and a filesystem blob already queued for Studio but not yet applied by the plugin is not
-  protected from that replacement. The fix belongs with the queue and ack work for blobs, a later branch.
-- **A Studio edit made while the plugin is disconnected is not tracked for frozen paths.** `studio_sides`
-  only records Studio edits that arrive over the wire. An edit made in Studio while the plugin is
-  disconnected never reaches it, so the stored Studio side of a frozen path can be stale, and the next
-  reconcile after a restart merges against the older Studio text. Not changed yet.
+- **The accept loop has no connection cap (open).** Connections are accepted without a count. The listener
+  binds only to loopback, and each route is bounded by its own limits (the two body slots, the
+  concurrency limit of 64 and the post wait), but a flood of idle connections is not capped. Known
+  follow-up, not implemented: cap accepted connections at the listener, for example with a semaphore
+  around the accept loop in `serve`.
+- **Empty folders after a resolve or a pull (open).** The emptied-folder walk runs only for batches from Studio (`apply_changes`), so a resolve or a pull that deletes the last file of a folder can leave an empty directory, which Studio then shows as an empty Folder. Follow-up, not implemented: run the same walk after those deletes too.
+- **Studio names that Windows forbids are not refused on pull (open).** `checked_name` in `mapper.rs` refuses a name containing `/`, `\`, `:` or NUL, or starting with a dot, but not `< > " | ? *` or a control byte from 0x01 to 0x1F. A pull can therefore write a file that Windows cannot create, while `validate_project_path` refuses those characters on the push side on every host. Follow-up, not implemented: apply the same character rule in `checked_name`, so a name Windows forbids is skipped on every host the same way.
+- **Refusal text is not escaped (open).** `server.rs:489-493` answers a `VfsError` with its `Display` as `text/plain`, and that text carries the client's path unescaped. This predates this branch and is not changed here. Follow-up, not implemented: answer with a JSON body, or escape the path with `{:?}` before it reaches the response.

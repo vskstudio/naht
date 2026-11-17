@@ -1,5 +1,7 @@
 --!strict
 
+local Client = require(if script ~= nil then script.Parent.Client else "./Client")
+
 local Connection = {}
 Connection.__index = Connection
 
@@ -28,7 +30,10 @@ local CLASS_SUFFIX = {
 	ModuleScript = ".luau",
 }
 
-local UNSAFE_NAME_CHARACTERS = { "/", "\\", "\0", ":" }
+local UNSAFE_NAME_CHARACTERS = { "/", "\\", ":", "<", ">", "\"", "|", "?", "*" }
+for code = 0, 31 do
+	table.insert(UNSAFE_NAME_CHARACTERS, string.char(code))
+end
 local UNSAFE_NAMES = { [""] = true, ["."] = true, [".."] = true }
 local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
 
@@ -134,11 +139,10 @@ export type Deps = {
 	delay: ((number, () -> ()) -> ())?,
 }
 
-function Connection.new(client: any, root: Instance, placeId: number, onState: (State, string?) -> (), deps: Deps)
+function Connection.new(client: any, root: Instance, onState: (State, string?) -> (), deps: Deps)
 	return setmetatable({
 		client = client,
 		root = root,
-		placeId = placeId,
 		onState = onState,
 		terrain = deps.terrain,
 		tree = deps.tree,
@@ -239,7 +243,7 @@ function Connection.start(self)
 	end)
 end
 
-function Connection.stop(self)
+function Connection._terminate(self, detail: string?)
 	self.running = false
 	self.session += 1
 	self.epoch += 1
@@ -250,7 +254,11 @@ function Connection.stop(self)
 	self.warnings = {}
 	self.conflicts = {}
 	self:_detachStudio()
-	self.onState("Disconnected", nil)
+	self.onState("Disconnected", detail)
+end
+
+function Connection.stop(self)
+	self:_terminate(nil)
 end
 
 function Connection._isCurrent(self, session: number): boolean
@@ -275,7 +283,7 @@ end
 function Connection._unsafeReason(_self, instance: Instance, segments: { string }): string?
 	for _, segment in segments do
 		if not isSafeName(segment) then
-			return "a name contains '/', '\\', ':' or NUL, or is empty, '.' or '..'"
+			return "a name contains '/', '\\', ':', '< > \" | ? *' or a control byte, or is empty, '.' or '..'"
 		end
 	end
 	if instance.ClassName == "ModuleScript" and endsWithScriptSuffix(instance.Name) then
@@ -314,7 +322,7 @@ function Connection._run(self, session: number)
 	while self:_isCurrent(session) do
 		self.onState("Connecting", nil)
 		local ok, err = pcall(function()
-			local info = self.client:info(self.placeId)
+			local info = self.client:info()
 			if not self:_isCurrent(session) then
 				return
 			end
@@ -341,6 +349,10 @@ function Connection._run(self, session: number)
 			break
 		end
 		if not ok then
+			if Client.isTerminalError(tostring(err)) then
+				self:_terminate(tostring(err))
+				break
+			end
 			self.onState("Reconnecting", tostring(err))
 			task.wait(self.backoff)
 			if not self:_isCurrent(session) then
@@ -709,6 +721,7 @@ function Connection._retryPush(self, remaining: { [string]: any }, err: any)
 	end
 	if self.pushServerErrors >= SERVER_ERROR_LIMIT then
 		self.pushServerErrors = 0
+		self.pushBackoff = PUSH_RETRY
 		self:_clearWarning("push")
 		for path in remaining do
 			self:_setWarning("refused:" .. path, "not synced, the daemon kept failing on " .. path .. ": " .. failureMessage(err))

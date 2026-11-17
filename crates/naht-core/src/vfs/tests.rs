@@ -44,14 +44,20 @@ fn read_on_a_dir_is_not_a_file() {
 }
 
 #[test]
-fn remove_dir_takes_its_subtree() {
+fn remove_refuses_a_directory_that_still_has_files() {
     let mut vfs = MemoryVfs::new()
         .with_file("proj/sub/a.luau", "a")
         .with_file("proj/keep.luau", "k");
-    vfs.remove(Path::new("proj/sub")).unwrap();
-    assert!(!vfs.exists(Path::new("proj/sub")));
-    assert!(!vfs.exists(Path::new("proj/sub/a.luau")));
+    assert!(vfs.remove(Path::new("proj/sub")).is_err());
+    assert!(vfs.exists(Path::new("proj/sub/a.luau")));
     assert!(vfs.exists(Path::new("proj/keep.luau")));
+}
+
+#[test]
+fn remove_takes_an_empty_directory() {
+    let mut vfs = MemoryVfs::new().with_dir("proj/empty");
+    vfs.remove(Path::new("proj/empty")).unwrap();
+    assert!(!vfs.exists(Path::new("proj/empty")));
 }
 
 #[test]
@@ -61,4 +67,103 @@ fn missing_read_is_not_found() {
         vfs.read(Path::new("nope.luau")),
         Err(VfsError::NotFound(_))
     ));
+}
+
+#[test]
+fn source_paths_accept_the_luau_families_the_mapper_reads() {
+    for path in [
+        "Greeter.luau",
+        "runtime/main.server.luau",
+        "ui/hud.client.luau",
+        "folder/init.luau",
+        "folder/init.server.luau",
+    ] {
+        assert_eq!(validate_source_path(path), Ok(()), "{path}");
+    }
+}
+
+#[test]
+fn source_paths_reject_dotted_components() {
+    for path in [
+        ".naht/state.db",
+        ".naht/x.luau",
+        "src/.hidden.luau",
+        ".env.luau",
+    ] {
+        assert_eq!(
+            validate_source_path(path),
+            Err(ProjectPathError::Hidden),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn source_paths_reject_files_that_map_to_no_instance() {
+    for path in [
+        "naht.toml",
+        "default.project.json",
+        "x.txt",
+        "x",
+        "Terrain.terrain",
+        "x.luau/notes.md",
+    ] {
+        assert_eq!(
+            validate_source_path(path),
+            Err(ProjectPathError::Unmapped),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn blob_paths_accept_only_terrain_blobs() {
+    assert_eq!(validate_blob_path("Terrain.terrain"), Ok(()));
+    assert_eq!(validate_blob_path("world/Map.terrain"), Ok(()));
+    for path in ["naht.toml", "x.luau", "x.txt", "x"] {
+        assert_eq!(
+            validate_blob_path(path),
+            Err(ProjectPathError::Unmapped),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        validate_blob_path(".naht/state.terrain"),
+        Err(ProjectPathError::Hidden)
+    );
+}
+
+#[test]
+fn windows_device_names_are_rejected_on_every_platform() {
+    for path in [
+        "CON.luau",
+        "nul.server.luau",
+        "Com1.client.luau",
+        "src/LPT9.luau",
+        "AUX.luau",
+        "prn.luau",
+        "dir/CON/x.luau",
+        "COM\u{b9}.luau",
+        "CONIN$.luau",
+        "conout$.server.luau",
+        "CLOCK$.luau",
+        "COM0.luau",
+        "lpt0.client.luau",
+    ] {
+        assert_eq!(
+            validate_source_path(path),
+            Err(ProjectPathError::ReservedName),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        validate_blob_path("NUL.terrain"),
+        Err(ProjectPathError::ReservedName)
+    );
+}
+
+#[test]
+fn names_that_only_start_with_a_device_name_are_accepted() {
+    assert_eq!(validate_source_path("CONSOLE.luau"), Ok(()));
+    assert_eq!(validate_source_path("Comment.luau"), Ok(()));
 }

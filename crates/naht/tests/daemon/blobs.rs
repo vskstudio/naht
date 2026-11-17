@@ -136,3 +136,17 @@ async fn a_text_edit_with_no_blob_change_queues_no_blob_patch() {
 
     assert_eq!(harness.blobs(0).await.patches.len(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_blobs_refuses_paths_outside_the_terrain_allowlist() {
+    let harness = Harness::start(None).await;
+
+    for path in ["naht.toml", ".naht/x.terrain", "x.txt"] {
+        let status = harness
+            .post_blobs(vec![BlobInstance::new(path, "Terrain", vec![1, 2, 3])])
+            .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert!(!harness.root.join(path).exists(), "{path} was written");
+    }
+}

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use super::{DirEntry, EntryKind, Vfs, VfsError};
@@ -33,6 +34,16 @@ impl MemoryVfs {
         self.ensure_parents(&path);
         self.dirs.insert(path);
         self
+    }
+
+    fn has_entries_under(&self, dir: &Path) -> bool {
+        self.files
+            .keys()
+            .any(|file| file.starts_with(dir) && file != dir)
+            || self
+                .dirs
+                .iter()
+                .any(|child| child.starts_with(dir) && child != dir)
     }
 
     fn ensure_parents(&mut self, path: &Path) {
@@ -108,10 +119,14 @@ impl Vfs for MemoryVfs {
         if self.files.remove(path).is_some() {
             return Ok(());
         }
-        if self.dirs.remove(path) {
-            self.files
-                .retain(|file_path, _| !file_path.starts_with(path));
-            self.dirs.retain(|dir_path| !dir_path.starts_with(path));
+        if self.dirs.contains(path) {
+            if self.has_entries_under(path) {
+                return Err(VfsError::Io {
+                    path: path.to_path_buf(),
+                    source: io::Error::from(io::ErrorKind::DirectoryNotEmpty),
+                });
+            }
+            self.dirs.remove(path);
             return Ok(());
         }
         Err(VfsError::NotFound(path.to_path_buf()))
