@@ -573,6 +573,62 @@ suite("a same-named Folder does not block a ModuleScript", function()
 		check("the Folder Utils keeps its children", folder ~= nil and tree.findChild(folder, "Helper") ~= nil)
 end)
 
+suite("an init.luau patch makes its directory a ModuleScript of the directory's name", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		local node = tree.findChild(root, "Folder")
+		check(
+			"an init.luau patch makes its directory a ModuleScript of the directory's name",
+			countNamed(root, "Folder") == 1 and node ~= nil and node.ClassName == "ModuleScript" and node.Source == "return 1"
+		)
+		check("an init.luau patch creates no child named init", node ~= nil and tree.findChild(node, "init") == nil)
+end)
+
+suite("an init.server.luau patch makes its directory a Script", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Boot/init.server.luau", class = "Script", kind = "Create", content = "print(1)" })
+		local node = tree.findChild(root, "Boot")
+		check(
+			"an init.server.luau patch makes its directory a Script",
+			node ~= nil and node.ClassName == "Script" and node.Source == "print(1)"
+		)
+end)
+
+suite("a child of an init directory lands under the script that stands for it", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		applier:apply({ path = "Folder/Child.luau", class = "ModuleScript", kind = "Create", content = "return 2" })
+		local node = tree.findChild(root, "Folder")
+		check(
+			"a child of an init directory lands under the script that stands for it",
+			countNamed(root, "Folder") == 1 and node ~= nil and tree.findChild(node, "Child") ~= nil
+		)
+end)
+
+suite("an init patch over a Folder holding children keeps them under the script", function()
+		local tree, root, applier = freshApplier()
+		local folder = place(tree, "Folder", "Dir", root)
+		place(tree, "ModuleScript", "Kid", folder)
+		applier:apply({ path = "Dir/init.luau", class = "ModuleScript", kind = "Create", content = "return 3" })
+		local node = tree.findChild(root, "Dir")
+		check(
+			"an init patch over a Folder holding children keeps them under the script",
+			countNamed(root, "Dir") == 1 and node ~= nil and node.ClassName == "ModuleScript" and tree.findChild(node, "Kid") ~= nil
+		)
+end)
+
+suite("deleting init.luau turns its directory back into a Folder keeping its children", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		applier:apply({ path = "Folder/Child.luau", class = "ModuleScript", kind = "Create", content = "return 2" })
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Delete" })
+		local node = tree.findChild(root, "Folder")
+		check(
+			"deleting init.luau turns its directory back into a Folder keeping its children",
+			countNamed(root, "Folder") == 1 and node ~= nil and node.ClassName == "Folder" and tree.findChild(node, "Child") ~= nil
+		)
+end)
+
 suite("apply records the expected echo before the write", function()
 		local tree, root = studioWorld(true)
 		local expected: { string } = {}
