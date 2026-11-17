@@ -250,9 +250,6 @@ function Connection._run(self, session: number)
 			task.spawn(function()
 				self:_pushTerrain(epoch)
 			end)
-			if not self:_isCurrent(session) then
-				return
-			end
 			task.spawn(function()
 				self:_serveBlobs(epoch)
 			end)
@@ -275,9 +272,6 @@ end
 function Connection._serve(self, session: number)
 	while self:_isCurrent(session) do
 		local batch = self.client:patches(self.cursor)
-		if not self:_isCurrent(session) then
-			return
-		end
 		self.applying = true
 		local applier = self.apply.create(self.tree, self:_echo())
 		local applied = {}
@@ -307,7 +301,7 @@ function Connection._serve(self, session: number)
 		end
 		self.cursor = batch.cursor
 		self.backoff = BACKOFF_START
-		if #applied > 0 and self:_isCurrent(session) then
+		if #applied > 0 then
 			pcall(function()
 				self.client:postAck(applied)
 			end)
