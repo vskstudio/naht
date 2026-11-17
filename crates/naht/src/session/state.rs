@@ -54,6 +54,11 @@ impl Session {
         })
     }
 
+    /// The id a new daemon session mints at start, which changes on every daemon restart.
+    pub fn session_id(&self) -> &str {
+        &self.id
+    }
+
     /// The identity payload used by heartbeats, without the conflicted list.
     pub fn info(&self) -> ServerInfo {
         ServerInfo {

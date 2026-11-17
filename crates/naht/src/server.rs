@@ -21,12 +21,14 @@ use axum::http::{StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use cursor::CursorQuery;
+use rejection::Rejection;
 use naht_core::protocol::{
     self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong,
-    ProtocolError, ServerInfo,
+    ServerInfo,
 };
 use naht_core::vfs::{
-    ProjectPathError, VfsError, validate_blob_path, validate_directory_path, validate_source_path,
+    validate_blob_path, validate_directory_path, validate_source_path,
 };
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
@@ -40,7 +42,7 @@ use tower::timeout::error::Elapsed;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::session::{Session, SessionError};
+use crate::session::Session;
 
 mod guard;
 mod listen;
@@ -231,17 +233,15 @@ fn handshake(session: &mut Session) -> Result<ServerInfo, Rejection> {
     Ok(session.info())
 }
 
-#[derive(Deserialize)]
-struct CursorQuery {
-    cursor: Option<u64>,
-}
-
 async fn patches(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
     let cursor = query.cursor.unwrap_or(0);
 
     let notified = enrol_waiter(&state.patches_ready);
     {
         let session = state.session.lock().await;
+        if let Err(rejection) = query.check(&session) {
+            return rejection.into_response();
+        }
         if session.has_patches_after(cursor) {
             return patch_batch(&session, cursor);
         }
@@ -340,6 +340,9 @@ async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQue
     let notified = enrol_waiter(&state.blobs_ready);
     {
         let mut session = state.session.lock().await;
+        if let Err(rejection) = query.check(&session) {
+            return rejection.into_response();
+        }
         if session.has_blobs_after(cursor) {
             return blob_batch(&mut session, cursor);
         }
@@ -439,60 +442,7 @@ fn enrol_waiter(notify: &Notify) -> Pin<Box<impl Future<Output = ()> + '_>> {
     notified
 }
 
-#[derive(Debug, thiserror::Error)]
-enum Rejection {
-    #[error("malformed message: {0}")]
-    Malformed(#[source] ProtocolError),
-    #[error(transparent)]
-    InvalidPath(#[from] VfsError),
-    #[error("path not allowed: {0}")]
-    Disallowed(#[from] ProjectPathError),
-    #[error("cannot encode the response")]
-    Encode(#[source] ProtocolError),
-    #[error("session operation failed")]
-    Session(#[from] SessionError),
-    #[error("blocking task failed")]
-    Blocking(#[source] JoinError),
-    #[error("session busy, retry the request")]
-    Busy,
-    #[error("refused project paths: {0:?}")]
-    RefusedPaths(Vec<String>),
-}
-
-impl Rejection {
-    fn status(&self) -> StatusCode {
-        match self {
-            Self::Malformed(_)
-            | Self::InvalidPath(_)
-            | Self::Disallowed(_)
-            | Self::RefusedPaths(_) => StatusCode::BAD_REQUEST,
-            Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
-            Self::Encode(_) | Self::Session(_) | Self::Blocking(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-        }
-    }
-}
-
-impl IntoResponse for Rejection {
-    fn into_response(self) -> Response {
-        let status = self.status();
-        if status == StatusCode::INTERNAL_SERVER_ERROR {
-            tracing::error!(target: "naht::server", status = status.as_u16(), error = ?self, "request failed");
-            return (status, "internal server error").into_response();
-        }
-        if let Self::RefusedPaths(refused_paths) = &self {
-            let body = serde_json::json!({ "refused_paths": refused_paths });
-            return (
-                status,
-                [(header::CONTENT_TYPE, "application/json")],
-                body.to_string(),
-            )
-                .into_response();
-        }
-        (status, self.to_string()).into_response()
-    }
-}
-
+mod cursor;
+mod rejection;
 #[cfg(test)]
 mod tests;

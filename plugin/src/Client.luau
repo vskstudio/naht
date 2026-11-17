@@ -6,6 +6,7 @@ local Client = {}
 Client.__index = Client
 
 Client.OUTDATED_PLUGIN = "naht: this plugin is outdated, update the naht plugin to match the daemon"
+Client.SESSION_CHANGED = "naht: the daemon restarted, re-syncing from its new session"
 
 export type Client = typeof(setmetatable({} :: { baseUrl: string, placeId: number, http: any }, Client))
 
@@ -36,6 +37,10 @@ function Client.isOutdatedPluginError(err: string): boolean
 	return string.find(err, Client.OUTDATED_PLUGIN, 1, true) ~= nil
 end
 
+function Client.isSessionChanged(err: string): boolean
+	return string.find(err, Client.SESSION_CHANGED, 1, true) ~= nil
+end
+
 function Client.isTerminalError(err: string): boolean
 	return Client.isOutdatedPluginError(err) or string.find(err, Protocol.INCOMPATIBLE_VERSION, 1, true) ~= nil
 end
@@ -61,25 +66,30 @@ function Client.info(self: Client): any
 	return Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
 end
 
-function Client.patches(self: Client, cursor: number): any
+local function checkPoll(response: any, route: string)
+	if response.StatusCode == 409 then
+		error(Client.SESSION_CHANGED)
+	end
+	if not response.Success then
+		error("naht: " .. route .. " returned " .. tostring(response.StatusCode))
+	end
+end
+
+function Client.patches(self: Client, cursor: number, sessionId: string): any
 	local response = request(self, {
-		Url = "/patches?cursor=" .. tostring(cursor),
+		Url = "/patches?cursor=" .. tostring(cursor) .. "&session=" .. sessionId,
 		Method = "GET",
 	})
-	if not response.Success then
-		error("naht: /patches returned " .. tostring(response.StatusCode))
-	end
+	checkPoll(response, "/patches")
 	return Protocol.decodePatches(response.Body)
 end
 
-function Client.blobs(self: Client, cursor: number): any
+function Client.blobs(self: Client, cursor: number, sessionId: string): any
 	local response = request(self, {
-		Url = "/blobs?cursor=" .. tostring(cursor),
+		Url = "/blobs?cursor=" .. tostring(cursor) .. "&session=" .. sessionId,
 		Method = "GET",
 	})
-	if not response.Success then
-		error("naht: /blobs returned " .. tostring(response.StatusCode))
-	end
+	checkPoll(response, "/blobs")
 	local decoded, batch = pcall(Protocol.decodeBlobs, response.Body)
 	if not decoded then
 		error({ undecodable = true, message = "naht: undecodable blob batch: " .. tostring(batch) })

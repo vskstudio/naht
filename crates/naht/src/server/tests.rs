@@ -339,3 +339,65 @@ async fn a_batch_still_waiting_when_the_client_leaves_is_drained_before_shutdown
         "return 1"
     );
 }
+
+fn terrain_with_a_queued_blob() -> (tempfile::TempDir, Arc<AppState>) {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("src")).unwrap();
+    let mut session = Session::new(
+        root.path(),
+        StateStore::open_in_memory().unwrap(),
+        "demo",
+        None,
+        true,
+    )
+    .unwrap();
+    session
+        .apply_blob_changes(vec![BlobInstance::new(
+            "src/Map.terrain",
+            TERRAIN_CLASS,
+            vec![1_u8, 2, 3],
+        )])
+        .unwrap();
+    fs::write(root.path().join("src").join("Map.terrain"), [4_u8, 5, 6]).unwrap();
+    session.rescan().unwrap();
+    session.rescan().unwrap();
+    (root, AppState::new(session, Duration::from_secs(1)))
+}
+
+async fn get_status_and_body(state: &Arc<AppState>, uri: &str) -> (StatusCode, Bytes) {
+    let request = Request::get(uri)
+        .header(guard::CLIENT_HEADER, "plugin")
+        .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = router(state.clone(), TEST_PORT)
+        .oneshot(request)
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, to_bytes(response.into_body(), usize::MAX).await.unwrap())
+}
+
+#[tokio::test]
+async fn a_blob_poll_from_a_previous_session_is_refused_409_and_prunes_nothing() {
+    let (_root, state) = terrain_with_a_queued_blob();
+
+    let (stale, _) = get_status_and_body(&state, "/blobs?cursor=5&session=previous").await;
+    assert_eq!(stale, StatusCode::CONFLICT);
+
+    let current = state.session.lock().await.session_id().to_owned();
+    let (status, body) =
+        get_status_and_body(&state, &format!("/blobs?cursor=0&session={current}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let batch: BlobPatchBatch = protocol::from_msgpack(&body).unwrap();
+    assert_eq!(batch.patches.len(), 1);
+}
+
+#[tokio::test]
+async fn a_text_poll_from_a_previous_session_is_refused_409() {
+    let (_root, state) = terrain_with_a_queued_blob();
+
+    let (status, _) = get_status_and_body(&state, "/patches?cursor=0&session=previous").await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+}

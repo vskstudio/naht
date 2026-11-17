@@ -345,9 +345,9 @@ function Connection._run(self, session: number)
 				self:_pushTerrain(epoch)
 			end)
 			task.spawn(function()
-				self:_serveBlobs(epoch)
+				self:_serveBlobs(epoch, info.session_id)
 			end)
-			self:_serve(session)
+			self:_serve(session, info.session_id)
 		end)
 		if not self:_isCurrent(session) then
 			break
@@ -357,7 +357,11 @@ function Connection._run(self, session: number)
 				self:_terminate(tostring(err))
 				break
 			end
+			self.epoch += 1
 			self.onState("Reconnecting", tostring(err))
+			if Client.isSessionChanged(tostring(err)) then
+				self.backoff = BACKOFF_START
+			end
 			task.wait(self.backoff)
 			if not self:_isCurrent(session) then
 				break
@@ -367,10 +371,10 @@ function Connection._run(self, session: number)
 	end
 end
 
-function Connection._serve(self, session: number)
+function Connection._serve(self, session: number, sessionId: string)
 	local unacked: { number } = {}
 	while self:_isCurrent(session) do
-		local batch = self.client:patches(self.cursor)
+		local batch = self.client:patches(self.cursor, sessionId)
 		self.applying = true
 		local applier = self.apply.create(self.tree, self:_echo())
 		local nextCursor = batch.cursor
@@ -443,11 +447,11 @@ function Connection._ack(self, session: number, seqs: { number }): { number }
 	return seqs
 end
 
-function Connection._serveBlobs(self, epoch: number)
+function Connection._serveBlobs(self, epoch: number, sessionId: string)
 	local decodeFailures = 0
 	while self:_isBlobCurrent(epoch) do
 		local ok, batch = pcall(function()
-			return self.client:blobs(self.blobCursor)
+			return self.client:blobs(self.blobCursor, sessionId)
 		end)
 		if not self:_isBlobCurrent(epoch) then
 			return

@@ -1251,6 +1251,53 @@ suite("a reconnect to a restarted daemon session starts the cursor at 0", functi
 		)
 end)
 
+suite("a failed text poll ends the blob poll of its epoch before the next handshake", function()
+	local tree, root = studioWorld(true)
+	local textFailed = false
+	local blobCallsAfterFailure = 0
+	local infos = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				if infos == 1 then
+					return { project_name = "demo", session_id = "s1" }
+				end
+				if infos == 3 then
+					connection:stop()
+				end
+				error("daemon down")
+			end,
+			patches = function(_, _cursor, _sessionId)
+				textFailed = true
+				error("daemon down")
+			end,
+			blobs = function(_, _cursor, _sessionId)
+				if textFailed then
+					blobCallsAfterFailure += 1
+				end
+				task.wait(0.01)
+				return { cursor = 0, patches = {} }
+			end,
+			postBlobs = function(_, _blobs) end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection:_run(1)
+	task.wait(0.05)
+	check(
+		"no blob poll starts once the text poll has failed",
+		blobCallsAfterFailure == 0,
+		"blob polls after the failure " .. tostring(blobCallsAfterFailure)
+	)
+end)
+
 suite("a reconnect to the same daemon session resumes the blob cursor it held", function()
 		local tree, root = studioWorld(true)
 		local blobCursors: { number } = {}
@@ -3597,8 +3644,8 @@ suite("the client sends the headers on every request and reports an outdated plu
 	local everything = fakeHttp(answerEverything)
 	local everyRequest = Client.new("http://127.0.0.1:34872", 123, everything)
 	everyRequest:info()
-	everyRequest:patches(0)
-	everyRequest:blobs(0)
+	everyRequest:patches(0, "s1")
+	everyRequest:blobs(0, "s1")
 	everyRequest:postBlobs({})
 	everyRequest:postAck({})
 	everyRequest:postChanges({})
@@ -3764,6 +3811,68 @@ suite("an incompatible protocol version is terminal and names the side to update
 		"a newer daemon tells the user to update the naht plugin",
 		string.find(tostring(newerDaemon), "update the naht plugin", 1, true) ~= nil
 	)
+end)
+
+suite("a poll names the session it handshook with, and a 409 sends the plugin back to /info", function()
+	local tree, root = studioWorld(true)
+	local log, onState = stateLog()
+	local infos = 0
+	local polls: { string } = {}
+	local connection: any = nil
+	local http = fakeHttp(function(options)
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			infos += 1
+			return reply(
+				200,
+				MessagePack.encode({
+					protocol_version = 3,
+					server_version = "0.1.0",
+					project_name = "demo",
+					session_id = if infos == 1 then "s1" else "s2",
+					daemon_id = "d-1",
+				})
+			)
+		end
+		if string.find(options.Url, "/blobs", 1, true) ~= nil then
+			task.wait(0.01)
+			return reply(200, MessagePack.encode({ cursor = 0, patches = {} }))
+		end
+		table.insert(polls, options.Url)
+		if #polls == 1 then
+			return reply(409, "")
+		end
+		connection:stop()
+		return reply(200, MessagePack.encode({ cursor = 0, patches = {} }))
+	end)
+	connection = Connection.new(
+		Client.new("http://127.0.0.1:34872", 123, http),
+		root,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection:start()
+	waitFor(function()
+		return #polls >= 2
+	end)
+	task.wait(0.05)
+	connection:stop()
+
+	check(
+		"a poll names the session the handshake returned",
+		polls[1] ~= nil and string.find(polls[1], "/patches?cursor=0&session=s1", 1, true) ~= nil,
+		"polls " .. table.concat(polls, " ")
+	)
+	check("a 409 sends the plugin back to /info", infos == 2, "handshakes " .. tostring(infos))
+	check(
+		"the re-handshake polls the new session from cursor 0",
+		polls[2] ~= nil and string.find(polls[2], "/patches?cursor=0&session=s2", 1, true) ~= nil,
+		"polls " .. table.concat(polls, " ")
+	)
+	local reportedRestart = false
+	for _, entry in log do
+		reportedRestart = reportedRestart or (entry.detail ~= nil and Client.isSessionChanged(entry.detail))
+	end
+	check("a 409 is reported as a restart, not an unknown failure", reportedRestart)
 end)
 
 suite("a 400 naming an invalid path drops it, warns about it and never resends it", function()

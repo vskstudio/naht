@@ -145,9 +145,9 @@ local function ackAll(client, batch)
 	end
 end
 
-local function awaitPatch(client, cursor, path, content)
+local function awaitPatch(client, sessionId, cursor, path, content)
 	for _ = 1, EDIT_ATTEMPTS do
-		local batch = client:patches(cursor)
+		local batch = client:patches(cursor, sessionId)
 		if findPatch(batch, path, content) ~= nil then
 			return batch
 		end
@@ -179,12 +179,12 @@ local function scenario(root, port, log)
 	local info = first.client:info()
 	check("the handshake reports the daemon id recorded in daemon.port", info.daemon_id == recordedDaemonId(root))
 
-	local initial = first.client:patches(0)
+	local initial = first.client:patches(0, info.session_id)
 	check("a fresh run sends the existing file to the plugin", findPatch(initial, FILE, "return 1") ~= nil)
 	ackAll(first.client, initial)
 
 	fs.writeFile(root .. "/" .. FILE, "return 2")
-	local edited = awaitPatch(first.client, initial.cursor, FILE, "return 2")
+	local edited = awaitPatch(first.client, info.session_id, initial.cursor, FILE, "return 2")
 	local edit = if edited ~= nil then findPatch(edited, FILE, "return 2") else nil
 	check(
 		"a disk edit reaches the plugin as a ToStudio update",
@@ -205,7 +205,7 @@ local function scenario(root, port, log)
 	local restarted = second.client:info()
 	check("a restart gives the plugin a new session id", restarted.session_id ~= info.session_id)
 
-	local replay = second.client:patches(0)
+	local replay = second.client:patches(0, restarted.session_id)
 	check("a restart does not replay patches the plugin already acked", findPatch(replay, FILE, nil) == nil)
 	check("a file created while the daemon was down reaches the plugin", findPatch(replay, CREATED_FILE, "return 4") ~= nil)
 	check("a file the plugin pushed is not sent back after a restart", findPatch(replay, STUDIO_FILE, nil) == nil)
