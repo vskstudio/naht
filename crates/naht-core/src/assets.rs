@@ -8,23 +8,12 @@
 use std::error::Error;
 use std::path::Path;
 
-use rbx_dom_weak::types::Variant;
+use rbx_dom_weak::types::{Variant, VariantType};
+use rbx_reflection::DataType;
 
 use crate::snapshot::{SOURCE_PROPERTY, Snapshot};
 use crate::state::{StateError, StateStore};
-use crate::vfs::{Vfs, VfsError};
-
-const ASSET_PROPERTIES: [&str; 9] = [
-    "AnimationId",
-    "Graphic",
-    "Image",
-    "MeshId",
-    "ShirtTemplate",
-    "SoundId",
-    "Texture",
-    "TextureId",
-    "Video",
-];
+use crate::vfs::{EntryKind, Vfs, VfsError};
 
 fn asset_cache_key(content: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(content).to_hex())
@@ -82,6 +71,15 @@ pub enum AssetError {
     /// Reading the local asset file failed.
     #[error(transparent)]
     Vfs(#[from] VfsError),
+    /// The property names a local file but reflection does not declare it as a Content property,
+    /// so the file is not uploaded and the reference is left as written.
+    #[error("{class}.{property} names a local file but is not a Content property")]
+    NotAContentProperty {
+        /// The class of the instance that holds the property.
+        class: String,
+        /// The property that names the file.
+        property: String,
+    },
 }
 
 /// Resolve a local asset blob to an asset id, uploading it once per content hash.
@@ -176,6 +174,41 @@ pub fn rewrite_snapshot_assets(
     failures
 }
 
+fn is_content_property(class: &str, property: &str) -> bool {
+    let Ok(database) = rbx_reflection_database::get() else {
+        return false;
+    };
+    let mut current = Some(class);
+    while let Some(class_name) = current {
+        let Some(descriptor) = database.classes.get(class_name) else {
+            return false;
+        };
+        if let Some(property_descriptor) = descriptor.properties.get(property) {
+            return matches!(
+                property_descriptor.data_type,
+                DataType::Value(VariantType::Content | VariantType::ContentId)
+            );
+        }
+        current = descriptor.superclass;
+    }
+    false
+}
+
+fn reject_undeclared_file(
+    vfs: &impl Vfs,
+    class: &str,
+    property: &str,
+    value: &str,
+) -> Result<(), AssetError> {
+    if is_already_resolved(value) || !matches!(vfs.kind(Path::new(value)), Ok(EntryKind::File)) {
+        return Ok(());
+    }
+    Err(AssetError::NotAContentProperty {
+        class: class.to_owned(),
+        property: property.to_owned(),
+    })
+}
+
 fn rewrite_into(
     uploader: &dyn AssetUploader,
     store: &StateStore,
@@ -184,20 +217,27 @@ fn rewrite_into(
     path: &str,
     failures: &mut Vec<AssetFailure>,
 ) {
+    let class = snapshot.class.as_str();
     for (key, value) in &mut snapshot.properties {
-        if key == SOURCE_PROPERTY || !ASSET_PROPERTIES.contains(&key.as_str()) {
+        if key == SOURCE_PROPERTY {
             continue;
         }
-        if let Variant::String(text) = value {
-            match resolve_asset_ref(uploader, store, vfs, text) {
-                Ok(Some(asset_id)) => *value = Variant::String(asset_id),
-                Ok(None) => {}
-                Err(error) => failures.push(AssetFailure {
-                    path: path.to_owned(),
-                    property: key.clone(),
-                    error,
-                }),
-            }
+        let Variant::String(text) = value else {
+            continue;
+        };
+        let outcome = if is_content_property(class, key) {
+            resolve_asset_ref(uploader, store, vfs, text)
+        } else {
+            reject_undeclared_file(vfs, class, key, text).map(|()| None)
+        };
+        match outcome {
+            Ok(Some(asset_id)) => *value = Variant::String(asset_id),
+            Ok(None) => {}
+            Err(error) => failures.push(AssetFailure {
+                path: path.to_owned(),
+                property: key.clone(),
+                error,
+            }),
         }
     }
     for child in &mut snapshot.children {
@@ -380,7 +420,45 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_string_property_naming_an_existing_file_is_never_uploaded() {
+    fn a_content_property_absent_from_the_old_name_list_is_rewritten() {
+        use crate::vfs::MemoryVfs;
+        let store = StateStore::open_in_memory().unwrap();
+        let uploader = FakeUploader::default();
+        let vfs = MemoryVfs::new().with_file("textures/paint.png", "png");
+
+        let mut snapshot = Snapshot::new("SurfaceAppearance", "Paint")
+            .with_property("ColorMap", Variant::String("textures/paint.png".to_owned()));
+
+        let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot);
+
+        assert!(failures.is_empty());
+        assert_eq!(
+            snapshot.properties.get("ColorMap"),
+            Some(&Variant::String("rbxassetid://1".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_content_property_inherited_from_a_superclass_is_rewritten() {
+        use crate::vfs::MemoryVfs;
+        let store = StateStore::open_in_memory().unwrap();
+        let uploader = FakeUploader::default();
+        let vfs = MemoryVfs::new().with_file("meshes/bolt.obj", "obj");
+
+        let mut snapshot = Snapshot::new("SpecialMesh", "Bolt")
+            .with_property("MeshId", Variant::String("meshes/bolt.obj".to_owned()));
+
+        let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot);
+
+        assert!(failures.is_empty());
+        assert_eq!(
+            snapshot.properties.get("MeshId"),
+            Some(&Variant::String("rbxassetid://1".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_local_file_under_a_non_content_property_is_reported_and_never_uploaded() {
         use crate::vfs::MemoryVfs;
         let store = StateStore::open_in_memory().unwrap();
         let uploader = FakeUploader::default();
@@ -391,12 +469,33 @@ mod tests {
 
         let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot);
 
-        assert!(failures.is_empty());
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].path, "Notes");
+        assert_eq!(failures[0].property, "Value");
+        assert!(matches!(
+            failures[0].error,
+            AssetError::NotAContentProperty { .. }
+        ));
         assert_eq!(
             snapshot.properties.get("Value"),
             Some(&Variant::String("notes.txt".to_owned()))
         );
         assert!(uploader.uploads.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_non_content_property_naming_a_directory_is_not_reported() {
+        use crate::vfs::MemoryVfs;
+        let store = StateStore::open_in_memory().unwrap();
+        let uploader = FakeUploader::default();
+        let vfs = MemoryVfs::new().with_file("Scripts/Main.luau", "print(1)");
+
+        let mut snapshot = Snapshot::new("StringValue", "Notes")
+            .with_property("Value", Variant::String("Scripts".to_owned()));
+
+        let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot);
+
+        assert!(failures.is_empty());
     }
 
     #[test]
