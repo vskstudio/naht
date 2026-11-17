@@ -26,7 +26,7 @@ impl Session {
             tracing::warn!(
                 target: "naht::session",
                 path = %root.display(),
-                %error,
+                ?error,
                 "could not remove stale temp files"
             );
         }

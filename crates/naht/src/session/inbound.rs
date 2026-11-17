@@ -125,7 +125,7 @@ impl Session {
     pub(super) fn absorb_blobs(&mut self, patches: Vec<BlobPatch>) {
         for patch in patches {
             if patch.kind == PatchKind::Conflict {
-                tracing::warn!(target: "naht::sync", path = %patch.path, "terrain blob conflict frozen");
+                tracing::warn!(target: "naht::sync", path = ?patch.path, "terrain blob conflict frozen");
                 continue;
             }
             match patch.direction {
@@ -187,14 +187,14 @@ impl Session {
 
         for patch in patches {
             if patch.kind == PatchKind::Conflict {
-                tracing::warn!(target: "naht::sync", path = %patch.path, "conflict frozen");
+                tracing::warn!(target: "naht::sync", path = ?patch.path, "conflict frozen");
             }
             match patch.direction {
                 Direction::ToFs => {
                     self.mirror(&patch);
                     tracing::debug!(
                         target: "naht::sync",
-                        path = %patch.path,
+                        path = ?patch.path,
                         kind = ?patch.kind,
                         "patch applied to filesystem"
                     );

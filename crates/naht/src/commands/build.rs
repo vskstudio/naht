@@ -120,10 +120,10 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use
         match build_once(&root, &output) {
             Ok(built) => {
                 for warning in &built.warnings {
-                    tracing::warn!(target: "naht::build", %warning, "build warning");
+                    tracing::warn!(target: "naht::build", ?warning, "build warning");
                 }
             }
-            Err(error) => tracing::warn!(target: "naht::build", %error, "rebuild failed"),
+            Err(error) => tracing::warn!(target: "naht::build", ?error, "rebuild failed"),
         }
     })
     .map_err(WatchError::from)?;

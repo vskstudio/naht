@@ -47,7 +47,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
             }
         }
         Ok(Err(error)) => {
-            tracing::warn!(target: "naht::serve", %error, "startup warnings skipped: tree unreadable");
+            tracing::warn!(target: "naht::serve", ?error, "startup warnings skipped: tree unreadable");
         }
         Err(error) => {
             tracing::warn!(target: "naht::serve", %error, "startup warnings skipped: snapshot task failed");

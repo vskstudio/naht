@@ -12,8 +12,8 @@ fn warn_skipped<T>(scan: &Scan<T>) {
     for skipped in &scan.skipped {
         tracing::warn!(
             target: "naht::session",
-            path = %skipped.path.display(),
-            error = %skipped.error,
+            path = ?skipped.path,
+            error = ?skipped.error,
             "skipped a file that could not be read"
         );
     }

@@ -63,7 +63,7 @@ impl Session {
     fn push_blob_patch(&mut self, patch: BlobPatch) {
         tracing::info!(
             target: "naht::sync",
-            path = %patch.path,
+            path = ?patch.path,
             kind = ?patch.kind,
             "blob patch emitted"
         );
@@ -125,7 +125,7 @@ impl Session {
     fn push_patch(&mut self, patch: Patch) {
         tracing::info!(
             target: "naht::sync",
-            path = %patch.path,
+            path = ?patch.path,
             kind = ?patch.kind,
             "patch emitted"
         );
