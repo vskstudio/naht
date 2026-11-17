@@ -74,182 +74,202 @@ end
 
 local function noop() end
 
-local info = MessagePack.decode(fromHex(GOLDEN.server_info))
-check("server_info protocol_version", info.protocol_version == 1)
-check("server_info project_name", info.project_name == "demo")
-check("server_info serve_place_id", info.serve_place_id == 123)
-check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 1)
-check(
-	"mismatched protocol version is rejected",
-	not pcall(Protocol.assertCompatible, {
-		protocol_version = 999,
-		server_version = "future",
-		project_name = "demo",
-		session_id = "future",
-		serve_place_id = nil,
-	})
-)
+suite("the server_info golden decodes to the expected fields and a matching version is accepted", function()
+	local info = MessagePack.decode(fromHex(GOLDEN.server_info))
+	check("server_info protocol_version", info.protocol_version == 1)
+	check("server_info project_name", info.project_name == "demo")
+	check("server_info serve_place_id", info.serve_place_id == 123)
+	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 1)
+	check(
+		"mismatched protocol version is rejected",
+		not pcall(Protocol.assertCompatible, {
+			protocol_version = 999,
+			server_version = "future",
+			project_name = "demo",
+			session_id = "future",
+			serve_place_id = nil,
+		})
+	)
+end)
 
-local batch = MessagePack.decode(fromHex(GOLDEN.patch_batch))
-check("patch_batch cursor", batch.cursor == 2)
-check("patch_batch length", #batch.patches == 1)
-local patch = batch.patches[1]
-check("patch path", patch.path == "src/A.luau")
-check("patch class", patch.class == "ModuleScript")
-check("patch direction (unit enum -> string)", patch.direction == "ToStudio")
-check("patch kind", patch.kind == "Update")
-check("patch content", patch.content == "return 1")
+suite("the patch and change golden batches decode to the expected fields", function()
+	local batch = MessagePack.decode(fromHex(GOLDEN.patch_batch))
+	check("patch_batch cursor", batch.cursor == 2)
+	check("patch_batch length", #batch.patches == 1)
+	local patch = batch.patches[1]
+	check("patch path", patch.path == "src/A.luau")
+	check("patch class", patch.class == "ModuleScript")
+	check("patch direction (unit enum -> string)", patch.direction == "ToStudio")
+	check("patch kind", patch.kind == "Update")
+	check("patch content", patch.content == "return 1")
 
-local changes = MessagePack.decode(fromHex(GOLDEN.change_batch))
-check("change_batch length", #changes.changes == 2)
-check("change upsert (externally tagged)", changes.changes[1].Upsert.path == "src/A.luau")
-check("change upsert content", changes.changes[1].Upsert.content == "return 2")
-check("change delete (externally tagged)", changes.changes[2].Delete.path == "src/B.luau")
+	local changes = MessagePack.decode(fromHex(GOLDEN.change_batch))
+	check("change_batch length", #changes.changes == 2)
+	check("change upsert (externally tagged)", changes.changes[1].Upsert.path == "src/A.luau")
+	check("change upsert content", changes.changes[1].Upsert.content == "return 2")
+	check("change delete (externally tagged)", changes.changes[2].Delete.path == "src/B.luau")
+end)
 
-local blobBatch = MessagePack.decode(fromHex(GOLDEN.blob_patch_batch))
-check("blob_batch cursor", blobBatch.cursor == 1)
-local blobPatch = blobBatch.patches[1]
-check("blob path", blobPatch.path == "Terrain.terrain")
-local blob = blobPatch.content
-check("blob length", #blob == 5)
-check(
-	"blob bytes preserved (bin format)",
-	string.byte(blob, 1) == 0
-		and string.byte(blob, 2) == 1
-		and string.byte(blob, 3) == 255
-		and string.byte(blob, 4) == 128
-		and string.byte(blob, 5) == 127
-)
+suite("the blob golden decodes to the expected path and bytes", function()
+	local blobBatch = MessagePack.decode(fromHex(GOLDEN.blob_patch_batch))
+	check("blob_batch cursor", blobBatch.cursor == 1)
+	local blobPatch = blobBatch.patches[1]
+	check("blob path", blobPatch.path == "Terrain.terrain")
+	local blob = blobPatch.content
+	check("blob length", #blob == 5)
+	check(
+		"blob bytes preserved (bin format)",
+		string.byte(blob, 1) == 0
+			and string.byte(blob, 2) == 1
+			and string.byte(blob, 3) == 255
+			and string.byte(blob, 4) == 128
+			and string.byte(blob, 5) == 127
+	)
+end)
 
-local binRoundtrip = MessagePack.decode(MessagePack.encode({
-	blob = MessagePack.binary("\0\255\10\127"),
-}))
-check("binary encode/decode round-trip", binRoundtrip.blob == "\0\255\10\127")
+suite("binary and blob pushes keep their raw bytes through encode and decode", function()
+	local binRoundtrip = MessagePack.decode(MessagePack.encode({
+		blob = MessagePack.binary("\0\255\10\127"),
+	}))
+	check("binary encode/decode round-trip", binRoundtrip.blob == "\0\255\10\127")
 
-local blobPush = MessagePack.decode(MessagePack.encode({
-	changes = MessagePack.array({
-		{ path = "Terrain.terrain", class = "Terrain", content = MessagePack.binary("\0\1\255\128\127") },
-	}),
-}))
-check("blob push preserves path", blobPush.changes[1].path == "Terrain.terrain")
-check("blob push preserves class", blobPush.changes[1].class == "Terrain")
-check("blob push preserves raw bytes", blobPush.changes[1].content == "\0\1\255\128\127")
+	local blobPush = MessagePack.decode(MessagePack.encode({
+		changes = MessagePack.array({
+			{ path = "Terrain.terrain", class = "Terrain", content = MessagePack.binary("\0\1\255\128\127") },
+		}),
+	}))
+	check("blob push preserves path", blobPush.changes[1].path == "Terrain.terrain")
+	check("blob push preserves class", blobPush.changes[1].class == "Terrain")
+	check("blob push preserves raw bytes", blobPush.changes[1].content == "\0\1\255\128\127")
+end)
 
-local grid = {
-	resolution = 4,
-	min = { x = 0, y = 0, z = 0 },
-	max = { x = 8, y = 8, z = 8 },
-	materials = { { { 1, 256 } }, { { 2, 3 } } },
-	occupancies = { { { 0.0, 1.0 } }, { { 0.5, 0.25 } } },
-}
-local terrainBack = Terrain.deserialize(Terrain.serialize(grid))
-check(
-	"terrain dims",
-	#terrainBack.materials == 2 and #terrainBack.materials[1] == 1 and #terrainBack.materials[1][1] == 2
-)
-check(
-	"terrain materials round-trip",
-	terrainBack.materials[1][1][1] == 1
-		and terrainBack.materials[1][1][2] == 256
-		and terrainBack.materials[2][1][1] == 2
-)
-check(
-	"terrain occupancies round-trip",
-	terrainBack.occupancies[1][1][1] == 0.0
-		and terrainBack.occupancies[1][1][2] == 1.0
-		and terrainBack.occupancies[2][1][2] == 0.25
-)
-check("terrain resolution round-trip", terrainBack.resolution == 4)
+suite("a terrain grid survives serialize and deserialize", function()
+	local grid = {
+		resolution = 4,
+		min = { x = 0, y = 0, z = 0 },
+		max = { x = 8, y = 8, z = 8 },
+		materials = { { { 1, 256 } }, { { 2, 3 } } },
+		occupancies = { { { 0.0, 1.0 } }, { { 0.5, 0.25 } } },
+	}
+	local terrainBack = Terrain.deserialize(Terrain.serialize(grid))
+	check(
+		"terrain dims",
+		#terrainBack.materials == 2 and #terrainBack.materials[1] == 1 and #terrainBack.materials[1][1] == 2
+	)
+	check(
+		"terrain materials round-trip",
+		terrainBack.materials[1][1][1] == 1
+			and terrainBack.materials[1][1][2] == 256
+			and terrainBack.materials[2][1][1] == 2
+	)
+	check(
+		"terrain occupancies round-trip",
+		terrainBack.occupancies[1][1][1] == 0.0
+			and terrainBack.occupancies[1][1][2] == 1.0
+			and terrainBack.occupancies[2][1][2] == 0.25
+	)
+	check("terrain resolution round-trip", terrainBack.resolution == 4)
+end)
 
 local function terrainHeader(nx: number, ny: number, nz: number, resolution: number): string
 	return string.pack("<i4i4i4fffffff", nx, ny, nz, 0, 0, 0, 1, 1, 1, resolution)
 end
 
-local function rejectsTerrain(name: string, blobText: string)
-	check("terrain blob rejects " .. name, not pcall(Terrain.deserialize, blobText))
-end
+suite("terrain blobs with a bad header, dimension, resolution or payload are rejected", function()
+	local function rejectsTerrain(name: string, blobText: string)
+		check("terrain blob rejects " .. name, not pcall(Terrain.deserialize, blobText))
+	end
 
-rejectsTerrain("a truncated header", string.sub(terrainHeader(1, 1, 1, 4), 1, 20))
-rejectsTerrain("a zero dimension", terrainHeader(0, 1, 1, 4))
-rejectsTerrain("a negative dimension", terrainHeader(-1, 1, 1, 4))
-rejectsTerrain("an oversized dimension", terrainHeader(4096, 1, 1, 4))
-rejectsTerrain("a non-positive resolution", terrainHeader(1, 1, 1, 0) .. string.pack("<I2f", 1, 0.5))
-rejectsTerrain("a missing voxel", terrainHeader(1, 1, 2, 4) .. string.pack("<I2f", 1, 0.5))
-rejectsTerrain("trailing bytes", terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5) .. "\0")
+	rejectsTerrain("a truncated header", string.sub(terrainHeader(1, 1, 1, 4), 1, 20))
+	rejectsTerrain("a zero dimension", terrainHeader(0, 1, 1, 4))
+	rejectsTerrain("a negative dimension", terrainHeader(-1, 1, 1, 4))
+	rejectsTerrain("an oversized dimension", terrainHeader(4096, 1, 1, 4))
+	rejectsTerrain("a non-positive resolution", terrainHeader(1, 1, 1, 0) .. string.pack("<I2f", 1, 0.5))
+	rejectsTerrain("a missing voxel", terrainHeader(1, 1, 2, 4) .. string.pack("<I2f", 1, 0.5))
+	rejectsTerrain("trailing bytes", terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5) .. "\0")
+end)
 
-local regionFromStudio = {
-	CFrame = { Position = { X = 10, Y = 20, Z = 30 } },
-	Size = { X = 8, Y = 4, Z = 2 },
-}
-local fakeVoxelTerrain = {
-	ReadVoxels = function(_, _region, _resolution)
-		return { { { { Value = 1 } } } }, { { { 0.5 } } }
-	end,
-}
-local readBack = Terrain.deserialize(Terrain.read(fakeVoxelTerrain, regionFromStudio, 4))
-check(
-	"terrain read uses region min as center minus half size",
-	readBack.min.x == 6 and readBack.min.y == 18 and readBack.min.z == 29
-)
-check(
-	"terrain read uses region max as center plus half size",
-	readBack.max.x == 14 and readBack.max.y == 22 and readBack.max.z == 31
-)
+suite("terrain read from voxels round-trips through the blob format", function()
+	local regionFromStudio = {
+		CFrame = { Position = { X = 10, Y = 20, Z = 30 } },
+		Size = { X = 8, Y = 4, Z = 2 },
+	}
+	local fakeVoxelTerrain = {
+		ReadVoxels = function(_, _region, _resolution)
+			return { { { { Value = 1 } } } }, { { { 0.5 } } }
+		end,
+	}
+	local readBack = Terrain.deserialize(Terrain.read(fakeVoxelTerrain, regionFromStudio, 4))
+	check(
+		"terrain read uses region min as center minus half size",
+		readBack.min.x == 6 and readBack.min.y == 18 and readBack.min.z == 29
+	)
+	check(
+		"terrain read uses region max as center plus half size",
+		readBack.max.x == 14 and readBack.max.y == 22 and readBack.max.z == 31
+	)
+end)
 
-local function voxelCountOf(sizeX: number, sizeY: number, sizeZ: number, resolution: number): number
-	local ok, count = pcall(Terrain.voxelCount, sizeX, sizeY, sizeZ, resolution)
-	return if ok then count else -1
-end
+suite("voxel counts round partial voxels up", function()
+	local function voxelCountOf(sizeX: number, sizeY: number, sizeZ: number, resolution: number): number
+		local ok, count = pcall(Terrain.voxelCount, sizeX, sizeY, sizeZ, resolution)
+		return if ok then count else -1
+	end
 
-check("voxel count of a 16 stud cube at 4 studs is 64", voxelCountOf(16, 16, 16, 4) == 64)
-check("voxel count rounds a partial voxel up", voxelCountOf(5, 4, 4, 4) == 2)
-check("a 1024x256x1024 region at 4 studs is 4194304 voxels", voxelCountOf(1024, 256, 1024, 4) == 4194304)
+	check("voxel count of a 16 stud cube at 4 studs is 64", voxelCountOf(16, 16, 16, 4) == 64)
+	check("voxel count rounds a partial voxel up", voxelCountOf(5, 4, 4, 4) == 2)
+	check("a 1024x256x1024 region at 4 studs is 4194304 voxels", voxelCountOf(1024, 256, 1024, 4) == 4194304)
+end)
 
-local roundtrip = MessagePack.decode(MessagePack.encode({
-	changes = MessagePack.array({
-		{ Upsert = { path = "p", class = "ModuleScript", content = "c" } },
-		{ Delete = { path = "d" } },
-	}),
-}))
-check("encode/decode upsert", roundtrip.changes[1].Upsert.path == "p")
-check("encode/decode delete", roundtrip.changes[2].Delete.path == "d")
-check("encode/decode preserves count", #roundtrip.changes == 2)
+suite("upserts, deletes and primitives survive encode and decode", function()
+	local roundtrip = MessagePack.decode(MessagePack.encode({
+		changes = MessagePack.array({
+			{ Upsert = { path = "p", class = "ModuleScript", content = "c" } },
+			{ Delete = { path = "d" } },
+		}),
+	}))
+	check("encode/decode upsert", roundtrip.changes[1].Upsert.path == "p")
+	check("encode/decode delete", roundtrip.changes[2].Delete.path == "d")
+	check("encode/decode preserves count", #roundtrip.changes == 2)
 
-local primitives = MessagePack.decode(MessagePack.encode({
-	flag = true,
-	count = 4096,
-	text = "hello",
-}))
-check("encode bool", primitives.flag == true)
-check("encode number", primitives.count == 4096)
-check("encode string", primitives.text == "hello")
+	local primitives = MessagePack.decode(MessagePack.encode({
+		flag = true,
+		count = 4096,
+		text = "hello",
+	}))
+	check("encode bool", primitives.flag == true)
+	check("encode number", primitives.count == 4096)
+	check("encode string", primitives.text == "hello")
+end)
 
-local function rejects(name: string, hex: string)
-	check(name, not pcall(MessagePack.decode, fromHex(hex)))
-end
+suite("malformed MessagePack is rejected and the golden scalars decode", function()
+	local function rejects(name: string, hex: string)
+		check(name, not pcall(MessagePack.decode, fromHex(hex)))
+	end
 
-local function decodesTo(name: string, hex: string, expected: any)
-	local ok, value = pcall(MessagePack.decode, fromHex(hex))
-	check(name, ok and value == expected, if ok then "got " .. tostring(value) else tostring(value))
-end
+	local function decodesTo(name: string, hex: string, expected: any)
+		local ok, value = pcall(MessagePack.decode, fromHex(hex))
+		check(name, ok and value == expected, if ok then "got " .. tostring(value) else tostring(value))
+	end
 
-rejects("str8 shorter than its declared length is rejected", "d90a616263")
-rejects("bin8 shorter than its declared length is rejected", "c40a010203")
-rejects("array with a missing element is rejected", "9201")
-rejects("map with a missing value is rejected", "81a161")
-rejects("truncated uint16 is rejected", "cd01")
-rejects("empty input is rejected", "")
-rejects("trailing bytes after the top-level value are rejected", "0102")
-rejects("unsupported byte 0xc1 is rejected", "c1")
-decodesTo("float32 is decoded", "ca3fc00000", 1.5)
-decodesTo("float64 is decoded", "cb3ff8000000000000", 1.5)
-decodesTo("int64 is decoded", "d3fffffffffffffffe", -2)
-decodesTo("negative fixint is decoded", "e0", -32)
-decodesTo("int8 is decoded", "d0ff", -1)
-decodesTo("int16 is decoded", "d1fffe", -2)
-decodesTo("int32 is decoded", "d2fffffffe", -2)
-check("64 nested arrays are accepted", pcall(MessagePack.decode, fromHex(string.rep("91", 64) .. "01")))
-rejects("65 nested arrays exceed the depth cap", string.rep("91", 65) .. "01")
+	rejects("str8 shorter than its declared length is rejected", "d90a616263")
+	rejects("bin8 shorter than its declared length is rejected", "c40a010203")
+	rejects("array with a missing element is rejected", "9201")
+	rejects("map with a missing value is rejected", "81a161")
+	rejects("truncated uint16 is rejected", "cd01")
+	rejects("empty input is rejected", "")
+	rejects("trailing bytes after the top-level value are rejected", "0102")
+	rejects("unsupported byte 0xc1 is rejected", "c1")
+	decodesTo("float32 is decoded", "ca3fc00000", 1.5)
+	decodesTo("float64 is decoded", "cb3ff8000000000000", 1.5)
+	decodesTo("int64 is decoded", "d3fffffffffffffffe", -2)
+	decodesTo("negative fixint is decoded", "e0", -32)
+	decodesTo("int8 is decoded", "d0ff", -1)
+	decodesTo("int16 is decoded", "d1fffe", -2)
+	decodesTo("int32 is decoded", "d2fffffffe", -2)
+	check("64 nested arrays are accepted", pcall(MessagePack.decode, fromHex(string.rep("91", 64) .. "01")))
+	rejects("65 nested arrays exceed the depth cap", string.rep("91", 65) .. "01")
+end)
 
 local function signal()
 	local connections: { { handler: (...any) -> (), active: boolean } } = {}
@@ -3218,6 +3238,36 @@ suite("an accepted post resets the count, so three more consecutive abandonments
 			"the batch is kept pending after the third abandonment that follows the reset",
 			connection.pendingPush["C.luau"] ~= nil,
 			"nothing pending"
+		)
+end)
+
+suite("a late success from an abandoned post resets the count while a newer post is still hung", function()
+		local holds = { { done = false }, { done = false }, { done = false }, { done = false } }
+		local _, onState = stateLog()
+		local connection, sent, watchdogs = abandoningConnection(onState, { [1] = holds[1], [2] = holds[2], [3] = holds[3], [4] = holds[4] })
+		connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+		connection:_schedulePush()
+		fireWatchdog(watchdogs, 1)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 2)
+		task.wait(0.5)
+		fireWatchdog(watchdogs, 3)
+		task.wait(0.5)
+		check(
+			"three abandonments are counted before the late success",
+			connection.pushAbandons == 3,
+			string.format("count %d", connection.pushAbandons)
+		)
+		connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
+		connection:_schedulePush()
+		task.wait(0.5)
+		local newerToken = connection.pushGate.flight and connection.pushGate.flight.token
+		holds[1].done = true
+		task.wait(0.5)
+		check(
+			"a late success from an abandoned post resets the count while a newer post is still hung",
+			#sent == 4 and connection.pushAbandons == 0 and connection.pushGate.flight ~= nil and connection.pushGate.flight.token == newerToken,
+			string.format("posts %d, count %d", #sent, connection.pushAbandons)
 		)
 end)
 
