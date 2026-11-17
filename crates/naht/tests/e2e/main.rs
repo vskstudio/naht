@@ -9,7 +9,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use naht::session::Session;
-use naht_core::protocol::{Change, PatchBatch};
+use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch};
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 use naht_core::state::StateStore;
 use reqwest::Client;
@@ -107,6 +107,7 @@ impl Daemon {
         match self
             .quick
             .get(format!("{}/patches", self.base))
+            .header(CLIENT_HEADER, "plugin")
             .query(&[("cursor", "0")])
             .send()
             .await
