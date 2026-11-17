@@ -15,7 +15,16 @@ use rmp_serde::encode;
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
 /// it so an incompatible plugin/daemon pair fails loudly instead of misreading each other.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
+
+/// Request header every client sends to identify itself as the Studio plugin or the local CLI.
+pub const CLIENT_HEADER: &str = "x-naht-client";
+
+/// Request header carrying the Roblox place id the client is connected to.
+pub const PLACE_ID_HEADER: &str = "x-naht-place-id";
+
+/// Token opening the 403 body for a request without the client header, sent by daemons that know it.
+pub const OUTDATED_PLUGIN_TOKEN: &str = "outdated-plugin";
 
 /// The handshake payload returned by `GET /info`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
