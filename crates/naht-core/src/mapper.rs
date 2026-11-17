@@ -43,6 +43,9 @@ pub enum MapError {
     /// A path had no final component to name an instance after.
     #[error("path has no file name: {0}")]
     NoFileName(PathBuf),
+    /// An instance name that cannot be a single, safe path component.
+    #[error("unsafe instance name: {0:?}")]
+    UnsafeName(String),
 }
 
 /// Map a directory (and everything under it) into a [`Snapshot`] tree.
@@ -94,13 +97,14 @@ pub fn snapshot_dir(vfs: &impl Vfs, dir: &Path) -> Result<Snapshot, MapError> {
 ///
 /// Returns an error when a directory or file cannot be written.
 pub fn write_tree(vfs: &mut impl Vfs, parent: &Path, snapshot: &Snapshot) -> Result<(), MapError> {
+    let name = checked_name(&snapshot.name)?;
     if is_script(&snapshot.class) {
-        let content = script_content(snapshot);
+        let content = script_content(snapshot)?;
         if snapshot.children.is_empty() {
-            let file = parent.join(script_file_name(&snapshot.class, &snapshot.name));
+            let file = parent.join(script_file_name(&snapshot.class, name));
             vfs.write(&file, content.as_bytes())?;
         } else {
-            let dir = parent.join(&snapshot.name);
+            let dir = parent.join(name);
             vfs.create_dir(&dir)?;
             vfs.write(
                 &dir.join(init_file_name(&snapshot.class)),
@@ -109,7 +113,7 @@ pub fn write_tree(vfs: &mut impl Vfs, parent: &Path, snapshot: &Snapshot) -> Res
             write_children(vfs, &dir, snapshot)?;
         }
     } else {
-        let dir = parent.join(&snapshot.name);
+        let dir = parent.join(name);
         vfs.create_dir(&dir)?;
         write_children(vfs, &dir, snapshot)?;
     }
@@ -144,13 +148,13 @@ fn script_snapshot(
     })
 }
 
-fn script_content(snapshot: &Snapshot) -> String {
+fn script_content(snapshot: &Snapshot) -> Result<String, MapError> {
     let source = snapshot.source().unwrap_or_default();
     let mut properties = snapshot.properties.clone();
     properties.remove(SOURCE_PROPERTY);
-    let mut content = frontmatter::render(&properties).unwrap_or_default();
+    let mut content = frontmatter::render(&properties)?;
     content.push_str(source);
-    content
+    Ok(content)
 }
 
 fn is_script(class: &str) -> bool {
@@ -195,6 +199,13 @@ fn init_file_name(class: &str) -> &'static str {
         LOCAL_SCRIPT => "init.client.luau",
         _ => "init.luau",
     }
+}
+
+fn checked_name(name: &str) -> Result<&str, MapError> {
+    if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\', '\0', ':']) {
+        return Err(MapError::UnsafeName(name.to_owned()));
+    }
+    Ok(name)
 }
 
 fn file_name(path: &Path) -> Result<String, MapError> {
@@ -324,5 +335,29 @@ mod tests {
         let round_tripped = snapshot_dir(&dest, Path::new("proj")).unwrap();
 
         assert_eq!(round_tripped, project);
+    }
+
+    #[test]
+    fn write_tree_rejects_instance_names_that_would_leave_the_root() {
+        let unsafe_instances = [
+            ("Folder", ".."),
+            ("Folder", "."),
+            ("Folder", ""),
+            ("Folder", "a/b"),
+            ("Folder", "a\\b"),
+            ("Folder", "bad\0name"),
+            ("Folder", "C:evil"),
+            ("Folder", ".hidden"),
+            ("ModuleScript", "../escape"),
+            ("Script", "nested/Script"),
+        ];
+        for (class, name) in unsafe_instances {
+            let mut vfs = MemoryVfs::new();
+            let snapshot = Snapshot::new(class, name);
+            assert!(
+                write_tree(&mut vfs, Path::new("proj"), &snapshot).is_err(),
+                "{class} named {name:?} must be rejected"
+            );
+        }
     }
 }

@@ -10,6 +10,11 @@ use std::num::{ParseFloatError, ParseIntError};
 use rbx_dom_weak::types::{Attributes, Color3, Enum, Tags, Variant, Vector3};
 
 const PREFIX: &str = "--!naht";
+const MAX_DEPTH: usize = 32;
+
+mod render;
+
+pub use render::render;
 
 /// Errors from parsing a frontmatter directive.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -41,6 +46,15 @@ pub enum FrontmatterError {
         #[source]
         source: ParseFloatError,
     },
+    /// Nested tables went deeper than the parser allows.
+    #[error("frontmatter nests deeper than {0} levels")]
+    TooDeep(usize),
+    /// A property or attribute name cannot be written as a frontmatter key.
+    #[error("frontmatter key {0:?} cannot be written as a bare name")]
+    BadKey(String),
+    /// A property value has no frontmatter form.
+    #[error("value of type {0} has no frontmatter form")]
+    Unsupported(String),
 }
 
 /// Split a leading frontmatter directive off a script body.
@@ -56,7 +70,7 @@ pub fn split(body: &str) -> Result<(BTreeMap<String, Variant>, String), Frontmat
         return Ok((BTreeMap::new(), body.to_owned()));
     };
     let (line, remainder) = split_directive_line(rest);
-    let props = parse_table(line.trim())?;
+    let props = parse_table(line.trim(), 0)?;
     Ok((props, remainder))
 }
 
@@ -72,22 +86,10 @@ fn split_directive_line(rest: &str) -> (&str, String) {
     }
 }
 
-/// Render properties as a frontmatter directive line (including its trailing newline), or `None`
-/// when there are no properties to record.
-#[must_use]
-pub fn render(properties: &BTreeMap<String, Variant>) -> Option<String> {
-    if properties.is_empty() {
-        return None;
+fn parse_table(body: &str, depth: usize) -> Result<BTreeMap<String, Variant>, FrontmatterError> {
+    if depth > MAX_DEPTH {
+        return Err(FrontmatterError::TooDeep(MAX_DEPTH));
     }
-    let body = properties
-        .iter()
-        .map(|(key, value)| format!("{key} = {}", render_value(value)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!("{PREFIX} {{ {body} }}\n"))
-}
-
-fn parse_table(body: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError> {
     let inner = body
         .strip_prefix('{')
         .and_then(|text| text.strip_suffix('}'))
@@ -110,7 +112,7 @@ fn parse_table(body: &str) -> Result<BTreeMap<String, Variant>, FrontmatterError
         if key.is_empty() {
             return Err(FrontmatterError::MalformedEntry(pair.to_owned()));
         }
-        props.insert(key.to_owned(), parse_value(value.trim())?);
+        props.insert(key.to_owned(), parse_value(value.trim(), depth)?);
     }
     Ok(props)
 }
@@ -152,7 +154,7 @@ fn split_top_level(input: &str, delim: char) -> Vec<String> {
     parts
 }
 
-fn parse_value(raw: &str) -> Result<Variant, FrontmatterError> {
+fn parse_value(raw: &str, depth: usize) -> Result<Variant, FrontmatterError> {
     match raw {
         "true" => return Ok(Variant::Bool(true)),
         "false" => return Ok(Variant::Bool(false)),
@@ -190,7 +192,7 @@ fn parse_value(raw: &str) -> Result<Variant, FrontmatterError> {
         return Ok(Variant::Tags(parse_tags(args)?));
     }
     if let Some(args) = call_args(raw, "Attributes") {
-        let table = parse_table(args.trim())?;
+        let table = parse_table(args.trim(), depth.saturating_add(1))?;
         let mut attributes = Attributes::new();
         for (key, value) in table {
             attributes.insert(key, value);
@@ -247,69 +249,6 @@ fn parse_tags(args: &str) -> Result<Tags, FrontmatterError> {
     Ok(tags.into())
 }
 
-fn render_value(value: &Variant) -> String {
-    if let Some(rendered) = render_scalar(value) {
-        return rendered;
-    }
-    if let Some(rendered) = render_collection(value) {
-        return rendered;
-    }
-    format!("{value:?}")
-}
-
-fn render_scalar(value: &Variant) -> Option<String> {
-    if let Variant::Bool(flag) = value {
-        return Some(flag.to_string());
-    }
-    if let Variant::Int64(number) = value {
-        return Some(number.to_string());
-    }
-    if let Variant::Float64(f) = value {
-        return Some(format!("{f:?}"));
-    }
-    if let Variant::String(text) = value {
-        return Some(format!("\"{}\"", escape(text)));
-    }
-    if let Variant::Color3(color) = value {
-        return Some(format!(
-            "Color3({:?}, {:?}, {:?})",
-            color.r, color.g, color.b
-        ));
-    }
-    if let Variant::Vector3(vector) = value {
-        return Some(format!(
-            "Vector3({:?}, {:?}, {:?})",
-            vector.x, vector.y, vector.z
-        ));
-    }
-    if let Variant::Enum(enum_value) = value {
-        return Some(format!("Enum({})", enum_value.to_u32()));
-    }
-    None
-}
-
-fn render_collection(value: &Variant) -> Option<String> {
-    if let Variant::Tags(tags) = value {
-        let items: Vec<String> = tags
-            .iter()
-            .map(|tag| format!("\"{}\"", escape(tag)))
-            .collect();
-        return Some(format!("Tags({})", items.join(", ")));
-    }
-    if let Variant::Attributes(attributes) = value {
-        let items: Vec<String> = attributes
-            .iter()
-            .map(|(key, variant)| format!("{key} = {}", render_value(variant)))
-            .collect();
-        return Some(format!("Attributes({{ {} }})", items.join(", ")));
-    }
-    None
-}
-
-fn escape(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 fn unescape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -317,6 +256,8 @@ fn unescape(text: &str) -> String {
         if character == '\\' {
             match chars.next() {
                 Some('"') => out.push('"'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
                 Some('\\') | None => out.push('\\'),
                 Some(other) => {
                     out.push('\\');
@@ -378,7 +319,7 @@ mod tests {
 
     #[test]
     fn empty_properties_render_to_nothing() {
-        assert_eq!(render(&BTreeMap::new()), None);
+        assert_eq!(render(&BTreeMap::new()).unwrap(), "");
     }
 
     #[test]
@@ -427,5 +368,51 @@ mod tests {
         let (parsed, body) = split(&format!("{line}{source}")).unwrap();
         assert_eq!(parsed, props);
         assert_eq!(body, source);
+    }
+
+    #[test]
+    fn a_string_with_newlines_quotes_and_backslashes_round_trips() {
+        let mut props = BTreeMap::new();
+        props.insert(
+            "Source".to_owned(),
+            Variant::String("line one\nline \"two\"\r\\end".to_owned()),
+        );
+        let line = render(&props).unwrap();
+        let (parsed, body) = split(&format!("{line}body")).unwrap();
+        assert_eq!(parsed, props);
+        assert_eq!(body, "body");
+    }
+
+    #[test]
+    fn a_value_without_a_frontmatter_form_is_an_error_not_debug_text() {
+        let mut props = BTreeMap::new();
+        props.insert("Size".to_owned(), Variant::Float32(1.0));
+        assert!(matches!(
+            render(&props),
+            Err(FrontmatterError::Unsupported(_))
+        ));
+    }
+
+    fn nested_attributes(levels: usize) -> String {
+        let mut value = String::from("1");
+        for _ in 0..levels {
+            value = format!("Attributes({{ Inner = {value} }})");
+        }
+        format!("--!naht {{ Nested = {value} }}\nbody\n")
+    }
+
+    #[test]
+    fn frontmatter_nested_deeper_than_the_limit_is_rejected() {
+        assert!(matches!(
+            split(&nested_attributes(40)),
+            Err(FrontmatterError::TooDeep(_))
+        ));
+    }
+
+    #[test]
+    fn frontmatter_within_the_nesting_limit_still_parses() {
+        let (props, body) = split(&nested_attributes(5)).unwrap();
+        assert!(props.contains_key("Nested"));
+        assert_eq!(body, "body\n");
     }
 }
