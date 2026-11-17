@@ -21,7 +21,7 @@ fn hold_write_transaction(path: &Path, hold_for: Duration) -> Holder {
         let conn = Connection::open(&path).unwrap();
         conn.execute_batch("BEGIN IMMEDIATE").unwrap();
         ready_tx.send(()).unwrap();
-        let _ = released.recv_timeout(hold_for);
+        let _released_or_timed_out = released.recv_timeout(hold_for);
         conn.execute_batch("COMMIT").unwrap();
     });
     Holder {
