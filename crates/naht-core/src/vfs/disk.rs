@@ -35,6 +35,10 @@ fn temp_sibling(target: &Path) -> PathBuf {
     target.with_file_name(format!(".{name}.{}.{serial}.naht-tmp", process::id()))
 }
 
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
 fn write_then_rename(temp: &Path, target: &Path, contents: &[u8]) -> io::Result<()> {
     fs::write(temp, contents)?;
     if let Ok(metadata) = fs::metadata(target) {
@@ -81,18 +85,20 @@ impl Vfs for DiskVfs {
     }
 
     fn write(&mut self, path: &Path, contents: &[u8]) -> Result<(), VfsError> {
+        if is_symlink(path) {
+            return Err(VfsError::Symlink(path.to_path_buf()));
+        }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| VfsError::Io {
                 path: parent.to_path_buf(),
                 source,
             })?;
         }
-        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let temp = temp_sibling(&target);
-        write_then_rename(&temp, &target, contents).map_err(|source| {
+        let temp = temp_sibling(path);
+        write_then_rename(&temp, path, contents).map_err(|source| {
             drop(fs::remove_file(&temp));
             VfsError::Io {
-                path: target.clone(),
+                path: path.to_path_buf(),
                 source,
             }
         })
@@ -159,5 +165,34 @@ mod tests {
             "the write must replace the file, not truncate it in place"
         );
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn write_refuses_a_live_symlink_and_leaves_its_target_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside.txt");
+        let link = dir.path().join("Main.luau");
+        fs::write(&outside, "keep").unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        let result = DiskVfs::new().write(&link, b"replaced");
+
+        assert!(matches!(result, Err(VfsError::Symlink(_))));
+        assert_eq!(fs::read(&outside).unwrap(), b"keep");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn write_refuses_a_dangling_symlink_and_creates_nothing_behind_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.txt");
+        let link = dir.path().join("Main.luau");
+        std::os::unix::fs::symlink(&missing, &link).unwrap();
+
+        let result = DiskVfs::new().write(&link, b"new");
+
+        assert!(matches!(result, Err(VfsError::Symlink(_))));
+        assert!(!missing.exists());
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
     }
 }
