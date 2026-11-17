@@ -121,9 +121,15 @@ The encode/decode, patch-apply, terrain blob, and connection lifecycle paths run
 lune run plugin/tests/run.luau
 ```
 
-The MessagePack cases decode bytes captured from the **real daemon encoder**
-(`cargo run -p naht-core --example wire_golden`), so the codec is verified against the actual wire
-format rather than only against itself.
+The MessagePack cases decode bytes captured from the **real daemon encoder**, so the codec is
+verified against the actual wire format rather than only against itself. The `GOLDEN` table in
+`plugin/tests/run.luau` is the single source of truth for those bytes. The Lune harness reads
+`GOLDEN` directly and is the authority on whether a pin is live: a pin that exists only inside a
+`--[[ ]]` block leaves `GOLDEN.server_info` nil, and the harness fails on it. The Rust tests
+`encodes_to_the_bytes` in `crates/naht-core/src/protocol.rs` are a cross-check, not a second source:
+they read the pins from that file at compile time and compare the encoder output against them. After
+a deliberate encoding change, run `cargo test -p naht-core encodes_to_the_bytes`, copy the `left` hex
+from the failure, and paste it over the matching `GOLDEN` entry in `plugin/tests/run.luau`.
 
 ## Studio validation checklist
 

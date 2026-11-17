@@ -1,5 +1,5 @@
 use super::Session;
-use super::{SessionError, new_session_id};
+use super::{SessionError, new_daemon_id, new_session_id};
 use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
 use naht_core::reconciler;
 use naht_core::state::{InstanceRecord, StateStore};
@@ -46,6 +46,7 @@ impl Session {
             activity_next_seq: 1,
             project_name: project_name.into(),
             id: new_session_id(),
+            daemon_id: new_daemon_id()?,
             serve_place_id,
             terrain_sync,
         })
@@ -58,6 +59,7 @@ impl Session {
             server_version: naht_core::version().to_owned(),
             project_name: self.project_name.clone(),
             session_id: self.id.clone(),
+            daemon_id: self.daemon_id.clone(),
             serve_place_id: self.serve_place_id,
             conflicted: Vec::new(),
         }
@@ -77,6 +79,11 @@ impl Session {
             .map(|record| record.path)
             .collect();
         Ok(info)
+    }
+
+    /// The random id of this daemon run, recorded in the port file.
+    pub fn daemon_id(&self) -> &str {
+        &self.daemon_id
     }
 
     /// The place id this session is bound to, if any.

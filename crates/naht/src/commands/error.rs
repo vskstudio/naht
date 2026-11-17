@@ -150,6 +150,22 @@ pub enum CommandError {
         /// The project name the answering daemon reports.
         project: String,
     },
+    /// The port answers for this project, but not with the daemon recorded in the port file.
+    #[error(
+        "no daemon is running for this project: the daemon on port {port} is not the one recorded in `.naht/daemon.port` (restart `naht serve`)"
+    )]
+    StaleDaemon {
+        /// The port that answered.
+        port: u16,
+    },
+    /// The port file has no daemon id, so the daemon that answered cannot be checked.
+    #[error(
+        "the port file `.naht/daemon.port` records no daemon id, so the daemon on port {port} cannot be verified (restart `naht serve`)"
+    )]
+    UnverifiedDaemon {
+        /// The port that answered.
+        port: u16,
+    },
     /// Something answers at the daemon address, but not with naht's handshake.
     #[error("`{url}` did not answer with naht's handshake")]
     NotNahtDaemon {

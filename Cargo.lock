@@ -907,6 +907,7 @@ version = "0.3.0"
 dependencies = [
  "axum",
  "clap",
+ "getrandom 0.3.4",
  "naht-core",
  "notify-debouncer-full",
  "rbx_binary",

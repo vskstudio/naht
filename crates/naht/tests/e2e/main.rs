@@ -186,6 +186,15 @@ fn write_port_file(root: &Path, port: u16) {
     fs::write(root.join(".naht").join("daemon.port"), port.to_string()).unwrap();
 }
 
+fn write_recorded_port(root: &Path, port: u16, daemon_id: &str) {
+    fs::create_dir_all(root.join(".naht")).unwrap();
+    fs::write(
+        root.join(".naht").join("daemon.port"),
+        format!("{port}\n{daemon_id}\n"),
+    )
+    .unwrap();
+}
+
 fn freeze_offline(root: &Path) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join(FILE), "local a = 1\n").unwrap();

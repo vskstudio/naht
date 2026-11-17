@@ -47,21 +47,30 @@ impl InfoFailure {
 
 /// Asks the daemon recorded for the project at `root` to re-sync, within the nudge timeout.
 pub async fn resync_running(root: &Path) -> ResyncOutcome {
-    let Some(port) = daemon_port::read(root) else {
+    let Some(recorded) = daemon_port::read(root) else {
         return ResyncOutcome::NotRunning;
     };
     let config = match Config::load(root) {
         Ok(config) => config,
         Err(error) => return ResyncOutcome::Failed(format!("could not be checked ({error})")),
     };
-    match fetch_info(port).await {
-        Ok(info)
-            if belongs_to_project(&info, &project_name(root, &config), config.serve.place_id) =>
-        {
-            ResyncOutcome::Resynced
-        }
-        Ok(info) => ResyncOutcome::ForeignDaemon {
-            project: info.project_name,
+    match fetch_info(recorded.port).await {
+        Ok(info) => match ownership(
+            &info,
+            &project_name(root, &config),
+            config.serve.place_id,
+            recorded.daemon_id.as_deref(),
+        ) {
+            Ownership::Ours => ResyncOutcome::Resynced,
+            Ownership::Foreign { project } => ResyncOutcome::ForeignDaemon { project },
+            Ownership::Stale => ResyncOutcome::Failed(
+                "answers for this project but is not the daemon recorded in `.naht/daemon.port`"
+                    .to_owned(),
+            ),
+            Ownership::Unverified => ResyncOutcome::Failed(
+                "has no daemon id recorded in `.naht/daemon.port`, so it cannot be checked"
+                    .to_owned(),
+            ),
         },
         Err(InfoFailure::Request(error)) if error.is_connect() => ResyncOutcome::NotRunning,
         Err(failure) => ResyncOutcome::Failed(failure.describe()),
@@ -76,14 +85,24 @@ pub async fn resync_running(root: &Path) -> ResyncOutcome {
 /// Returns [`CommandError`] when the daemon is unreachable within the nudge timeout, fails, or
 /// belongs to another project.
 pub async fn pull(root: &Path, config: &Config) -> Result<(), CommandError> {
-    let port = daemon_port::read(root).unwrap_or_else(|| config.port());
+    let recorded = daemon_port::read(root);
+    let port = recorded
+        .as_ref()
+        .map_or_else(|| config.port(), |recorded| recorded.port);
+    let recorded_id = recorded.and_then(|recorded| recorded.daemon_id);
     let project = project_name(root, config);
     match fetch_info(port).await {
-        Ok(info) if belongs_to_project(&info, &project, config.serve.place_id) => Ok(()),
-        Ok(info) => Err(CommandError::ForeignDaemon {
-            port,
-            project: info.project_name,
-        }),
+        Ok(info) => match ownership(
+            &info,
+            &project,
+            config.serve.place_id,
+            recorded_id.as_deref(),
+        ) {
+            Ownership::Ours => Ok(()),
+            Ownership::Foreign { project } => Err(CommandError::ForeignDaemon { port, project }),
+            Ownership::Stale => Err(CommandError::StaleDaemon { port }),
+            Ownership::Unverified => Err(CommandError::UnverifiedDaemon { port }),
+        },
         Err(InfoFailure::Status(status)) => Err(CommandError::DaemonStatus { status }),
         Err(InfoFailure::Request(source)) => Err(CommandError::DaemonUnreachable {
             url: info_url(port),
@@ -126,41 +145,85 @@ fn project_name(root: &Path, config: &Config) -> String {
     config.project_name(&root)
 }
 
-fn belongs_to_project(info: &ServerInfo, project: &str, place_id: Option<u64>) -> bool {
-    info.project_name == project
-        && place_id.is_none_or(|configured| info.serve_place_id == Some(configured))
+#[derive(Debug, PartialEq, Eq)]
+enum Ownership {
+    Ours,
+    Foreign { project: String },
+    Stale,
+    Unverified,
+}
+
+fn ownership(
+    info: &ServerInfo,
+    project: &str,
+    place_id: Option<u64>,
+    recorded_id: Option<&str>,
+) -> Ownership {
+    let same_place = place_id.is_none_or(|configured| info.serve_place_id == Some(configured));
+    if info.project_name != project || !same_place {
+        return Ownership::Foreign {
+            project: info.project_name.clone(),
+        };
+    }
+    match recorded_id {
+        None => Ownership::Unverified,
+        Some(id) if id == info.daemon_id => Ownership::Ours,
+        Some(_) => Ownership::Stale,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::belongs_to_project;
+    use super::{Ownership, ownership};
     use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
 
-    fn info(project: &str, place: Option<u64>) -> ServerInfo {
+    fn info(project: &str, place: Option<u64>, daemon_id: &str) -> ServerInfo {
         ServerInfo {
             protocol_version: PROTOCOL_VERSION,
             server_version: "test".to_owned(),
             project_name: project.to_owned(),
             session_id: "test".to_owned(),
+            daemon_id: daemon_id.to_owned(),
             serve_place_id: place,
+            conflicted: Vec::new(),
         }
     }
 
     #[test]
+    fn a_daemon_recording_this_id_is_ours() {
+        let verdict = ownership(&info("demo", None, "d-1"), "demo", None, Some("d-1"));
+        assert_eq!(verdict, Ownership::Ours);
+    }
+
+    #[test]
+    fn a_same_named_daemon_with_another_id_is_stale() {
+        let verdict = ownership(&info("game", None, "d-2"), "game", None, Some("d-1"));
+        assert_eq!(verdict, Ownership::Stale);
+    }
+
+    #[test]
+    fn a_recorded_port_without_a_daemon_id_is_unverified() {
+        let verdict = ownership(&info("demo", None, "d-1"), "demo", None, None);
+        assert_eq!(verdict, Ownership::Unverified);
+    }
+
+    #[test]
+    fn a_different_project_name_is_foreign() {
+        let verdict = ownership(&info("other", None, "d-1"), "demo", None, Some("d-1"));
+        assert!(matches!(verdict, Ownership::Foreign { .. }));
+    }
+
+    #[test]
     fn a_configured_place_must_match_the_daemon_place() {
-        assert!(belongs_to_project(&info("demo", Some(1)), "demo", Some(1)));
-        assert!(!belongs_to_project(&info("demo", Some(2)), "demo", Some(1)));
-        assert!(!belongs_to_project(&info("demo", None), "demo", Some(1)));
+        let matching = ownership(&info("demo", Some(1), "d-1"), "demo", Some(1), Some("d-1"));
+        let other = ownership(&info("demo", Some(2), "d-1"), "demo", Some(1), Some("d-1"));
+        assert_eq!(matching, Ownership::Ours);
+        assert!(matches!(other, Ownership::Foreign { .. }));
     }
 
     #[test]
     fn an_unconfigured_place_accepts_any_daemon_place() {
-        assert!(belongs_to_project(&info("demo", Some(2)), "demo", None));
-        assert!(belongs_to_project(&info("demo", None), "demo", None));
-    }
-
-    #[test]
-    fn a_different_project_name_never_belongs() {
-        assert!(!belongs_to_project(&info("other", None), "demo", None));
+        let verdict = ownership(&info("demo", Some(2), "d-1"), "demo", None, Some("d-1"));
+        assert_eq!(verdict, Ownership::Ours);
     }
 }

@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 clap.workspace = true
+getrandom.workspace = true
 naht-core.workspace = true
 notify-debouncer-full.workspace = true
 rbx_dom_weak.workspace = true

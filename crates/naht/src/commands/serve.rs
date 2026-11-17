@@ -61,6 +61,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         config.serve.place_id,
         config.terrain_sync(),
     )?;
+    let daemon_id = session.daemon_id().to_owned();
     let state = AppState::new(session, LONG_POLL);
     state
         .tasks()
@@ -72,7 +73,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|source| CommandError::Bind { addr, source })?;
-    daemon_port::write(&root, port).map_err(|source| CommandError::Write {
+    daemon_port::write(&root, port, &daemon_id).map_err(|source| CommandError::Write {
         path: daemon_port::path(&root),
         source,
     })?;

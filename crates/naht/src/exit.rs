@@ -75,6 +75,8 @@ impl From<&CommandError> for Exit {
             CommandError::DaemonUnreachable { .. }
             | CommandError::DaemonStatus { .. }
             | CommandError::ForeignDaemon { .. }
+            | CommandError::StaleDaemon { .. }
+            | CommandError::UnverifiedDaemon { .. }
             | CommandError::NotNahtDaemon { .. }
             | CommandError::AlreadyRunning { .. }
             | CommandError::Bind { .. } => Self::Unavailable,
