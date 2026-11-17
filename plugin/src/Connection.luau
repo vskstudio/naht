@@ -18,7 +18,8 @@ local DECODE_FAILURE_LIMIT = 5
 local ACK_BACKOFF_START = 2
 local RETRY_BACKOFF_MAX = 60
 local SERVER_ERROR_LIMIT = 3
-local sharedPushGate = { inFlight = false }
+local PUSH_ABANDON_AFTER = 30
+local sharedPushGate: PushGate = { issued = 0, flight = nil }
 
 local CLASS_SUFFIX = {
 	Script = ".server.luau",
@@ -110,6 +111,9 @@ export type Applier = {
 	apply: (self: Applier, patch: any) -> (),
 }
 
+export type PushFlight = { token: number, startedAt: number }
+export type PushGate = { issued: number, flight: PushFlight? }
+
 export type Deps = {
 	terrain: any,
 	tree: any?,
@@ -125,7 +129,8 @@ export type Deps = {
 		write: (terrain: any, region: any, blob: string) -> (),
 	},
 	warn: ((string) -> ())?,
-	pushGate: { inFlight: boolean }?,
+	pushGate: PushGate?,
+	now: (() -> number)?,
 }
 
 function Connection.new(client: any, root: Instance, placeId: number, onState: (State, string?) -> (), deps: Deps)
@@ -157,6 +162,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		pendingPush = {},
 		pushScheduled = false,
 		pushGate = deps.pushGate or sharedPushGate,
+		now = deps.now or os.time,
 		studioConnections = nil,
 		skippedPaths = {},
 		warnings = {},
@@ -634,8 +640,21 @@ function Connection._restorePending(self, remaining: { [string]: any })
 	end
 end
 
+function Connection._pushGateFree(self): boolean
+	local flight = self.pushGate.flight
+	if flight == nil then
+		return true
+	end
+	if self.now() - flight.startedAt < PUSH_ABANDON_AFTER then
+		return false
+	end
+	self.pushGate.flight = nil
+	self:_setWarning("push", string.format("push abandoned: no reply for %d s, the batch in flight may not be synced", PUSH_ABANDON_AFTER))
+	return true
+end
+
 function Connection._flushPush(self, session: number)
-	if self.pushGate.inFlight then
+	if not self:_pushGateFree() then
 		self:_schedulePush(PUSH_DEBOUNCE)
 		return
 	end
@@ -645,8 +664,8 @@ function Connection._flushPush(self, session: number)
 		for _, change in remaining do
 			table.insert(changes, change)
 		end
-		local ok, err = self:_postChanges(changes)
-		if not self:_isCurrent(session) then
+		local ok, err, owns = self:_postChanges(changes)
+		if not owns or not self:_isCurrent(session) then
 			return
 		end
 		if ok then
@@ -679,8 +698,6 @@ end
 function Connection._retryPush(self, remaining: { [string]: any }, err: any)
 	if isServerError(err) then
 		self.pushServerErrors += 1
-	else
-		self.pushServerErrors = 0
 	end
 	if self.pushServerErrors >= SERVER_ERROR_LIMIT then
 		self.pushServerErrors = 0
@@ -704,20 +721,26 @@ function Connection._clearRefused(self, path: string)
 	self:_clearWarning("refused:" .. path)
 end
 
-function Connection._postChanges(self, changes: { any }): (boolean, any)
-	self.pushGate.inFlight = true
+function Connection._postChanges(self, changes: { any }): (boolean, any, boolean)
+	local gate = self.pushGate
+	gate.issued += 1
+	local token = gate.issued
+	gate.flight = { token = token, startedAt = self.now() }
 	local ok, err = pcall(function()
 		self.client:postChanges(changes)
 	end)
-	self.pushGate.inFlight = false
-	return ok, err
+	local owns = gate.flight ~= nil and gate.flight.token == token
+	if owns then
+		gate.flight = nil
+	end
+	return ok, err, owns
 end
 
 function Connection._postEach(self, session: number, remaining: { [string]: any }): boolean
 	for _, path in Connection._sortedKeys(remaining) do
 		local change = remaining[path]
-		local ok, err = self:_postChanges({ change })
-		if not self:_isCurrent(session) then
+		local ok, err, owns = self:_postChanges({ change })
+		if not owns or not self:_isCurrent(session) then
 			return false
 		end
 		if ok then

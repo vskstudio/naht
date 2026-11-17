@@ -2804,7 +2804,7 @@ end
 do
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
-	local statuses = { 500, 503, 500, 500 }
+	local statuses = { 503, 503, 503, 503 }
 	local attempts = 0
 	local accepted: { string } = {}
 	local connection: any = nil
@@ -2833,7 +2833,7 @@ do
 	task.wait(1.5)
 	connection.running = false
 	check(
-		"a 503 is retried without a bound and a 500 count restarts after a different failure",
+		"a 503 is retried without a bound and is never dropped",
 		attempts == 5 and #accepted == 1,
 		string.format("attempts %d, accepted %d", attempts, #accepted)
 	)
@@ -2935,6 +2935,175 @@ do
 	check(
 		"no path is reported as kept failing after a 500 that was followed by an accepted post",
 		string.find(table.concat(warningsOf(log), "\n"), "kept failing", 1, true) == nil,
+		table.concat(warningsOf(log), "\n")
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local clock = { now = 0 }
+	local gate = { issued = 0, flight = nil }
+	local released = false
+	local calls = 0
+	local accepted = {}
+	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
+	hungDeps.pushGate = gate
+	hungDeps.now = function()
+		return clock.now
+	end
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				calls += 1
+				if changes[1].path == "A.luau" then
+					while not released do
+						task.wait(0.05)
+					end
+					return
+				end
+				table.insert(accepted, changes[1].path)
+			end,
+		},
+		root,
+		1,
+		onState,
+		hungDeps
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+	connection:_schedulePush()
+	task.wait(0.5)
+	clock.now = 31
+	connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(1)
+	released = true
+	task.wait(0.2)
+	connection.running = false
+	check(
+		"a post with no reply past the bound is abandoned and the next push is sent",
+		table.concat(accepted, ",") == "B.luau" and calls == 2,
+		string.format("calls %d, accepted: %s", calls, table.concat(accepted, ","))
+	)
+	check(
+		"the abandoned post is named in a Warning",
+		string.find(table.concat(warningsOf(log), "\n"), "push abandoned", 1, true) ~= nil,
+		table.concat(warningsOf(log), "\n")
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local clock = { now = 0 }
+	local gate = { issued = 0, flight = nil }
+	local releasedFirst = false
+	local releasedSecond = false
+	local calls = 0
+	local hungDeps = deps(extentsTerrainWith(extentsRegion), tree)
+	hungDeps.pushGate = gate
+	hungDeps.now = function()
+		return clock.now
+	end
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, _changes)
+				calls += 1
+				local mine = calls
+				if mine == 1 then
+					while not releasedFirst do
+						task.wait(0.05)
+					end
+				elseif mine == 2 then
+					while not releasedSecond do
+						task.wait(0.05)
+					end
+				end
+			end,
+		},
+		root,
+		1,
+		onState,
+		hungDeps
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+	connection:_schedulePush()
+	task.wait(0.5)
+	clock.now = 31
+	connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(0.5)
+	local newerToken = gate.flight and gate.flight.token
+	releasedFirst = true
+	task.wait(0.5)
+	check(
+		"a late return from an abandoned post does not release the gate of the newer post",
+		calls == 2 and gate.flight ~= nil and gate.flight.token == newerToken,
+		string.format("calls %d, flight %s", calls, tostring(gate.flight and gate.flight.token))
+	)
+	connection.pendingPush["C.luau"] = Protocol.upsert("C.luau", "ModuleScript", "C")
+	connection:_schedulePush()
+	task.wait(0.5)
+	check(
+		"no third post is sent while the newer post is still in flight",
+		calls == 2,
+		string.format("calls %d", calls)
+	)
+	releasedSecond = true
+	task.wait(0.5)
+	connection.running = false
+	check(
+		"the push after the newer post returns is sent and the gate is released",
+		calls == 3 and gate.flight == nil,
+		string.format("calls %d", calls)
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local script = { 500, 503, 500, 503, 500 }
+	local calls = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, _changes)
+				calls += 1
+				local status = script[calls]
+				error({ status = status, message = "naht: /changes returned " .. tostring(status), refused = {} })
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+	connection:_schedulePush()
+	task.wait(2)
+	connection.running = false
+	check(
+		"a 500 alternating with a 503 is still dropped at the third 500",
+		calls == 5 and next(connection.pendingPush) == nil,
+		string.format("calls %d", calls)
+	)
+	check(
+		"the batch dropped at the third alternating 500 is named in a Warning",
+		string.find(table.concat(warningsOf(log), "\n"), "not synced, the daemon kept failing on A.luau", 1, true) ~= nil,
 		table.concat(warningsOf(log), "\n")
 	)
 end
