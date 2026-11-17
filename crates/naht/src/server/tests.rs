@@ -453,7 +453,7 @@ async fn an_ack_naming_the_current_session_settles_the_patch() {
     let status = post_ack_status(&state, &format!("/ack?session={current}"), vec![seq]).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(state.session.lock().await.take_patches(0).1.is_empty());
+    assert_eq!(state.session.lock().await.take_patches(0).1.len(), 0);
 }
 
 #[tokio::test]

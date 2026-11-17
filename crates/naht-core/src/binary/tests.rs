@@ -400,7 +400,7 @@ fn keep_disk_with_matching_studio_bytes_pushes_nothing() {
     )
     .unwrap();
 
-    assert!(patches.is_empty());
+    assert_eq!(patches.len(), 0);
 }
 
 #[test]

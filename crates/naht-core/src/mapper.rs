@@ -190,6 +190,7 @@ pub(crate) fn init_class(file_name: &str) -> Option<&'static str> {
     }
 }
 
+/// Maps a text path to the file the daemon writes, so a childless init folder and its flat file are one script.
 pub fn canonical_script_path<V: Vfs + ?Sized>(vfs: &V, path: &str) -> String {
     let (parent, file_name) = split_parent(path);
     if let Some(class) = init_class(file_name) {
