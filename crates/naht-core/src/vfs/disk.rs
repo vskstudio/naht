@@ -1,7 +1,10 @@
-use std::path::Path;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{DirEntry, EntryKind, Vfs, VfsError};
-use std::fs;
 
 /// The real-disk [`Vfs`] used by the daemon.
 #[derive(Debug, Clone)]
@@ -20,6 +23,24 @@ impl Default for DiskVfs {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn temp_sibling(target: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let name = target
+        .file_name()
+        .map(|os_name| os_name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+    target.with_file_name(format!(".{name}.{}.{serial}.naht-tmp", process::id()))
+}
+
+fn write_then_rename(temp: &Path, target: &Path, contents: &[u8]) -> io::Result<()> {
+    fs::write(temp, contents)?;
+    if let Ok(metadata) = fs::metadata(target) {
+        fs::set_permissions(temp, metadata.permissions())?;
+    }
+    fs::rename(temp, target)
 }
 
 impl Vfs for DiskVfs {
@@ -66,9 +87,14 @@ impl Vfs for DiskVfs {
                 source,
             })?;
         }
-        fs::write(path, contents).map_err(|source| VfsError::Io {
-            path: path.to_path_buf(),
-            source,
+        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let temp = temp_sibling(&target);
+        write_then_rename(&temp, &target, contents).map_err(|source| {
+            drop(fs::remove_file(&temp));
+            VfsError::Io {
+                path: target.clone(),
+                source,
+            }
         })
     }
 
@@ -109,5 +135,29 @@ impl Vfs for DiskVfs {
         } else {
             Ok(EntryKind::File)
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn write_replaces_the_file_and_leaves_no_temp_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("Main.luau");
+        fs::write(&target, "old contents").unwrap();
+        let before = fs::metadata(&target).unwrap().ino();
+
+        DiskVfs::new().write(&target, b"new contents").unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"new contents");
+        assert_ne!(
+            fs::metadata(&target).unwrap().ino(),
+            before,
+            "the write must replace the file, not truncate it in place"
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
