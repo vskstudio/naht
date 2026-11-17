@@ -102,7 +102,7 @@ Archivable = false
 | Clé | Type | Rôle |
 |---|---|---|
 | `instance` | string | Le chemin de l'instance dans le DataModel. |
-| `path` | string? | Le chemin du système de fichiers auquel elle se mappe. |
+| `path` | string? | Le chemin du système de fichiers auquel elle se mappe. Il doit être relatif à la racine du projet et y rester, liens symboliques compris : `..`, les chemins absolus et les liens qui sortent du projet sont refusés. |
 | `class` | string? | Le nom de classe Roblox, quand il n'est pas impliqué par la convention. |
 | `properties` | table | Les propriétés non par défaut de ce nœud. |
 

@@ -153,6 +153,7 @@ instances only the hash is stored (no merge base).
   root cause of Rojo's data-loss crashes (`.unwrap()` on `PermissionDenied`).
 - A failed write **pauses the affected path** and surfaces the error; it never kills the session and
   never discards the pending change.
+- A source file that cannot be read or decoded (non-UTF-8, dangling symlink) is skipped and logged as a warning; the rest of the tree still syncs.
 - `thiserror` in `naht-core`, `anyhow` at the binary boundary.
 - **Safety guard:** `servePlaceId`: the daemon refuses to sync into a Studio session whose place id
   doesn't match the project, preventing source from landing in the wrong game.
@@ -165,7 +166,7 @@ lives in the final stage of [`spec.md`](spec.md).
 
 | Case | Status | Approach |
 |---|---|---|
-| **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, a *local* mesh/image file is uploaded once via **Open Cloud**, cached by content hash, and its property rewritten to `rbxassetid://…`. Off by default. Stage 12. |
+| **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, a *local* mesh/image file is uploaded once via **Open Cloud**, cached by the BLAKE3 digest of its bytes, and its property rewritten to `rbxassetid://…`. Off by default. Stage 12. |
 | **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob: hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on. Stages 11, 13. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
