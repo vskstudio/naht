@@ -9,6 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+blake3.workspace = true
 diffy.workspace = true
 rbx_binary.workspace = true
 rbx_dom_weak.workspace = true

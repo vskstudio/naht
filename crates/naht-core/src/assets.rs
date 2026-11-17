@@ -10,10 +10,25 @@ use std::path::Path;
 
 use rbx_dom_weak::types::Variant;
 
-use crate::hash::content_hash;
 use crate::snapshot::{SOURCE_PROPERTY, Snapshot};
 use crate::state::{StateError, StateStore};
 use crate::vfs::{Vfs, VfsError};
+
+const ASSET_PROPERTIES: [&str; 9] = [
+    "AnimationId",
+    "Graphic",
+    "Image",
+    "MeshId",
+    "ShirtTemplate",
+    "SoundId",
+    "Texture",
+    "TextureId",
+    "Video",
+];
+
+fn asset_cache_key(content: &[u8]) -> String {
+    format!("blake3:{}", blake3::hash(content).to_hex())
+}
 
 /// Uploads a local asset blob and returns its asset id (e.g. `rbxassetid://123` or a numeric id).
 ///
@@ -83,12 +98,12 @@ pub fn resolve_asset(
     name: &str,
     content: &[u8],
 ) -> Result<String, AssetError> {
-    let hash = content_hash(content);
-    if let Some(asset_id) = store.cached_asset(&hash)? {
+    let key = asset_cache_key(content);
+    if let Some(asset_id) = store.cached_asset(&key)? {
         return Ok(asset_id);
     }
     let asset_id = uploader.upload(name, content)?;
-    store.cache_asset(&hash, &asset_id)?;
+    store.cache_asset(&key, &asset_id)?;
     Ok(asset_id)
 }
 
@@ -170,7 +185,7 @@ fn rewrite_into(
     failures: &mut Vec<AssetFailure>,
 ) {
     for (key, value) in &mut snapshot.properties {
-        if key == SOURCE_PROPERTY {
+        if key == SOURCE_PROPERTY || !ASSET_PROPERTIES.contains(&key.as_str()) {
             continue;
         }
         if let Variant::String(text) = value {
@@ -194,6 +209,7 @@ fn rewrite_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hash::content_hash;
     use std::cell::RefCell;
 
     #[derive(Default)]
@@ -254,7 +270,12 @@ mod tests {
 
         let failed = resolve_asset(&failing, &store, "broken.obj", b"x");
         assert!(matches!(failed, Err(AssetError::Upload(_))));
-        assert!(store.cached_asset(&content_hash(b"x")).unwrap().is_none());
+        assert!(
+            store
+                .cached_asset(&asset_cache_key(b"x"))
+                .unwrap()
+                .is_none()
+        );
 
         let ok = resolve_asset(&working, &store, "fine.obj", b"y").unwrap();
         assert_eq!(ok, "rbxassetid://1");
@@ -356,5 +377,39 @@ mod tests {
         assert!(matches!(failures[0].error, AssetError::Upload(_)));
 
         assert_eq!(uploader.uploads.borrow().len(), 2);
+    }
+
+    #[test]
+    fn a_plain_string_property_naming_an_existing_file_is_never_uploaded() {
+        use crate::vfs::MemoryVfs;
+        let store = StateStore::open_in_memory().unwrap();
+        let uploader = FakeUploader::default();
+        let vfs = MemoryVfs::new().with_file("notes.txt", "private notes");
+
+        let mut snapshot = Snapshot::new("StringValue", "Notes")
+            .with_property("Value", Variant::String("notes.txt".to_owned()));
+
+        let failures = rewrite_snapshot_assets(&uploader, &store, &vfs, &mut snapshot);
+
+        assert!(failures.is_empty());
+        assert_eq!(
+            snapshot.properties.get("Value"),
+            Some(&Variant::String("notes.txt".to_owned()))
+        );
+        assert!(uploader.uploads.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_cache_row_keyed_by_the_legacy_64_bit_hash_is_not_served() {
+        let store = StateStore::open_in_memory().unwrap();
+        store
+            .cache_asset(&content_hash(b"v1"), "rbxassetid://777")
+            .unwrap();
+        let uploader = FakeUploader::default();
+
+        let id = resolve_asset(&uploader, &store, "img.png", b"v1").unwrap();
+
+        assert_ne!(id, "rbxassetid://777");
+        assert_eq!(uploader.uploads.borrow().len(), 1);
     }
 }
