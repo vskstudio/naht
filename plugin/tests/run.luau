@@ -1620,7 +1620,7 @@ local function echoConnection(syncEcho: boolean)
 	connection.session = 1
 	connection:_attachStudio()
 	pcall(connection._serve, connection, 1)
-	return connection, tree.findChild(root, "Z"), flush
+	return connection, tree.findChild(root, "Z"), flush, tree, root
 end
 
 local function editStudio(node: any, content: string)
@@ -1659,6 +1659,22 @@ do
 	local connection, _node, flush = echoConnection(false)
 	flush()
 	check("a deferred echo of the applied source is dropped", connection.pendingPush["Z.luau"] == nil)
+	connection:stop()
+end
+
+do
+	local connection, node, flush, tree, root = echoConnection(false)
+	flush()
+	tree.destroy(node)
+	local recreated = tree.createInstance("ModuleScript", "Z")
+	recreated.Source = "A"
+	tree.setParent(recreated, root)
+	local pushed = connection.pendingPush["Z.luau"]
+	check(
+		"a script deleted and recreated with its applied source is pushed",
+		pushed ~= nil and pushed.kind == "Upsert" and pushed.content == "A",
+		if pushed ~= nil then "pushed " .. tostring(pushed.kind) else "nothing pushed"
+	)
 	connection:stop()
 end
 
