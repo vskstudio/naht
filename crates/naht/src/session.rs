@@ -92,5 +92,9 @@ fn new_session_id() -> String {
 fn new_daemon_id() -> Result<String, RandomError> {
     let mut bytes = [0_u8; 16];
     fill(&mut bytes)?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .concat())
 }
