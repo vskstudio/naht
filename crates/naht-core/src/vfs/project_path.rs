@@ -54,3 +54,34 @@ pub enum ProjectPathError {
     #[error("drive prefixes are not allowed")]
     DrivePrefix,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_project_path;
+
+    const REFUSED_FOLDER_NAMES: [&str; 6] = ["Config: v2", "a:b", ":", ".", "..", "a\u{0}b"];
+
+    const ACCEPTED_FOLDER_NAMES: [&str; 5] = ["Config v2", "v2.0", "a-b_c", ".x", "..x"];
+
+    #[test]
+    fn folder_names_the_daemon_refuses_are_refused_as_a_segment() {
+        for name in REFUSED_FOLDER_NAMES {
+            let path = format!("{name}/Leaf.luau");
+            assert!(
+                validate_project_path(&path).is_err(),
+                "daemon accepted {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn folder_names_the_daemon_accepts_are_accepted_as_a_segment() {
+        for name in ACCEPTED_FOLDER_NAMES {
+            let path = format!("{name}/Leaf.luau");
+            assert!(
+                validate_project_path(&path).is_ok(),
+                "daemon refused {name:?}"
+            );
+        }
+    }
+}
