@@ -6,7 +6,6 @@ export type Node = any
 export type Tree = {
 	root: Node,
 	createInstance: (className: string, name: string) -> Node,
-	findChild: (parent: Node, name: string) -> Node?,
 	children: (parent: Node) -> { Node },
 	className: (node: Node) -> string,
 	getSource: (node: Node) -> string,
@@ -75,12 +74,22 @@ function Apply.create(tree: Tree, echo: Echo?)
 	return setmetatable({ tree = tree, echo = echo }, Applier)
 end
 
+function Applier._container(self, parent: Node, name: string): Node?
+	local tree = self.tree
+	for _, child in tree.children(parent) do
+		if child.Name == name and not SCRIPT_CLASSES[tree.className(child)] then
+			return child
+		end
+	end
+	return nil
+end
+
 function Applier._ensureParent(self, segments: { string }): Node
 	local tree = self.tree
 	local parent = tree.root
 	for index = 1, #segments - 1 do
 		local name = segments[index]
-		local existing = tree.findChild(parent, name)
+		local existing = self:_container(parent, name)
 		if existing == nil then
 			existing = tree.createInstance("Folder", name)
 			tree.setParent(existing, parent)
@@ -91,10 +100,9 @@ function Applier._ensureParent(self, segments: { string }): Node
 end
 
 function Applier._findParent(self, segments: { string }): Node?
-	local tree = self.tree
-	local parent = tree.root
+	local parent = self.tree.root
 	for index = 1, #segments - 1 do
-		local existing = tree.findChild(parent, segments[index])
+		local existing = self:_container(parent, segments[index])
 		if existing == nil then
 			return nil
 		end
@@ -115,7 +123,7 @@ function Applier._scriptNode(self, parent: Node, leafName: string, class: string
 			elseif SCRIPT_CLASSES[childClass] then
 				table.insert(stale, child)
 			else
-				error(string.format("%s is a %s, so it blocks the %s patch", leafName, childClass, class))
+				error(string.format("%s is a non-script %s, so it blocks the %s patch", leafName, childClass, class))
 			end
 		end
 	end
@@ -191,9 +199,6 @@ function Apply.studioTree(root: Node): Tree
 			local instance = Instance.new(className :: any)
 			instance.Name = name
 			return instance
-		end,
-		findChild = function(parent: Node, name: string): Node?
-			return parent:FindFirstChild(name)
 		end,
 		children = function(parent: Node): { Node }
 			return parent:GetChildren()

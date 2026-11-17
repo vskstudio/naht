@@ -5,7 +5,8 @@ local ServerStorage = game:GetService("ServerStorage")
 local Client = require(script.Parent.Client)
 local Apply = require(script.Parent.Apply)
 local Connection = require(script.Parent.Connection)
-local Protocol = require(script.Parent.Protocol)
+local MessagePack = require(script.Parent.MessagePack)
+local Protocol = require(script.Parent.Protocol).new(MessagePack)
 local Terrain = require(script.Parent.Terrain)
 
 local BASE_URL = "http://localhost:34872"

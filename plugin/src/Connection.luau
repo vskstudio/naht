@@ -42,13 +42,28 @@ end
 
 export type State = "Connecting" | "Connected" | "Reconnecting" | "Conflict" | "Warning" | "Disconnected"
 
-function Connection.new(
-	client: any,
-	root: Instance,
-	placeId: number,
-	onState: (State, string?) -> (),
-	deps: { terrain: any, tree: any?, apply: any, protocol: any, terrainBlob: any, warn: ((string) -> ())? }
-)
+export type Applier = {
+	apply: (self: Applier, patch: any) -> (),
+}
+
+export type Deps = {
+	terrain: any,
+	tree: any?,
+	apply: { create: (tree: any, echo: any) -> Applier },
+	protocol: {
+		upsert: (path: string, class: string, content: string) -> any,
+		delete: (path: string) -> any,
+	},
+	terrainBlob: {
+		MAX_VOXELS: number,
+		voxelCount: (number, number, number, number) -> number,
+		read: (terrain: any, region: any, resolution: number) -> string,
+		write: (terrain: any, region: any, blob: string) -> (),
+	},
+	warn: ((string) -> ())?,
+}
+
+function Connection.new(client: any, root: Instance, placeId: number, onState: (State, string?) -> (), deps: Deps)
 	return setmetatable({
 		client = client,
 		root = root,
@@ -73,7 +88,35 @@ function Connection.new(
 		pushScheduled = false,
 		studioConnections = nil,
 		skippedPaths = {},
+		warnings = {},
+		projectName = "",
 	}, Connection)
+end
+
+function Connection._setWarning(self, source: string, message: string)
+	self.warnings[source] = message
+	self.onState("Warning", message)
+end
+
+function Connection._clearWarning(self, source: string)
+	if self.warnings[source] == nil then
+		return
+	end
+	self.warnings[source] = nil
+	self:_refreshState()
+end
+
+function Connection._refreshState(self)
+	local sources = {}
+	for source in self.warnings do
+		table.insert(sources, source)
+	end
+	if #sources == 0 then
+		self.onState("Connected", self.projectName)
+		return
+	end
+	table.sort(sources)
+	self.onState("Warning", self.warnings[sources[1]])
 end
 
 function Connection.nextBlobBackoff(current: number): number
@@ -168,7 +211,8 @@ function Connection._run(self, session: number)
 			if not self:_isCurrent(session) then
 				return
 			end
-			self.onState("Connected", info.project_name)
+			self.projectName = info.project_name
+			self:_refreshState()
 			self.cursor = 0
 			self.blobCursor = 0
 			self.epoch += 1
@@ -188,6 +232,9 @@ function Connection._run(self, session: number)
 		if not ok then
 			self.onState("Reconnecting", tostring(err))
 			task.wait(self.backoff)
+			if not self:_isCurrent(session) then
+				break
+			end
 			self.backoff = math.min(self.backoff * 2, BACKOFF_MAX)
 		end
 	end
@@ -206,15 +253,19 @@ function Connection._serve(self, session: number)
 			if not self:_isCurrent(session) then
 				break
 			end
-			local ok = pcall(function()
-				applier:apply(patch)
-			end)
-			if ok then
-				table.insert(applied, patch.path)
-				if patch.kind == "Conflict" then
-					self.onState("Conflict", patch.path)
+			local ok, err = pcall(function()
+					applier:apply(patch)
+				end)
+				local source = "patch:" .. patch.path
+				if ok then
+					table.insert(applied, patch.path)
+					self:_clearWarning(source)
+					if patch.kind == "Conflict" then
+						self.onState("Conflict", patch.path)
+					end
+				else
+					self:_setWarning(source, string.format("patch rejected: %s: %s", patch.path, tostring(err)))
 				end
-			end
 		end
 		self.applying = false
 		if not self:_isCurrent(session) then
@@ -257,10 +308,11 @@ function Connection._serveBlobs(self, epoch: number)
 			end
 		end
 		if allApplied then
+			self:_clearWarning("blob")
 			self.blobCursor = batch.cursor
 			self.blobBackoff = BLOB_BACKOFF_START
 		else
-			self.onState("Warning", "terrain blob rejected: " .. rejection)
+			self:_setWarning("blob", "terrain blob rejected: " .. rejection)
 			task.wait(self.blobBackoff)
 			self.blobBackoff = Connection.nextBlobBackoff(self.blobBackoff)
 		end
@@ -282,9 +334,10 @@ function Connection._pushTerrain(self, session: number)
 	end
 	local size = region.Size
 	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainBlob.MAX_VOXELS then
-		self.onState("Warning", TERRAIN_TOO_LARGE)
+		self:_setWarning("terrain", TERRAIN_TOO_LARGE)
 		return
 	end
+	self:_clearWarning("terrain")
 	local ok, blob = pcall(self.terrainBlob.read, self.terrain, region, TERRAIN_RESOLUTION)
 	if not ok or not self:_isCurrent(session) then
 		return

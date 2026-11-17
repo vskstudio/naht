@@ -1,18 +1,14 @@
---!strict
--- The HTTP client for the daemon. The plugin must initiate every exchange (HttpService is
--- request/response only, with no server push), so the patch feed is a long-poll the connection loop
--- repeats. Bodies are MessagePack.
 
 local HttpService = game:GetService("HttpService")
 
-local Protocol = require(script.Parent.Protocol)
+local MessagePack = require(script.Parent.MessagePack)
+local Protocol = require(script.Parent.Protocol).new(MessagePack)
 
 local Client = {}
 Client.__index = Client
 
 export type Client = typeof(setmetatable({} :: { baseUrl: string }, Client))
 
--- A client targeting the daemon at `baseUrl` (e.g. `http://localhost:34872`).
 function Client.new(baseUrl: string): Client
 	return setmetatable({ baseUrl = baseUrl }, Client)
 end
@@ -28,8 +24,7 @@ local function request(self: Client, options: { [string]: any }): { [string]: an
 	return response
 end
 
--- Handshake. Returns the server info, or raises if the place guard rejects this session (403).
-function Client.info(self: Client, placeId: number): Protocol.ServerInfo
+function Client.info(self: Client, placeId: number): any
 	local response = request(self, {
 		Url = "/info?place_id=" .. tostring(placeId),
 		Method = "GET",
@@ -43,8 +38,7 @@ function Client.info(self: Client, placeId: number): Protocol.ServerInfo
 	return Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
 end
 
--- Long-poll for patches past `cursor`. Held open by the daemon until a change or its timeout.
-function Client.patches(self: Client, cursor: number): Protocol.PatchBatch
+function Client.patches(self: Client, cursor: number): any
 	local response = request(self, {
 		Url = "/patches?cursor=" .. tostring(cursor),
 		Method = "GET",
@@ -55,8 +49,7 @@ function Client.patches(self: Client, cursor: number): Protocol.PatchBatch
 	return Protocol.decodePatches(response.Body)
 end
 
--- Long-poll for terrain blob patches past `cursor`, on the dedicated `/blobs` channel.
-function Client.blobs(self: Client, cursor: number): Protocol.BlobPatchBatch
+function Client.blobs(self: Client, cursor: number): any
 	local response = request(self, {
 		Url = "/blobs?cursor=" .. tostring(cursor),
 		Method = "GET",
@@ -67,8 +60,7 @@ function Client.blobs(self: Client, cursor: number): Protocol.BlobPatchBatch
 	return Protocol.decodeBlobs(response.Body)
 end
 
--- Push Studio-side terrain blobs to the filesystem.
-function Client.postBlobs(self: Client, changes: { Protocol.BlobInstance })
+function Client.postBlobs(self: Client, changes: { any })
 	local response = request(self, {
 		Url = "/blobs",
 		Method = "POST",
@@ -80,7 +72,6 @@ function Client.postBlobs(self: Client, changes: { Protocol.BlobInstance })
 	end
 end
 
--- Confirm to the daemon which patch paths were applied, so their base advances.
 function Client.postAck(self: Client, paths: { string })
 	local response = request(self, {
 		Url = "/ack",
@@ -93,8 +84,7 @@ function Client.postAck(self: Client, paths: { string })
 	end
 end
 
--- Push Studio-side changes to the filesystem.
-function Client.postChanges(self: Client, changes: { Protocol.Change })
+function Client.postChanges(self: Client, changes: { any })
 	local response = request(self, {
 		Url = "/changes",
 		Method = "POST",
