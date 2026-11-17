@@ -50,7 +50,9 @@ Behaviour notes:
 - Folders on the way to a file are matched only against non-script containers. A `Script` named `Foo`
   never hides a `Folder` named `Foo`: `Foo/Bar.luau` goes under the folder.
 - Instance names containing `/`, `\`, `:` or NUL, and folder names that are empty, `.` or `..`, are not synced,
-  because the daemon refuses them as project paths (and `/`, `\` would split into extra folders on disk). A `ModuleScript` whose name ends in `.server`, `.client` or `.luau` is not synced
+  because the daemon refuses them as project paths. The daemon splits a path on both `/` and `\`, so an inner `\`
+  would become nested folders on disk, and the plugin refuses every name that contains one. The daemon itself
+  accepts an inner `\` as a separator and rejects a leading one or one that leaves an empty folder name, so this rule is stricter than the daemon on purpose. A `ModuleScript` whose name ends in `.server`, `.client` or `.luau` is not synced
   either, because its file name would be ambiguous. The plugin warns once per affected path.
 - A terrain blob with out-of-range dimensions, a non-positive resolution, or a payload length that
   does not match its dimensions is refused. The cursor is held, the widget shows
@@ -74,14 +76,24 @@ Behaviour notes:
   batch. The cursor is never skipped, so the poll keeps backing off, and a later success clears it.
 - The reconnect backoff restarts (from 1 second) only after a poll completes, so a daemon that
   answers `/info` and then fails on `/patches` keeps backing off.
-- A studio edit whose push fails transiently (a 408, 500, 502, 503 or 504, or a network failure) keeps its batch.
+- A studio edit whose push fails transiently (a 408, 502, 503 or 504, or a network failure) keeps its batch.
   It is retried with an exponential backoff from 2 seconds up to a cap of 60 seconds, and the widget shows
-  `Warning` with `push failed: <reason>` until a push succeeds.
-- A studio edit whose push the daemon refuses with any other status is not retried. The daemon names the paths
-  it refused in its 400 body, so those paths are dropped and the widget shows `Warning` naming each one as
-  `not synced, the daemon refused <path>`, while the rest of the batch is sent. A refusal that names no path
-  drops the whole batch with `push refused, batch not synced: <reason>`. Dropped edits are never merged back,
-  and their Warnings stay until Stop.
+  `Warning` with `push failed: <reason>` until a push succeeds. These statuses are retried without a limit.
+- A 500 is retried the same way, but only until it has come back three times in a row. Any accepted post resets
+  that count. On the third consecutive 500 the batch is dropped, not merged back, and the widget shows a `Warning`
+  for each of its paths as `not synced, the daemon kept failing on <path>: <reason>`.
+- Any other refusal of a push (a 400, for example) is not retried as a batch. The daemon names the paths it
+  refused in a 400 body as `{"refused_paths": [...]}`. Those paths are dropped, each with a `Warning` as
+  `not synced, the daemon refused <path>: <reason>`, and the rest of the batch is posted again straight away.
+- A 400 that names no path is not dropped as a whole. The batch is posted again one edit at a time, and only an
+  edit the daemon refuses on its own is dropped with the same `Warning`. A single unnamed refusal drops that edit
+  the same way.
+- An edit made while a post is in flight, including one made during a refused post, is not lost. It waits for
+  the post to finish and is sent with the next batch, after the refusal has been handled.
+- Dropped edits are never merged back. Each one's `Warning` clears when a later edit to the same path is accepted,
+  and otherwise stays until Stop. Stop also discards any edit still waiting to be pushed.
+- A push waits for any earlier push still in flight, including one from a connection that was stopped and started
+  again, so an older post cannot land after a newer edit to the same path.
 - An ack that fails transiently (the same statuses as a push, or a network failure) is retried the same way with
   `ack failed: <reason>`, and its paths stay unacked until the ack succeeds. An ack the daemon refuses with any
   other status is not retried: the widget shows `Warning` with `ack refused: <reason>` until Stop, and those
