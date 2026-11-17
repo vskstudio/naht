@@ -190,6 +190,46 @@ pub(crate) fn init_class(file_name: &str) -> Option<&'static str> {
     }
 }
 
+pub fn canonical_script_path<V: Vfs + ?Sized>(vfs: &V, path: &str) -> String {
+    let (parent, file_name) = split_parent(path);
+    if let Some(class) = init_class(file_name) {
+        let Some(folder) = parent else {
+            return path.to_owned();
+        };
+        let (grandparent, folder_name) = split_parent(folder);
+        let flat = join_path(grandparent, &script_file_name(class, folder_name));
+        return if vfs.exists(Path::new(&flat)) && !vfs.exists(Path::new(folder)) {
+            flat
+        } else {
+            path.to_owned()
+        };
+    }
+    if let Some((class, stem)) = script_class(file_name) {
+        let folder = join_path(parent, &stem);
+        let init = join_path(Some(&folder), init_file_name(class));
+        return if vfs.exists(Path::new(&init)) && !vfs.exists(Path::new(path)) {
+            init
+        } else {
+            path.to_owned()
+        };
+    }
+    path.to_owned()
+}
+
+fn split_parent(path: &str) -> (Option<&str>, &str) {
+    match path.rsplit_once('/') {
+        Some((parent, file_name)) => (Some(parent), file_name),
+        None => (None, path),
+    }
+}
+
+fn join_path(parent: Option<&str>, name: &str) -> String {
+    match parent {
+        Some(parent) => format!("{parent}/{name}"),
+        None => name.to_owned(),
+    }
+}
+
 fn script_file_name(class: &str, name: &str) -> String {
     match class {
         SCRIPT => format!("{name}.server.luau"),

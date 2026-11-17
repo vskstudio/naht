@@ -2,6 +2,7 @@ use super::Session;
 use super::transaction::{BlobsJournal, Journal, Journaled, Transaction};
 use super::{MASS_DELETE_WARN, SessionError};
 use naht_core::binary::{BlobInstance, BlobPatch};
+use naht_core::mapper::canonical_script_path;
 use naht_core::protocol::{Change, EventKind, Outcome};
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::InstanceRecord;
@@ -65,12 +66,14 @@ impl Session {
                     content,
                 } => {
                     self.vfs.validate_path(&path)?;
+                    let path = canonical_script_path(&self.vfs, &path);
                     reconciler::record_studio_side(&self.store, &path, &class, Some(&content))?;
                     let instance = TextInstance::new(path.clone(), class, content);
                     self.write_studio(path, Some(instance));
                 }
                 Change::Delete { path } => {
                     self.vfs.validate_path(&path)?;
+                    let path = canonical_script_path(&self.vfs, &path);
                     reconciler::record_studio_deletion(&self.store, &path)?;
                     self.write_studio(path, None);
                 }

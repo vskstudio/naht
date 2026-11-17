@@ -317,3 +317,46 @@ fn a_client_path_with_control_bytes_is_logged_escaped() {
     assert!(!output.contains('\u{1b}'), "{output}");
     assert_eq!(output.matches('\n').count(), 1, "{output}");
 }
+
+#[test]
+fn a_studio_edit_of_a_childless_init_script_writes_no_sibling_file() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("Folder")).unwrap();
+    fs::write(root.path().join("Folder").join("init.luau"), "return 1").unwrap();
+    let mut session = session_in(root.path());
+    session.rescan().unwrap();
+    session
+        .apply_changes(vec![upsert("Folder.luau", "return 1")])
+        .unwrap();
+
+    session
+        .apply_changes(vec![upsert("Folder.luau", "return 2")])
+        .unwrap();
+
+    assert!(!root.path().join("Folder.luau").exists());
+    assert_eq!(
+        fs::read_to_string(root.path().join("Folder").join("init.luau")).unwrap(),
+        "return 2"
+    );
+}
+
+#[test]
+fn a_studio_edit_of_a_folder_script_that_gained_children_keeps_the_flat_file() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("Folder.luau"), "return 1").unwrap();
+    let mut session = session_in(root.path());
+    session.rescan().unwrap();
+    session
+        .apply_changes(vec![upsert("Folder/init.luau", "return 1")])
+        .unwrap();
+
+    session
+        .apply_changes(vec![upsert("Folder/init.luau", "return 2")])
+        .unwrap();
+
+    assert!(!root.path().join("Folder").exists());
+    assert_eq!(
+        fs::read_to_string(root.path().join("Folder.luau")).unwrap(),
+        "return 2"
+    );
+}
