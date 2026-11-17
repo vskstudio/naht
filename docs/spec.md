@@ -39,8 +39,8 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   recent *completed* sync events `{seq, unix_ms, path, direction, kind, outcome}`, with a `since`
   cursor (1-based seqs, strictly-greater filter: a consumer never re-sees its last event, and
   `buffer_start_seq` signals an eviction gap). Additive: no existing message shape changed. The
-  protocol version was `1` when this shipped and is `2` now, after the client headers became mandatory
-  (see the protocol page). The Neublox adapter that consumes it lives outside this repo.
+  protocol version was `1` when this shipped, `2` in v0.4.0 after the client headers became mandatory,
+  and is `3` now (see the protocol page). The Neublox adapter that consumes it lives outside this repo.
 
 ## Shipped: v0.3.0 (merged)
 
@@ -57,7 +57,7 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   no em or en dash (#63), clippy with warnings denied, tests, rustdoc with warnings denied, full
   `cargo deny` and workspace `cargo machete`.
 
-## Protocol 2 (unreleased)
+## Protocol 3 (unreleased)
 
 - **Sequenced text patches**: each `GET /patches` patch carries its queue `seq` beside its fields
   (`SequencedPatch`, flattened on the wire). `POST /ack` takes `{seqs: [...]}` in place of `{paths: [...]}`:
@@ -73,8 +73,9 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   `400`, and a batch whose valid changes fail to apply is `500` with the Studio mirror restored to its state
   before the batch.
 - **Body limits**: at most two POST bodies are read and handled at once, each capped at 64 MiB (`413`), with
-  a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 has not shipped, so
-  these changes belong to it and `PROTOCOL_VERSION` stays `2`.
+  a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 shipped in v0.4.0
+  with the old `Ack` and `PatchBatch` shapes, so the sequenced shapes above and these limits ship as version 3,
+  and `PROTOCOL_VERSION` is `3`.
 
 ---
 

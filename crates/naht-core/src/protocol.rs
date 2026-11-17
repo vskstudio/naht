@@ -15,7 +15,7 @@ use rmp_serde::encode;
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
 /// it so an incompatible plugin/daemon pair fails loudly instead of misreading each other.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Request header every client sends to identify itself as the Studio plugin or the local CLI.
 pub const CLIENT_HEADER: &str = "x-naht-client";

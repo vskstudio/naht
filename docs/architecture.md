@@ -163,6 +163,10 @@ instances only the hash is stored (no merge base).
   `403`, and that plugin does not recognise the token: it keeps showing `Reconnecting` with the 403 reason
   and must be updated. The clean stop at `Disconnected` with the update message applies only to plugins
   built from version 2, which match the `outdated-plugin` token.
+- **Protocol version 3:** `PatchBatch` entries are `SequencedPatch {seq, patch}` and `POST /ack` takes `seqs`
+  in place of the `paths` version 2 sent, so an acked patch is matched by its queue sequence. The handshake
+  refuses any other version, so a version 2 plugin or daemon stops at the update message instead of acking
+  paths the other side no longer reads. Both halves must be updated together.
 - **Resilience** is the headline feature here, because it is exactly what Rojo and Argon get wrong:
   heartbeat, automatic reconnect, an explicit connection-state indicator, and: on reconnect: a
   **re-diff against the persisted state** rather than a blind re-push. Studio-bound patches are

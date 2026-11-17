@@ -92,7 +92,7 @@ re-diffe et renvoie exactement ce qui manque, sans jamais supposer qu'un lot per
 
 ## Versionnage
 
-Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `2`). Il fait partie du handshake pour que les
+Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `3`). Il fait partie du handshake pour que les
 deux moitiés puissent refuser de se parler à travers une frontière incompatible au lieu de corrompre l'état.
 
 Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur chaque requête et accompagnent la

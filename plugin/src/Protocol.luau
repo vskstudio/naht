@@ -55,7 +55,7 @@ export type Codec = {
 	binary: (bytes: string) -> any,
 }
 
-local PROTOCOL_VERSION = 2
+local PROTOCOL_VERSION = 3
 
 local function new(MessagePack: Codec)
 	local Protocol = {}

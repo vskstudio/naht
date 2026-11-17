@@ -19,7 +19,7 @@ local fs = require("@lune/fs")
 local serde = require("@lune/serde")
 
 local GOLDEN = {
-	server_info = "87b070726f746f636f6c5f76657273696f6e02ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490",
+	server_info = "87b070726f746f636f6c5f76657273696f6e03ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490",
 	patch_batch = "82a6637572736f7202a7706174636865739186a373657101a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
 	change_batch = "81a76368616e6765739281a655707365727483a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a7636f6e74656e74a872657475726e203281a644656c65746581a470617468aa7372632f422e6c756175",
 	blob_patch_batch = "82a6637572736f7201a7706174636865739185a470617468af5465727261696e2e7465727261696ea5636c617373a75465727261696ea9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74c4050001ff807f",
@@ -77,11 +77,11 @@ local function noop() end
 
 suite("the server_info golden decodes to the expected fields and a matching version is accepted", function()
 	local info = MessagePack.decode(fromHex(GOLDEN.server_info))
-	check("server_info protocol_version", info.protocol_version == 2)
+	check("server_info protocol_version", info.protocol_version == 3)
 	check("server_info project_name", info.project_name == "demo")
 	check("server_info serve_place_id", info.serve_place_id == 123)
 	check("server_info daemon_id", info.daemon_id == "d-1")
-	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 2)
+	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 3)
 	check(
 		"mismatched protocol version is rejected",
 		not pcall(Protocol.assertCompatible, {
@@ -1804,7 +1804,7 @@ suite("a connect with a frozen path reports it as a Conflict and never Connected
 		connection = Connection.new(
 			{
 				info = function(_, _placeId)
-					return { protocol_version = 2, project_name = "demo", conflicted = { "Frozen.luau" } }
+					return { protocol_version = 3, project_name = "demo", conflicted = { "Frozen.luau" } }
 				end,
 				patches = function(_, _cursor)
 					connection:stop()
@@ -3759,7 +3759,7 @@ suite("an incompatible protocol version is terminal and names the side to update
 	connection:stop()
 	check("an incompatible daemon detaches the Studio listeners", root.DescendantAdded:count() == 0)
 
-	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 3 }))
+	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 4 }))
 	check(
 		"a newer daemon tells the user to update the naht plugin",
 		string.find(tostring(newerDaemon), "update the naht plugin", 1, true) ~= nil
