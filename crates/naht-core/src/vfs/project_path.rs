@@ -57,7 +57,7 @@ pub enum ProjectPathError {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_project_path, ProjectPathError};
+    use super::{ProjectPathError, validate_project_path};
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/project_path_names.json");
 
