@@ -16,25 +16,32 @@ use axum::error_handling::HandleErrorLayer;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
+use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use naht_core::protocol::{
-    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong, ProtocolError,
-    ServerInfo,
+    self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong,
+    ProtocolError, ServerInfo,
 };
-use naht_core::vfs::VfsError;
+use naht_core::vfs::{ProjectPathError, VfsError, validate_blob_path, validate_source_path};
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::limit::ConcurrencyLimitLayer;
+use tower::load_shed::LoadShedLayer;
 use tower::timeout::TimeoutLayer;
 use tower::timeout::error::Elapsed;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::session::{Session, SessionError};
+
+mod guard;
+mod listen;
+
+use guard::{Gate, PostGate, guard, limit_post_bodies};
 use std::io;
 use tokio::net::TcpListener;
 use tokio::sync::MutexGuard;
@@ -47,16 +54,20 @@ const MAX_IN_FLIGHT: usize = 64;
 
 const TIMEOUT_SLACK: Duration = Duration::from_secs(10);
 
+const POST_WAIT: Duration = Duration::from_secs(10);
+
 /// Shared server state: the session behind a mutex and notifiers that wake parked long-polls.
 ///
 /// Notifiers fire whenever a queue may have grown. Text patches and binary blobs ride separate
 /// channels, so each has its own notifier and parks independently.
 #[derive(Debug)]
 pub struct AppState {
-    session: Mutex<Session>,
+    session: Arc<Mutex<Session>>,
+    serve_place_id: Option<u64>,
     patches_ready: Notify,
     blobs_ready: Notify,
     long_poll: Duration,
+    post_wait: Duration,
     shutdown: CancellationToken,
     tasks: TaskTracker,
 }
@@ -69,11 +80,19 @@ impl AppState {
 
     /// Wrap a session, parking long-polls for at most `long_poll` before they return empty.
     pub fn new(session: Session, long_poll: Duration) -> Arc<Self> {
+        Self::with_post_wait(session, long_poll, POST_WAIT)
+    }
+
+    /// Like [`AppState::new`], but a mutating `POST` waits at most `post_wait` for a slot or the lock.
+    pub fn with_post_wait(session: Session, long_poll: Duration, post_wait: Duration) -> Arc<Self> {
+        let serve_place_id = session.serve_place_id();
         Arc::new(Self {
-            session: Mutex::new(session),
+            session: Arc::new(Mutex::new(session)),
+            serve_place_id,
             patches_ready: Notify::new(),
             blobs_ready: Notify::new(),
             long_poll,
+            post_wait,
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
         })
@@ -120,26 +139,36 @@ impl AppState {
     }
 }
 
-/// Build the router over `state`.
-pub fn router(state: Arc<AppState>) -> Router {
+/// Build the router over `state`, serving the loopback port `port`.
+pub fn router(state: Arc<AppState>, port: u16) -> Router {
+    let gate = Arc::new(Gate::new(port, state.serve_place_id));
+    let posts = Arc::new(PostGate::new(state.post_wait, state.tasks.clone()));
+    let read_deadline = ServiceBuilder::new()
+        .layer(HandleErrorLayer::<_, ()>::new(overload))
+        .layer(TimeoutLayer::new(
+            state.long_poll.saturating_add(TIMEOUT_SLACK),
+        ));
     Router::new()
-        .route("/info", get(info))
-        .route("/patches", get(patches))
+        .route("/info", get(info).layer(read_deadline.clone()))
+        .route("/patches", get(patches).layer(read_deadline.clone()))
         .route("/changes", post(changes))
-        .route("/blobs", get(blobs).post(post_blobs))
+        .route(
+            "/blobs",
+            get(blobs).layer(read_deadline.clone()).post(post_blobs),
+        )
         .route("/ack", post(ack))
-        .route("/heartbeat", get(heartbeat))
-        .route("/activity", get(activity))
+        .route("/heartbeat", get(heartbeat).layer(read_deadline.clone()))
+        .route("/activity", get(activity).layer(read_deadline))
+        .layer(from_fn_with_state(posts, limit_post_bodies))
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::<_, ()>::new(overload))
-                .layer(TimeoutLayer::new(
-                    state.long_poll.saturating_add(TIMEOUT_SLACK),
-                ))
+                .layer(LoadShedLayer::new())
                 .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
                 .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
                 .layer(DefaultBodyLimit::max(BODY_LIMIT)),
         )
+        .layer(from_fn_with_state(gate, guard))
         .with_state(state)
 }
 
@@ -151,6 +180,23 @@ async fn overload(error: BoxError) -> StatusCode {
     }
 }
 
+async fn apply_within<T, F>(state: &AppState, work: F) -> Result<T, Rejection>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut Session) -> Result<T, Rejection> + Send + 'static,
+{
+    let session = Arc::clone(&state.session);
+    let mut locked = time::timeout(state.post_wait, session.lock_owned())
+        .await
+        .map_err(|elapsed| {
+            tracing::warn!(target: "naht::server", %elapsed, "session busy past the post wait");
+            Rejection::Busy
+        })?;
+    task::spawn_blocking(move || work(&mut locked))
+        .await
+        .map_err(Rejection::Blocking)?
+}
+
 /// Serve `state` on an already-bound `listener` until the shutdown token is cancelled, then let
 /// in-flight requests finish.
 ///
@@ -158,21 +204,13 @@ async fn overload(error: BoxError) -> StatusCode {
 ///
 /// Returns an error when the listener fails.
 pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()> {
+    let port = listener.local_addr()?.port();
     let shutdown = state.shutdown.clone();
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown.cancelled_owned())
-        .await
+    listen::accept_until_cancelled(listener, router(state, port), shutdown).await
 }
 
-#[derive(Deserialize)]
-struct InfoQuery {
-    place_id: Option<u64>,
-}
-
-async fn info(State(state): State<Arc<AppState>>, Query(query): Query<InfoQuery>) -> Response {
-    let outcome = state
-        .with_session(move |session| handshake(session, query.place_id))
-        .await;
+async fn info(State(state): State<Arc<AppState>>) -> Response {
+    let outcome = state.with_session(handshake).await;
     let info = match outcome {
         Ok(Ok(info)) => info,
         Ok(Err(rejection)) => return rejection.into_response(),
@@ -184,23 +222,9 @@ async fn info(State(state): State<Arc<AppState>>, Query(query): Query<InfoQuery>
     msgpack(&info)
 }
 
-fn handshake(session: &mut Session, place_id: Option<u64>) -> Result<ServerInfo, Rejection> {
-    if let Some(expected) = session.serve_place_id()
-        && place_id != Some(expected)
-    {
-        tracing::warn!(
-            target: "naht::server",
-            expected,
-            reported = ?place_id,
-            "handshake rejected: place id mismatch"
-        );
-        return Err(Rejection::PlaceMismatch {
-            expected,
-            reported: place_id,
-        });
-    }
+fn handshake(session: &mut Session) -> Result<ServerInfo, Rejection> {
     session.rescan()?;
-    Ok(session.handshake_info()?)
+    Ok(session.info())
 }
 
 #[derive(Deserialize)]
@@ -229,13 +253,9 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         Ok(batch) => batch,
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let outcome = state
-        .with_session(move |session| apply_text_batch(session, batch))
-        .await;
-    let count = match outcome {
-        Ok(Ok(count)) => count,
-        Ok(Err(rejection)) => return rejection.into_response(),
-        Err(error) => return Rejection::Blocking(error).into_response(),
+    let count = match apply_within(&state, move |session| apply_text_batch(session, batch)).await {
+        Ok(count) => count,
+        Err(rejection) => return rejection.into_response(),
     };
     tracing::info!(target: "naht::server", count, "changes applied from Studio");
     state.wake_all_long_polls();
@@ -246,11 +266,9 @@ fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, 
     let refused: Vec<String> = batch
         .changes
         .iter()
-        .map(|change| match change {
-            protocol::Change::Upsert { path, .. } | protocol::Change::Delete { path } => path,
-        })
-        .filter(|path| session.validate_path(path).is_err())
-        .cloned()
+        .map(change_path)
+        .filter(|path| is_refused_text_path(session, path))
+        .map(str::to_owned)
         .collect();
     if !refused.is_empty() {
         return Err(Rejection::RefusedPaths(refused));
@@ -258,6 +276,33 @@ fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, 
     let count = batch.changes.len();
     session.apply_changes(batch.changes)?;
     Ok(count)
+}
+
+fn is_refused_text_path(session: &Session, path: &str) -> bool {
+    validate_source_path(path).is_err()
+        || session.validate_path(path).is_err()
+        || session.is_directory(path)
+}
+
+fn change_path(change: &Change) -> &str {
+    match change {
+        Change::Upsert { path, .. } | Change::Delete { path } => path,
+    }
+}
+
+fn refuse_directories<'a>(
+    session: &Session,
+    paths: impl Iterator<Item = &'a str>,
+) -> Result<(), Rejection> {
+    let refused: Vec<String> = paths
+        .filter(|path| session.is_directory(path))
+        .map(str::to_owned)
+        .collect();
+    if refused.is_empty() {
+        Ok(())
+    } else {
+        Err(Rejection::RefusedPaths(refused))
+    }
 }
 
 async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
@@ -281,13 +326,9 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
         Ok(batch) => batch,
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let outcome = state
-        .with_session(move |session| apply_blob_batch(session, batch))
-        .await;
-    let count = match outcome {
-        Ok(Ok(count)) => count,
-        Ok(Err(rejection)) => return rejection.into_response(),
-        Err(error) => return Rejection::Blocking(error).into_response(),
+    let count = match apply_within(&state, move |session| apply_blob_batch(session, batch)).await {
+        Ok(count) => count,
+        Err(rejection) => return rejection.into_response(),
     };
     tracing::info!(target: "naht::server", count, "blob changes applied from Studio");
     state.blobs_ready.notify_waiters();
@@ -296,8 +337,13 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
 
 fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usize, Rejection> {
     for change in &batch.changes {
+        validate_blob_path(&change.path)?;
         session.validate_path(&change.path)?;
     }
+    refuse_directories(
+        session,
+        batch.changes.iter().map(|change| change.path.as_str()),
+    )?;
     let count = batch.changes.len();
     session.apply_blob_changes(batch.changes)?;
     Ok(count)
@@ -309,16 +355,16 @@ async fn ack(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
     let count = ack.paths.len();
-    let outcome = state
-        .with_session(move |session| session.ack(&ack.paths))
-        .await;
-    match outcome {
-        Ok(Ok(())) => {
+    match apply_within(&state, move |session| {
+        session.ack(&ack.paths).map_err(Rejection::from)
+    })
+    .await
+    {
+        Ok(()) => {
             tracing::debug!(target: "naht::server", count, "patches acked");
             StatusCode::OK.into_response()
         }
-        Ok(Err(error)) => Rejection::from(error).into_response(),
-        Err(error) => Rejection::Blocking(error).into_response(),
+        Err(rejection) => rejection.into_response(),
     }
 }
 
@@ -370,28 +416,28 @@ enum Rejection {
     Malformed(#[source] ProtocolError),
     #[error(transparent)]
     InvalidPath(#[from] VfsError),
-    #[error("refused project paths: {0:?}")]
-    RefusedPaths(Vec<String>),
-    #[error("place id mismatch: project serves {expected}, plugin reported {reported:?}")]
-    PlaceMismatch {
-        expected: u64,
-        reported: Option<u64>,
-    },
+    #[error("path not allowed: {0}")]
+    Disallowed(#[from] ProjectPathError),
     #[error("cannot encode the response")]
     Encode(#[source] ProtocolError),
     #[error("session operation failed")]
     Session(#[from] SessionError),
     #[error("blocking task failed")]
     Blocking(#[source] JoinError),
+    #[error("session busy, retry the request")]
+    Busy,
+    #[error("refused project paths: {0:?}")]
+    RefusedPaths(Vec<String>),
 }
 
 impl Rejection {
     fn status(&self) -> StatusCode {
         match self {
-            Self::Malformed(_) | Self::InvalidPath(_) | Self::RefusedPaths(_) => {
-                StatusCode::BAD_REQUEST
-            }
-            Self::PlaceMismatch { .. } => StatusCode::FORBIDDEN,
+            Self::Malformed(_)
+            | Self::InvalidPath(_)
+            | Self::Disallowed(_)
+            | Self::RefusedPaths(_) => StatusCode::BAD_REQUEST,
+            Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Encode(_) | Self::Session(_) | Self::Blocking(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -402,7 +448,7 @@ impl Rejection {
 impl IntoResponse for Rejection {
     fn into_response(self) -> Response {
         let status = self.status();
-        if status.is_server_error() {
+        if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(target: "naht::server", status = status.as_u16(), error = ?self, "request failed");
             return (status, "internal server error").into_response();
         }
@@ -420,79 +466,4 @@ impl IntoResponse for Rejection {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use axum::body::{Body, to_bytes};
-    use axum::http::Request;
-    use naht_core::state::StateStore;
-    use tower::ServiceExt;
-
-    use super::*;
-
-    fn test_state() -> Arc<AppState> {
-        let store = StateStore::open_in_memory().unwrap();
-        let session = Session::new(PathBuf::from("."), store, "demo", None, false).unwrap();
-        AppState::new(session, Duration::from_secs(1))
-    }
-
-    async fn post_blobs_status(len: usize) -> StatusCode {
-        let body = Body::from(vec![0xc1_u8; len]);
-        let request = Request::post("/blobs").body(body).unwrap();
-        router(test_state())
-            .oneshot(request)
-            .await
-            .unwrap()
-            .status()
-    }
-
-    #[tokio::test]
-    async fn blob_bodies_past_the_extractor_default_are_read() {
-        assert_eq!(
-            post_blobs_status(3 * 1024 * 1024).await,
-            StatusCode::BAD_REQUEST
-        );
-    }
-
-    #[tokio::test]
-    async fn blob_bodies_over_the_limit_are_refused() {
-        assert_eq!(
-            post_blobs_status(BODY_LIMIT + 1).await,
-            StatusCode::PAYLOAD_TOO_LARGE
-        );
-    }
-
-    #[tokio::test]
-    async fn text_batches_name_every_refused_path_in_the_body() {
-        use naht_core::protocol::{Change, ChangeBatch};
-
-        let batch = ChangeBatch {
-            changes: vec![
-                Change::Upsert {
-                    path: "Good.luau".to_owned(),
-                    class: "ModuleScript".to_owned(),
-                    content: "return 1".to_owned(),
-                },
-                Change::Upsert {
-                    path: "Config: v2/Leaf.luau".to_owned(),
-                    class: "ModuleScript".to_owned(),
-                    content: "return 2".to_owned(),
-                },
-                Change::Delete {
-                    path: "a:b.luau".to_owned(),
-                },
-            ],
-        };
-        let body = protocol::to_msgpack(&batch).unwrap();
-        let request = Request::post("/changes").body(Body::from(body)).unwrap();
-        let response = router(test_state()).oneshot(request).await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let refused: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            refused["refused_paths"],
-            serde_json::json!(["Config: v2/Leaf.luau", "a:b.luau"])
-        );
-    }
-}
+mod tests;

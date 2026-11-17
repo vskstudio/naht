@@ -20,6 +20,8 @@ path = "src/main.rs"
 axum.workspace = true
 clap.workspace = true
 getrandom.workspace = true
+http-body-util.workspace = true
+hyper-util.workspace = true
 naht-core.workspace = true
 notify-debouncer-full.workspace = true
 rbx_dom_weak.workspace = true
@@ -42,6 +44,7 @@ rbx_xml.workspace = true
 reqwest = { workspace = true, features = ["query"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
+tokio-util = { workspace = true, features = ["io"] }
 
 [lints]
 workspace = true
