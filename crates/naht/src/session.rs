@@ -16,6 +16,7 @@ mod inbound;
 mod queue;
 mod rescan;
 mod state;
+mod transaction;
 
 use getrandom::{Error as RandomError, fill};
 use naht_core::binary::{BlobInstance, BlobPatch};
@@ -57,6 +58,7 @@ pub struct Session {
     store: StateStore,
     /// The last-known Studio side, keyed by project-relative path. Advances on ack, never on send.
     studio: BTreeMap<String, TextInstance>,
+    journal: Option<transaction::Journal>,
     /// Queued filesystem → Studio patches, keyed by path so a re-diff replaces rather than appends.
     /// Each carries a monotonically increasing sequence so the long-poll can resume from a cursor.
     queue: BTreeMap<String, (u64, Patch)>,

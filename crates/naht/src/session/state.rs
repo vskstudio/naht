@@ -3,9 +3,9 @@ use super::{SessionError, new_daemon_id, new_session_id};
 use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
 use naht_core::reconciler;
 use naht_core::state::{InstanceRecord, StateStore};
-use naht_core::vfs::{DiskVfs, RootedVfs, VfsError, remove_stale_temp_files};
+use naht_core::vfs::{DiskVfs, EntryKind, RootedVfs, Vfs, VfsError, remove_stale_temp_files};
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl Session {
     /// Open a session rooted at `root`, owning `store`. `serve_place_id` guards which Studio place
@@ -36,6 +36,7 @@ impl Session {
             vfs,
             store,
             studio,
+            journal: None,
             queue: BTreeMap::new(),
             unacked: BTreeMap::new(),
             next_seq: 0,
@@ -103,6 +104,11 @@ impl Session {
     /// Returns [`VfsError`] when `path` escapes the root or cannot be checked.
     pub fn validate_path(&self, path: &str) -> Result<(), VfsError> {
         self.vfs.validate_path(path)
+    }
+
+    /// Whether `path` is currently a directory on disk, so a file batch cannot write over it.
+    pub fn is_directory(&self, path: &str) -> bool {
+        matches!(self.vfs.kind(Path::new(path)), Ok(EntryKind::Dir))
     }
 
     pub(super) fn base_snapshot(&self) -> Result<BTreeMap<String, InstanceRecord>, SessionError> {

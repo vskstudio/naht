@@ -1,4 +1,5 @@
 use super::Session;
+use super::transaction::Journaled;
 use super::{PROJECT_ROOT, SessionError};
 use naht_core::binary::{self};
 use naht_core::reconciler::{self};
@@ -27,6 +28,10 @@ impl Session {
     ///
     /// Returns [`SessionError`] when the project cannot be rescanned.
     pub fn rescan(&mut self) -> Result<(), SessionError> {
+        self.reconcile_all()
+    }
+
+    pub(super) fn reconcile_all(&mut self) -> Result<(), SessionError> {
         let pre_base = self.base_snapshot()?;
         self.reconcile_text(&pre_base)?;
         if self.terrain_sync {
@@ -35,14 +40,17 @@ impl Session {
         Ok(())
     }
 
-    pub(super) fn reconcile_text(
+    fn reconcile_text(
         &mut self,
         pre_base: &BTreeMap<String, InstanceRecord>,
     ) -> Result<(), SessionError> {
         let scan = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
         warn_skipped(&scan);
         let patches = reconciler::reconcile(
-            &mut self.vfs,
+            &mut Journaled {
+                inner: &mut self.vfs,
+                journal: &mut self.journal,
+            },
             &self.store,
             &scan.instances,
             &self.studio,
@@ -55,7 +63,10 @@ impl Session {
         let scan = binary::scan_blobs(&self.vfs, Path::new(PROJECT_ROOT))?;
         warn_skipped(&scan);
         let patches = binary::reconcile_blobs(
-            &mut self.vfs,
+            &mut Journaled {
+                inner: &mut self.vfs,
+                journal: &mut self.journal,
+            },
             &self.store,
             &scan.instances,
             self.studio_blobs.as_ref(),
