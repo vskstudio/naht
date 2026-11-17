@@ -1140,6 +1140,61 @@ suite("a stop during the backoff wait leaves the backoff unchanged", function()
 		check("a stop during the backoff wait leaves the backoff unchanged", connection.backoff == 0.05, "backoff " .. tostring(connection.backoff))
 end)
 
+local function cursorsAcrossReconnect(sessionIds: { string }): { number }
+	local tree, root = studioWorld(true)
+	local cursors: { number } = {}
+	local connects = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				connects += 1
+				return { project_name = "demo", session_id = sessionIds[connects] }
+			end,
+			patches = function(_, cursor)
+				table.insert(cursors, cursor)
+				if #cursors == 1 then
+					return { cursor = 3, patches = {} }
+				elseif #cursors == 2 then
+					error("daemon down")
+				end
+				connection:stop()
+				return { cursor = 3, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection:_run(1)
+	return cursors
+end
+
+suite("a reconnect to the same daemon session resumes from the cursor it held", function()
+		local cursors = cursorsAcrossReconnect({ "s1", "s1" })
+		check(
+			"a reconnect to the same daemon session resumes from the cursor it held",
+			cursors[3] == 3,
+			"cursors " .. table.concat(cursors, ",")
+		)
+end)
+
+suite("a reconnect to a restarted daemon session starts the cursor at 0", function()
+		local cursors = cursorsAcrossReconnect({ "s1", "s2" })
+		check(
+			"a reconnect to a restarted daemon session starts the cursor at 0",
+			cursors[3] == 0,
+			"cursors " .. table.concat(cursors, ",")
+		)
+end)
+
 suite("a rejected text patch holds the cursor at its seq so the next poll asks for it again", function()
 		local _, onState = stateLog()
 		local tree, root = studioWorld(true)

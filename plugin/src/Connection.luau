@@ -334,7 +334,10 @@ function Connection._run(self, session: number)
 			end
 			self:_refreshState()
 			self:_schedulePush()
-			self.cursor = 0
+			if info.session_id ~= self.sessionId then
+				self.cursor = 0
+				self.sessionId = info.session_id
+			end
 			self.blobCursor = 0
 			self.epoch += 1
 			local epoch = self.epoch
