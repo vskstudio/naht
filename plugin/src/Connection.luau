@@ -19,6 +19,7 @@ local ACK_BACKOFF_START = 2
 local RETRY_BACKOFF_MAX = 60
 local SERVER_ERROR_LIMIT = 3
 local PUSH_ABANDON_AFTER = 30
+local PUSH_ABANDON_LIMIT = 3
 local sharedPushGate: PushGate = { issued = 0, flight = nil }
 
 local CLASS_SUFFIX = {
@@ -152,6 +153,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		terrainBackoff = TERRAIN_BACKOFF_START,
 		pushBackoff = PUSH_RETRY,
 		pushServerErrors = 0,
+		pushAbandons = 0,
 		ackBackoff = ACK_BACKOFF_START,
 		terrainInFlight = false,
 		cursor = 0,
@@ -244,6 +246,7 @@ function Connection.stop(self)
 	self.pendingPush = {}
 	self.pushScheduled = false
 	self.pushServerErrors = 0
+	self.pushAbandons = 0
 	self.warnings = {}
 	self.conflicts = {}
 	self:_detachStudio()
@@ -321,6 +324,7 @@ function Connection._run(self, session: number)
 				self.conflicts[path] = true
 			end
 			self:_refreshState()
+			self:_schedulePush()
 			self.cursor = 0
 			self.blobCursor = 0
 			self.epoch += 1
@@ -650,6 +654,12 @@ function Connection._abandonFlight(self, token: number, session: number)
 	if not self:_isCurrent(session) then
 		return
 	end
+	self.pushAbandons += 1
+	if self.pushAbandons >= PUSH_ABANDON_LIMIT then
+		self:_setWarning("push", "push held: the daemon is not answering, the batch is sent on the next edit or reconnect")
+		self:_restorePending(flight.batch)
+		return
+	end
 	self:_setWarning("push", string.format("push abandoned: no reply for %d s, the batch is sent again", PUSH_ABANDON_AFTER))
 	self:_restorePending(flight.batch)
 	self:_schedulePush()
@@ -735,6 +745,9 @@ function Connection._postChanges(self, batch: { [string]: any }): (boolean, any,
 	local ok, err = pcall(function()
 		self.client:postChanges(changes)
 	end)
+	if ok then
+		self.pushAbandons = 0
+	end
 	local owns = gate.flight ~= nil and gate.flight.token == token
 	if owns then
 		gate.flight = nil
