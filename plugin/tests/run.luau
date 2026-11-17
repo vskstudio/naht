@@ -728,8 +728,10 @@ local function blobBackoffAfter(value: number): number?
 	return if ok then result else nil
 end
 
-check("blob backoff doubles from 2 seconds", blobBackoffAfter(2) == 4)
-check("blob backoff is capped at 60 seconds", blobBackoffAfter(32) == 60 and blobBackoffAfter(60) == 60)
+suite("blob backoff doubles from 2 seconds and is capped at 60 seconds", function()
+	check("blob backoff doubles from 2 seconds", blobBackoffAfter(2) == 4)
+	check("blob backoff is capped at 60 seconds", blobBackoffAfter(32) == 60 and blobBackoffAfter(60) == 60)
+end)
 
 suite("a failed blob keeps the blob cursor where it was", function()
 		local calls: { number } = {}
