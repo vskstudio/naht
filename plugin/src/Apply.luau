@@ -18,6 +18,7 @@ export type Tree = {
 	findChild: (parent: Node, name: string) -> Node?,
 	children: (parent: Node) -> { Node },
 	className: (node: Node) -> string,
+	getSource: (node: Node) -> string,
 	setParent: (node: Node, parent: Node) -> (),
 	setSource: (node: Node, content: string) -> (),
 	destroy: (node: Node) -> (),
@@ -73,8 +74,8 @@ local Applier = {}
 Applier.__index = Applier
 
 -- Create an applier rooted at `tree.root`.
-function Apply.create(tree: Tree)
-	return setmetatable({ tree = tree }, Applier)
+function Apply.create(tree: Tree, onSourceWrite: ((path: string, content: string) -> ())?)
+	return setmetatable({ tree = tree, onSourceWrite = onSourceWrite }, Applier)
 end
 
 -- Walk (creating as needed) the folder chain for every segment but the last, returning the parent the
@@ -138,8 +139,12 @@ function Applier.apply(self, patch: Patch)
 		node = tree.createInstance(patch.class, leafName)
 		tree.setParent(node, parent)
 	end
-	if patch.content ~= nil then
-		tree.setSource(node, patch.content)
+	local content = patch.content
+	if content ~= nil and tree.getSource(node) ~= content then
+		tree.setSource(node, content)
+		if self.onSourceWrite ~= nil then
+			self.onSourceWrite(patch.path, content)
+		end
 	end
 end
 
@@ -167,6 +172,9 @@ function Apply.studioTree(root: Node): Tree
 		end,
 		className = function(node: Node): string
 			return node.ClassName
+		end,
+		getSource = function(node: Node): string
+			return node.Source
 		end,
 		setParent = function(node: Node, parent: Node)
 			node.Parent = parent

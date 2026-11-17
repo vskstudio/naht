@@ -30,22 +30,15 @@ local CLASS_SUFFIX = {
 	ModuleScript = ".luau",
 }
 
--- The project-relative path for an instance under `root`, mirroring the daemon's file conventions.
-local function pathOf(root: Instance, instance: Instance): string?
-	local suffix = CLASS_SUFFIX[instance.ClassName]
-	if suffix == nil then
-		return nil
+local UNSAFE_NAME_CHARACTERS = { "/", "\\", "\0" }
+
+local function isSafeName(name: string): boolean
+	for _, character in UNSAFE_NAME_CHARACTERS do
+		if string.find(name, character, 1, true) ~= nil then
+			return false
+		end
 	end
-	local segments = { instance.Name .. suffix }
-	local current = instance.Parent
-	while current ~= nil and current ~= root do
-		table.insert(segments, 1, current.Name)
-		current = current.Parent
-	end
-	if current ~= root then
-		return nil -- not under the project root
-	end
-	return table.concat(segments, "/")
+	return true
 end
 
 export type State = "Connecting" | "Connected" | "Reconnecting" | "Conflict" | "Disconnected"
@@ -65,6 +58,8 @@ function Connection.new(
 		terrain = deps.terrain,
 		tree = deps.tree,
 		running = false,
+		session = 0,
+		backoff = BACKOFF_START,
 		cursor = 0,
 		blobCursor = 0,
 		-- Bumped on every (re)connect so a stale blob long-poll from a prior connection stops itself.
@@ -76,6 +71,8 @@ function Connection.new(
 		lastApplied = {},
 		pendingPush = {},
 		pushScheduled = false,
+		studioConnections = nil,
+		skippedPaths = {},
 	}, Connection)
 end
 
@@ -84,26 +81,57 @@ function Connection.start(self)
 		return
 	end
 	self.running = true
+	self.session += 1
+	local session = self.session
+	self:_attachStudio()
 	task.spawn(function()
-		self:_run()
+		self:_run(session)
 	end)
 end
 
 function Connection.stop(self)
 	self.running = false
+	self.session += 1
+	self.epoch += 1
+	self:_detachStudio()
 	self.onState("Disconnected", nil)
 end
 
+-- The project-relative path for an instance under `root`, mirroring the daemon's file conventions.
+function Connection._pathOf(self, instance: Instance): string?
+	local suffix = CLASS_SUFFIX[instance.ClassName]
+	if suffix == nil then
+		return nil
+	end
+	local segments = { instance.Name .. suffix }
+	local current = instance.Parent
+	while current ~= nil and current ~= self.root do
+		table.insert(segments, 1, current.Name)
+		current = current.Parent
+	end
+	if current ~= self.root then
+		return nil -- not under the project root
+	end
+	local path = table.concat(segments, "/")
+	for _, segment in segments do
+		if not isSafeName(segment) then
+			if not self.skippedPaths[path] then
+				self.skippedPaths[path] = true
+				warn(string.format("Naht: not syncing %q, a name contains '/', '\\' or NUL", path))
+			end
+			return nil
+		end
+	end
+	return path
+end
+
 -- The outer loop: handshake, serve patches, and on any failure back off and retry.
-function Connection._run(self)
-	local backoff = BACKOFF_START
-	self:_watchStudio()
-	while self.running do
+function Connection._run(self, session: number)
+	while self.running and self.session == session do
 		self.onState("Connecting", nil)
 		local ok, err = pcall(function()
 			local info = self.client:info(self.placeId)
 			self.onState("Connected", info.project_name)
-			backoff = BACKOFF_START
 			self.cursor = 0 -- let the daemon's re-diff drive the catch-up
 			self.blobCursor = 0
 			self.epoch += 1
@@ -114,30 +142,29 @@ function Connection._run(self)
 			task.spawn(function()
 				self:_serveBlobs(epoch)
 			end)
-			self:_serve()
+			self:_serve(session)
 		end)
-		if not self.running then
+		if not (self.running and self.session == session) then
 			break
 		end
 		if not ok then
 			self.onState("Reconnecting", tostring(err))
-			task.wait(backoff)
-			backoff = math.min(backoff * 2, BACKOFF_MAX)
+			task.wait(self.backoff)
+			self.backoff = math.min(self.backoff * 2, BACKOFF_MAX)
 		end
 	end
 end
 
 -- The inner long-poll loop. Returns (raising) when the connection breaks, so `_run` can back off.
-function Connection._serve(self)
-	while self.running do
+function Connection._serve(self, session: number)
+	while self.running and self.session == session do
 		local batch = self.client:patches(self.cursor)
 		self.applying = true
-		local applier = Apply.create(self.tree :: Apply.Tree)
+		local applier = Apply.create(self.tree :: Apply.Tree, function(path: string, content: string)
+			self.lastApplied[path] = content
+		end)
 		local applied = {}
 		for _, patch in batch.patches do
-			if patch.kind ~= "Delete" then
-				self.lastApplied[patch.path] = patch.content
-			end
 			-- Apply each patch independently so one failure doesn't sink the whole batch; only the
 			-- ones that land are acked, and the rest re-diff on the next cycle (no loss).
 			local ok = pcall(function()
@@ -152,6 +179,7 @@ function Connection._serve(self)
 		end
 		self.applying = false
 		self.cursor = batch.cursor
+		self.backoff = BACKOFF_START
 		if #applied > 0 then
 			pcall(function()
 				self.client:postAck(applied)
@@ -218,9 +246,19 @@ end
 
 -- Watch the project subtree for Studio-side edits and push them, debounced. Edits the plugin itself
 -- just applied are ignored (the `applying` guard) so a patch does not echo back as a change.
-function Connection._watchStudio(self)
+function Connection._attachStudio(self)
+	if self.studioConnections ~= nil then
+		return
+	end
+	local connections = {}
+	self.studioConnections = connections
+
+	local function listen(signal: any, handler: (...any) -> ())
+		table.insert(connections, signal:Connect(handler))
+	end
+
 	local function onChanged(instance: Instance)
-		local path = pathOf(self.root, instance)
+		local path = self:_pathOf(instance)
 		if path == nil then
 			return
 		end
@@ -236,7 +274,7 @@ function Connection._watchStudio(self)
 
 	local function track(instance: Instance)
 		if CLASS_SUFFIX[instance.ClassName] ~= nil then
-			instance:GetPropertyChangedSignal("Source"):Connect(function()
+			listen(instance:GetPropertyChangedSignal("Source"), function()
 				onChanged(instance)
 			end)
 		end
@@ -245,20 +283,31 @@ function Connection._watchStudio(self)
 	for _, descendant in self.root:GetDescendants() do
 		track(descendant)
 	end
-	self.root.DescendantAdded:Connect(function(descendant)
+	listen(self.root.DescendantAdded, function(descendant: Instance)
 		track(descendant)
 		onChanged(descendant)
 	end)
-	self.root.DescendantRemoving:Connect(function(descendant)
+	listen(self.root.DescendantRemoving, function(descendant: Instance)
 		if self.applying then
 			return
 		end
-		local path = pathOf(self.root, descendant)
+		local path = self:_pathOf(descendant)
 		if path ~= nil then
 			self.pendingPush[path] = Protocol.delete(path)
 			self:_schedulePush()
 		end
 	end)
+end
+
+function Connection._detachStudio(self)
+	local connections = self.studioConnections
+	if connections == nil then
+		return
+	end
+	self.studioConnections = nil
+	for _, connection in connections do
+		connection:Disconnect()
+	end
 end
 
 function Connection._schedulePush(self, delay: number?)

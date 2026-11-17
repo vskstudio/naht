@@ -429,6 +429,138 @@ emptyBlobConnection.epoch = 1
 emptyBlobConnection:_serveBlobs(1)
 check("an empty blob batch advances the blob cursor", emptyBatchCalls[2] == 7)
 
+local function newSignal()
+	local signal = { live = 0 }
+	function signal:Connect(_fn)
+		self.live += 1
+		local active = true
+		return {
+			Disconnect = function(_)
+				if active then
+					active = false
+					signal.live -= 1
+				end
+			end,
+		}
+	end
+	return signal
+end
+
+local function fakeRoot()
+	return {
+		ClassName = "Folder",
+		Name = "root",
+		GetDescendants = function(_)
+			return {}
+		end,
+		DescendantAdded = newSignal(),
+		DescendantRemoving = newSignal(),
+	}
+end
+
+local function failingInfoClient()
+	return {
+		info = function(_, _placeId)
+			error("offline")
+		end,
+	}
+end
+
+local lifecycleRoot = fakeRoot()
+local lifecycle = Connection.new(failingInfoClient(), lifecycleRoot, 1, function() end, { terrain = extentsTerrain, tree = nil })
+lifecycle:start()
+check("start attaches one set of Studio listeners", lifecycleRoot.DescendantAdded.live == 1)
+lifecycle:stop()
+check("stop detaches the Studio listeners", lifecycleRoot.DescendantAdded.live == 0)
+lifecycle:start()
+lifecycle:start()
+check("restart does not stack Studio listeners", lifecycleRoot.DescendantAdded.live == 1)
+lifecycle:stop()
+check("second stop detaches the Studio listeners", lifecycleRoot.DescendantAdded.live == 0)
+
+local function fakeInstance(className: string, name: string, parent: any): any
+	return { ClassName = className, Name = name, Parent = parent }
+end
+
+local pathRoot = fakeRoot()
+local pathConnection = Connection.new(failingInfoClient(), pathRoot, 1, function() end, { terrain = extentsTerrain, tree = nil })
+local pathFolder = fakeInstance("Folder", "dir", pathRoot)
+check("path of a plain script keeps its folders", pathConnection:_pathOf(fakeInstance("ModuleScript", "ok", pathFolder)) == "dir/ok.luau")
+check("path skips a name containing a slash", pathConnection:_pathOf(fakeInstance("ModuleScript", "a/b", pathRoot)) == nil)
+check("path skips a name containing a backslash", pathConnection:_pathOf(fakeInstance("ModuleScript", "a\\b", pathRoot)) == nil)
+check("path skips a name containing NUL", pathConnection:_pathOf(fakeInstance("ModuleScript", "a\0b", pathRoot)) == nil)
+check("path skips a folder whose name contains a slash", pathConnection:_pathOf(fakeInstance("ModuleScript", "leaf", fakeInstance("Folder", "x/y", pathRoot))) == nil)
+
+local backoffProbe = Connection.new(backoffClient, fakeRoot(), 1, function() end, { terrain = extentsTerrain, tree = nil })
+backoffProbe.running = true
+backoffProbe.backoff = 8
+local backoffPollCalls = 0
+backoffProbe.client = {
+	patches = function(_, _cursor)
+		backoffPollCalls += 1
+		if backoffPollCalls == 1 then
+			return { cursor = 1, patches = {} }
+		end
+		error("stop")
+	end,
+	postAck = function(_, _paths) end,
+}
+pcall(function()
+	backoffProbe:_serve(backoffProbe.session)
+end)
+check("a completed poll resets the reconnect backoff", backoffProbe.backoff == 1)
+
+local echoTree = mockTree()
+echoTree.setParent(echoTree.createInstance("ModuleScript", "Mod"), echoTree.root)
+local echoNode = echoTree.findChild(echoTree.root, "Mod")
+echoNode.Source = "X"
+local echoPolls = 0
+local echoClient = {
+	patches = function(_, _cursor)
+		echoPolls += 1
+		if echoPolls == 1 then
+			return { cursor = 1, patches = { { kind = "Upsert", path = "Mod.luau", class = "ModuleScript", content = "X" } } }
+		end
+		error("stop")
+	end,
+	postAck = function(_, _paths) end,
+}
+local echoConnection = Connection.new(echoClient, echoTree.root, 1, function() end, { terrain = extentsTerrain, tree = echoTree })
+echoConnection.running = true
+pcall(function()
+	echoConnection:_serve(echoConnection.session)
+end)
+check("an apply that changes nothing records no echo", echoConnection.lastApplied["Mod.luau"] == nil)
+
+local writtenTree = mockTree()
+local writtenPolls = 0
+local writtenConnection = Connection.new({
+	patches = function(_, _cursor)
+		writtenPolls += 1
+		if writtenPolls == 1 then
+			return { cursor = 1, patches = { { kind = "Upsert", path = "New.luau", class = "ModuleScript", content = "Y" } } }
+		end
+		error("stop")
+	end,
+	postAck = function(_, _paths) end,
+}, writtenTree.root, 1, function() end, { terrain = extentsTerrain, tree = writtenTree })
+writtenConnection.running = true
+pcall(function()
+	writtenConnection:_serve(writtenConnection.session)
+end)
+check("an apply that writes records its echo", writtenConnection.lastApplied["New.luau"] == "Y")
+
+do
+	local writeTree = mockTree()
+	local writes = {}
+	local writeApplier = Apply.create(writeTree, function(path: string, content: string)
+		table.insert(writes, path .. "=" .. content)
+	end)
+	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
+	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
+	check("apply reports a source write once and not a no-op", #writes == 1 and writes[1] == "Z.luau=Q")
+end
+
 -- === transport modules compile ===============================================================
 -- These talk to HttpService / the DataModel, so they can't run headless, but they must at least
 -- compile. Catches syntax regressions in the modules the cases above don't load.
