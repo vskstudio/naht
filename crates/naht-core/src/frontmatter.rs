@@ -415,4 +415,20 @@ mod tests {
         assert!(props.contains_key("Nested"));
         assert_eq!(body, "body\n");
     }
+
+    #[test]
+    fn newlines_and_backslashes_in_strings_round_trip_as_escapes() {
+        let source = "first\nsecond\rthird\\fourth \"quoted\"";
+        let properties =
+            BTreeMap::from([("Source".to_owned(), Variant::String(source.to_owned()))]);
+        let rendered = render(&properties).unwrap();
+
+        assert_eq!(
+            rendered,
+            "--!naht { Source = \"first\\nsecond\\rthird\\\\fourth \\\"quoted\\\"\" }\n"
+        );
+        let (parsed, body) = split(&format!("{rendered}body\n")).unwrap();
+        assert_eq!(parsed, properties);
+        assert_eq!(body, "body\n");
+    }
 }
