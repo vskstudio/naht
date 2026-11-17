@@ -178,7 +178,7 @@ instances only the hash is stored (no merge base).
   batch re-diffs the rest instead of treating them as synced. An acked patch leaves the queue, and an ack
   for a sequence the daemon has since superseded confirms nothing.
 - **Retry backoff** is per channel. The text connection loop waits 1 s after a failed handshake or
-  poll, doubles the wait on each further failure, and caps it at 15 s. A batch the plugin rejects (a patch that does not apply) is re-polled from the rejected patch after a wait that starts at 1 s, doubles on each further rejected batch, and caps at 60 s, the same cap as the blob channel; a batch with no rejection resets it to 1 s. Retry backoff is per channel: the text loop, the rejected-patch wait, the ack, and the blob loop each keep their own counter. The terrain blob loop
+  poll, doubles the wait on each further failure, and caps it at 15 s. A batch the plugin rejects (a patch that does not apply) is re-polled from the rejected patch after a wait that starts at 1 s, doubles on each further rejected batch, and caps at 60 s, the same cap as the blob channel; a batch with no rejection resets it to 1 s. The terrain blob loop
   (`_serveBlobs` in `plugin/src/Connection.luau`) runs apart from it: a failed `GET /blobs` poll, or a
   batch that does not apply, is retried at the same cursor after a wait that starts at 2 s, doubles, and
   caps at 60 s. A cleanly applied batch resets that wait to 2 s. The `/blobs` cursor is the ack: the daemon drops each queued blob patch below the cursor a poll sends, and the plugin keeps its blob cursor across a reconnect to the same daemon session. After five consecutive undecodable
@@ -237,10 +237,12 @@ not a v1 blocker.
 
 ## 11. Known limitations and follow-ups
 
-- **A childless init folder is named by its flat path on the plugin side (open).** The daemon maps a text change to
-  `Foo/init.luau` onto `Foo.luau` when that flat file exists and `Foo/` does not, and the reverse when only
-  `Foo/init.luau` exists (`canonical_script_path` in `crates/naht-core/src/mapper.rs`). The plugin does not report
-  the path it actually wrote: `Apply.luau` returns nothing, so the applied-path tracking is not done.
+- **A childless init folder is named by its flat path on the plugin side (open).** The daemon maps a text change
+  between `Foo/init.luau` and `Foo.luau` against the shape the whole batch leaves, not change by change
+  (`batch_target` in `crates/naht/src/session/inbound.rs`, with the path helpers in `crates/naht-core/src/mapper.rs`),
+  so a reshape that deletes `Foo.luau` and upserts `Foo/init.luau` with its children lands the same way in any
+  order. The plugin still does not report the path it actually wrote: `Apply.luau` returns nothing, so the
+  applied-path tracking is not done.
 - **Local processes are trusted (open).** The loopback gate of §7 stops browsers and DNS rebinding but
   does not authenticate the caller. Any process that can reach the daemon's port and sends the two
   headers can read and write the project, so on a machine shared by several accounts, any of them can
