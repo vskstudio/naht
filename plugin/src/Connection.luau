@@ -133,14 +133,14 @@ function Connection._sortedKeys(map: { [string]: any }): { string }
 end
 
 function Connection._refreshState(self)
-	local warningSources = Connection._sortedKeys(self.warnings)
-	if #warningSources > 0 then
-		self.onState("Warning", self.warnings[warningSources[1]])
-		return
-	end
 	local conflictPaths = Connection._sortedKeys(self.conflicts)
 	if #conflictPaths > 0 then
 		self.onState("Conflict", conflictPaths[1])
+		return
+	end
+	local warningSources = Connection._sortedKeys(self.warnings)
+	if #warningSources > 0 then
+		self.onState("Warning", self.warnings[warningSources[1]])
 		return
 	end
 	self.onState("Connected", self.projectName)

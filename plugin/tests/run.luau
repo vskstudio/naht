@@ -1232,6 +1232,19 @@ end
 
 do
 	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new({}, root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	connection:_setWarning("terrain", "terrain too large for live push, use naht build")
+	connection:_setConflict("C.luau")
+	check(
+		"a Conflict is reported while a permanent Warning is set",
+		lastStateOf(log) == "Conflict" and log[#log].detail == "C.luau",
+		lastStateOf(log)
+	)
+end
+
+do
+	local log, onState = stateLog()
 	local calls = 0
 	local tree, root = studioWorld(true)
 	local connection: any = nil

@@ -59,7 +59,7 @@ Behaviour notes:
   applied.
 - A text patch that cannot be applied sets the widget to `Warning` with `patch rejected: <path>: <reason>`.
   It is not acknowledged, so the daemon resends it only after a reconnect. A later patch to the same path that
-  applies clears the Warning. When every Warning has cleared, the widget returns to `Connected`, or to `Conflict` while a path is still in conflict.
+  applies clears the Warning. When every Warning has cleared, the widget returns to `Connected`, or to `Conflict` while a path is still in conflict. A Conflict takes precedence over a Warning, because it needs `naht resolve` and a Warning may never clear in the session.
 - Terrain larger than 1,048,576 voxels at 4-stud resolution is not pushed live. The widget shows
   `Warning` with `terrain too large for live push, use naht build`, and the widget returns to `Connected`
   once a push fits under the cap.
