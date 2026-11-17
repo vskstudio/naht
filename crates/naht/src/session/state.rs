@@ -5,7 +5,7 @@ use naht_core::reconciler;
 use naht_core::state::{InstanceRecord, StateStore};
 use naht_core::vfs::{DiskVfs, EntryKind, RootedVfs, Vfs, VfsError, remove_stale_temp_files};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 impl Session {
     /// Open a session rooted at `root`, owning `store`. `serve_place_id` guards which Studio place
@@ -154,7 +154,10 @@ impl Session {
 
 fn case_folded_key(path: &Path) -> String {
     path.components()
-        .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(name.to_string_lossy().to_lowercase()),
+            _ => None,
+        })
         .collect::<Vec<_>>()
         .join("/")
 }

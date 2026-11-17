@@ -173,3 +173,39 @@ fn an_init_and_a_child_upserted_over_a_flat_script_without_deleting_it_keep_the_
     assert_eq!(read(root.path(), "Folder/init.luau"), "x");
     assert_eq!(read(root.path(), "Folder/Child.luau"), "child");
 }
+
+#[test]
+fn a_configured_source_root_spelled_with_a_dot_keeps_its_folder_when_only_its_init_script_is_deleted()
+ {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("src")).unwrap();
+    fs::write(root.path().join("src").join("init.luau"), "return 1").unwrap();
+    let mut session = session_in(root.path());
+    session.rescan().unwrap();
+    session.protect_source_roots([std::path::PathBuf::from("./src")]);
+    session
+        .apply_changes(vec![upsert("src.luau", "return 1")])
+        .unwrap();
+
+    session.apply_changes(vec![delete("src.luau")]).unwrap();
+
+    assert!(root.path().join("src").is_dir());
+}
+
+#[test]
+fn a_configured_nested_source_root_spelled_with_a_dot_keeps_its_directory_when_its_last_file_is_deleted()
+ {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("packages").join("Shared")).unwrap();
+    let mut session = session_in(root.path());
+    session
+        .apply_changes(vec![upsert("packages/Shared/A.luau", "return 1")])
+        .unwrap();
+    session.protect_source_roots([std::path::PathBuf::from("./packages/Shared")]);
+
+    session
+        .apply_changes(vec![delete("packages/Shared/A.luau")])
+        .unwrap();
+
+    assert!(root.path().join("packages/Shared").is_dir());
+}
