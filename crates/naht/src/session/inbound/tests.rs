@@ -362,3 +362,34 @@ fn a_childless_init_script_over_a_flat_script_writes_the_flat_file() {
         "return 2"
     );
 }
+
+#[test]
+fn a_path_upserted_and_deleted_in_one_batch_keeps_the_upsert_in_either_order() {
+    let orders = [
+        vec![
+            upsert("A.luau", "v2"),
+            Change::Delete {
+                path: "A.luau".to_owned(),
+            },
+        ],
+        vec![
+            Change::Delete {
+                path: "A.luau".to_owned(),
+            },
+            upsert("A.luau", "v2"),
+        ],
+    ];
+    for batch in orders {
+        let root = tempfile::tempdir().unwrap();
+        let mut session = session_in(root.path());
+        session.apply_changes(vec![upsert("A.luau", "v1")]).unwrap();
+
+        session.apply_changes(batch).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.path().join("A.luau")).unwrap(),
+            "v2"
+        );
+        assert_eq!(session.studio["A.luau"].content, "v2");
+    }
+}

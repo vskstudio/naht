@@ -209,3 +209,65 @@ fn a_configured_nested_source_root_spelled_with_a_dot_keeps_its_directory_when_i
 
     assert!(root.path().join("packages/Shared").is_dir());
 }
+
+#[test]
+fn a_flat_script_that_gains_a_non_script_child_becomes_an_init_file_without_the_flat_one() {
+    let (root, mut session) = flat_script_session();
+
+    session
+        .apply_changes(vec![
+            delete("Folder.luau"),
+            upsert("Folder/init.luau", "v2"),
+        ])
+        .unwrap();
+
+    assert_eq!(read(root.path(), "Folder/init.luau"), "v2");
+    assert!(!root.path().join("Folder.luau").exists());
+}
+
+#[test]
+fn an_init_script_that_loses_its_last_child_becomes_a_flat_script_without_the_folder() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("Folder")).unwrap();
+    fs::write(root.path().join("Folder").join("init.luau"), "v1").unwrap();
+    fs::write(root.path().join("Folder").join("Child.luau"), "child").unwrap();
+    let mut session = session_in(root.path());
+    session.rescan().unwrap();
+    session
+        .apply_changes(vec![
+            upsert("Folder/init.luau", "v1"),
+            upsert("Folder/Child.luau", "child"),
+        ])
+        .unwrap();
+
+    session
+        .apply_changes(vec![
+            delete("Folder/Child.luau"),
+            delete("Folder/init.luau"),
+            upsert("Folder.luau", "v2"),
+        ])
+        .unwrap();
+
+    assert_eq!(read(root.path(), "Folder.luau"), "v2");
+    assert!(!root.path().join("Folder").exists());
+}
+
+#[test]
+fn a_deleted_flat_path_leaves_the_studio_mirror_when_its_init_file_is_upserted_in_the_same_batch() {
+    let (root, mut session) = flat_script_session();
+    fs::remove_file(root.path().join("Folder.luau")).unwrap();
+    fs::create_dir_all(root.path().join("Folder")).unwrap();
+    fs::write(root.path().join("Folder").join("init.luau"), "return 2").unwrap();
+
+    session
+        .apply_changes(vec![
+            delete("Folder.luau"),
+            upsert("Folder/init.luau", "return 2"),
+        ])
+        .unwrap();
+
+    assert!(!session.studio.contains_key("Folder.luau"));
+    assert_eq!(session.studio["Folder/init.luau"].content, "return 2");
+    assert!(!root.path().join("Folder.luau").exists());
+    assert_eq!(read(root.path(), "Folder/init.luau"), "return 2");
+}
