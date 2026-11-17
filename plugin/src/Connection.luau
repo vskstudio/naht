@@ -380,7 +380,7 @@ end
 
 function Connection._serve(self, session: number, sessionId: string)
 	if #self.pendingAcks > 0 then
-		self.pendingAcks = self:_ack(session, self.pendingAcks)
+		self.pendingAcks = self:_ack(session, self.pendingAcks, sessionId)
 		if not self:_isCurrent(session) then
 			return
 		end
@@ -427,7 +427,7 @@ function Connection._serve(self, session: number, sessionId: string)
 			self.rejectedBackoff = REJECTED_PATCH_START
 		end
 		if #self.pendingAcks > 0 then
-			self.pendingAcks = self:_ack(session, self.pendingAcks)
+			self.pendingAcks = self:_ack(session, self.pendingAcks, sessionId)
 			if not self:_isCurrent(session) then
 				return
 			end
@@ -444,9 +444,9 @@ function Connection._takeRejectedDelay(self: any): number
 	return delay
 end
 
-function Connection._ack(self, session: number, seqs: { number }): { number }
+function Connection._ack(self, session: number, seqs: { number }, sessionId: string): { number }
 	local ok, err = pcall(function()
-		self.client:postAck(seqs)
+		self.client:postAck(seqs, sessionId)
 	end)
 	if not self:_isCurrent(session) then
 		return seqs
@@ -455,6 +455,9 @@ function Connection._ack(self, session: number, seqs: { number }): { number }
 		self.ackBackoff = ACK_BACKOFF_START
 		self:_clearWarning("ack")
 		return {}
+	end
+	if Client.isSessionChanged(tostring(err)) then
+		error(err, 0)
 	end
 	if not isTransientFailure(err) then
 		self:_setWarning("refused:ack", "ack refused: " .. failureMessage(err))

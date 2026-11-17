@@ -1254,6 +1254,170 @@ suite("a reconnect to a restarted daemon session starts the cursor at 0", functi
 		)
 end)
 
+suite("a restarted daemon session drops the acks it was still owed", function()
+	local tree, root = studioWorld(true)
+	local ackedSeqs: { number } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				return { project_name = "demo", session_id = "s2" }
+			end,
+			patches = function(_, _cursor)
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, seqs, _sessionId)
+				for _, seq in seqs do
+					table.insert(ackedSeqs, seq)
+				end
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.sessionId = "s1"
+	connection.pendingAcks = { 7 }
+	connection:_run(1)
+	check(
+		"a restarted daemon session drops the acks it was still owed",
+		not table.find(ackedSeqs, 7),
+		"acked " .. table.concat(ackedSeqs, ",")
+	)
+end)
+
+suite("an ack is sent with the session the plugin is attached to", function()
+	local tree, root = studioWorld(true)
+	local ackedSession: any = nil
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				return { project_name = "demo", session_id = "s1" }
+			end,
+			patches = function(_, _cursor)
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, _seqs, sessionId)
+				ackedSession = sessionId
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.sessionId = "s1"
+	connection.pendingAcks = { 7 }
+	connection:_run(1)
+	check("an ack is sent with the session the plugin is attached to", ackedSession == "s1", tostring(ackedSession))
+end)
+
+suite("a daemon restart during an ack reconnects instead of retrying the ack", function()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local ackCalls = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				return { project_name = "demo", session_id = if infos == 1 then "s1" else "s2" }
+			end,
+			patches = function(_, _cursor)
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, _seqs, _sessionId)
+				ackCalls += 1
+				if ackCalls > 2 then
+					connection:stop()
+					return
+				end
+				error(Client.SESSION_CHANGED)
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.ackBackoff = 0.01
+	connection.sessionId = "s1"
+	connection.pendingAcks = { 7 }
+	connection:_run(1)
+	check(
+		"a daemon restart during an ack reconnects instead of retrying the ack",
+		ackCalls == 1 and infos == 2,
+		"acks " .. tostring(ackCalls) .. ", connects " .. tostring(infos)
+	)
+end)
+
+suite("a restarted daemon session during a poll resets the reconnect backoff to its start", function()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local polls = 0
+	local backoffOnReconnect: any = nil
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				if infos == 2 then
+					backoffOnReconnect = connection.backoff
+				end
+				return { project_name = "demo", session_id = "s1" }
+			end,
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					error(Client.SESSION_CHANGED)
+				end
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.sessionId = "s1"
+	connection:_run(1)
+	check(
+		"a restarted daemon session during a poll resets the reconnect backoff to its start",
+		backoffOnReconnect == 2,
+		"backoff " .. tostring(backoffOnReconnect)
+	)
+end)
+
 suite("a failed text poll ends the blob poll of its epoch before the next handshake", function()
 	local tree, root = studioWorld(true)
 	local textFailed = false
@@ -3768,6 +3932,22 @@ local function reply(status: number, body: string)
 	return { Success = status >= 200 and status < 300, StatusCode = status, Body = body }
 end
 
+suite("an ack names its session and a 409 on /ack reports a changed session", function()
+	local acks = fakeHttp(function(_options)
+		return reply(409, "")
+	end)
+	local client = Client.new("http://127.0.0.1:34872", 123, acks)
+	local ok, err = pcall(function()
+		client:postAck({ 7 }, "s1")
+	end)
+	check("a 409 on /ack is reported as a session change", not ok and Client.isSessionChanged(tostring(err)), tostring(err))
+	check(
+		"an ack names its session in the query",
+		#acks.calls == 1 and string.find(acks.calls[1].Url, "/ack?session=s1", 1, true) ~= nil,
+		if #acks.calls == 1 then acks.calls[1].Url else "no call"
+	)
+end)
+
 suite("the client sends the headers on every request and reports an outdated plugin", function()
 	local function answerEverything(options)
 		if string.find(options.Url, "/info", 1, true) then
@@ -3786,7 +3966,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 	everyRequest:patches(0, "s1")
 	everyRequest:blobs(0, "s1")
 	everyRequest:postBlobs({})
-	everyRequest:postAck({})
+	everyRequest:postAck({}, "s1")
 	everyRequest:postChanges({})
 	local headersOnEveryRequest = #everything.calls == 6
 	for _, call in everything.calls do

@@ -135,13 +135,13 @@ local function findPatch(batch, path, content)
 	return nil
 end
 
-local function ackAll(client, batch)
+local function ackAll(client, sessionId, batch)
 	local seqs = {}
 	for _, sequenced in batch.patches do
 		table.insert(seqs, sequenced.seq)
 	end
 	if #seqs > 0 then
-		client:postAck(seqs)
+		client:postAck(seqs, sessionId)
 	end
 end
 
@@ -151,7 +151,7 @@ local function awaitPatch(client, sessionId, cursor, path, content)
 		if findPatch(batch, path, content) ~= nil then
 			return batch
 		end
-		ackAll(client, batch)
+		ackAll(client, sessionId, batch)
 		cursor = batch.cursor
 	end
 	return nil
@@ -181,7 +181,7 @@ local function scenario(root, port, log)
 
 	local initial = first.client:patches(0, info.session_id)
 	check("a fresh run sends the existing file to the plugin", findPatch(initial, FILE, "return 1") ~= nil)
-	ackAll(first.client, initial)
+	ackAll(first.client, info.session_id, initial)
 
 	fs.writeFile(root .. "/" .. FILE, "return 2")
 	local edited = awaitPatch(first.client, info.session_id, initial.cursor, FILE, "return 2")
@@ -191,7 +191,7 @@ local function scenario(root, port, log)
 		edit ~= nil and edit.direction == "ToStudio" and edit.kind == "Update"
 	)
 	if edited ~= nil then
-		ackAll(first.client, edited)
+		ackAll(first.client, info.session_id, edited)
 	end
 
 	first.client:postChanges({ Protocol.upsert(STUDIO_FILE, "ModuleScript", "return 3") })
@@ -210,7 +210,7 @@ local function scenario(root, port, log)
 	check("a file created while the daemon was down reaches the plugin", findPatch(replay, CREATED_FILE, "return 4") ~= nil)
 	check("a file the plugin pushed is not sent back after a restart", findPatch(replay, STUDIO_FILE, nil) == nil)
 	check("a restart emits no delete", countDeletes(replay) == 0)
-	ackAll(second.client, replay)
+	ackAll(second.client, restarted.session_id, replay)
 
 	stopDaemon(second)
 end
