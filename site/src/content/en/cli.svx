@@ -44,13 +44,13 @@ naht serve -v             # debug logs
 | `--port <PORT>` | Override the configured/default port (`34872`). |
 
 The daemon serves over `http://localhost:<port>`, watches the filesystem, and accepts the Studio
-plugin's connection. Leave it running while you work.
+plugin's connection. Leave it running while you work. Only one daemon runs per project: a second `naht serve` on the same project exits with an error and leaves the first one running.
 
 ## `naht pull [path]`
 
 Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event. It asks the
 daemon recorded in `.naht/daemon.port` (written by `naht serve`), and uses the `naht.toml` port only when
-that file is absent. It waits at most 2 seconds for an answer.
+that file is absent. It waits at most 2 seconds for an answer. It only uses a daemon that reports this project, so a recorded port that belongs to another project makes the pull fail.
 
 ```sh
 naht pull
@@ -91,7 +91,7 @@ naht status
 
 Clear a conflict once its markers are gone. **Refuses while any conflict markers remain.**
 
-Once cleared, it asks the daemon recorded in `.naht/daemon.port` to re-sync, and never waits more than 2 seconds for it. It prints `daemon re-synced` when that works, nothing extra when no daemon is running, and the reason otherwise (for example, the daemon did not answer in time). The file is resolved in every case, and the exit status stays 0.
+Once cleared, it asks the daemon recorded in `.naht/daemon.port` to re-sync, and never waits more than 2 seconds for it. It prints `daemon re-synced` when that works, nothing extra when no daemon is running, and the reason otherwise (for example, the daemon did not answer in time). The file is resolved in every case, and the exit status stays 0. A nudge that fails never fails the command: only the message changes. That includes a recorded port that belongs to another project.
 
 ```sh
 naht resolve src/Hello.luau

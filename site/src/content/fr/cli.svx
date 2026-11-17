@@ -44,11 +44,11 @@ naht serve -v             # debug logs
 | `--port <PORT>` | Surcharge le port configuré/par défaut (`34872`). |
 
 Le daemon sert sur `http://localhost:<port>`, surveille le système de fichiers, et accepte la connexion du plugin
-Studio. Laisse-le tourner pendant que tu travailles.
+Studio. Laisse-le tourner pendant que tu travailles. Un seul daemon tourne par projet : un second `naht serve` sur le même projet sort avec une erreur et laisse le premier en marche.
 
 ## `naht pull [path]`
 
-Demande à un daemon **en cours d'exécution** de re-synchroniser maintenant, plutôt que d'attendre le prochain événement du système de fichiers. Il interroge le daemon enregistré dans `.naht/daemon.port` (écrit par `naht serve`) et n'utilise le port de `naht.toml` que si ce fichier est absent. Il attend au plus 2 secondes une réponse.
+Demande à un daemon **en cours d'exécution** de re-synchroniser maintenant, plutôt que d'attendre le prochain événement du système de fichiers. Il interroge le daemon enregistré dans `.naht/daemon.port` (écrit par `naht serve`) et n'utilise le port de `naht.toml` que si ce fichier est absent. Il attend au plus 2 secondes une réponse. Il n'utilise qu'un daemon qui désigne ce projet : un port enregistré qui appartient à un autre projet fait échouer la commande.
 
 ```sh
 naht pull
@@ -89,7 +89,7 @@ naht status
 
 Lève un conflit une fois ses marqueurs disparus. **Refuse tant que des marqueurs de conflit subsistent.**
 
-Ensuite, il demande au daemon enregistré dans `.naht/daemon.port` de re-synchroniser, sans attendre plus de 2 secondes. Il affiche `daemon re-synced` quand ça marche, rien de plus si aucun daemon ne tourne, et sinon la raison (par exemple, le daemon n'a pas répondu à temps). Le fichier est résolu dans tous les cas, et le code de sortie reste 0.
+Ensuite, il demande au daemon enregistré dans `.naht/daemon.port` de re-synchroniser, sans attendre plus de 2 secondes. Il affiche `daemon re-synced` quand ça marche, rien de plus si aucun daemon ne tourne, et sinon la raison (par exemple, le daemon n'a pas répondu à temps). Le fichier est résolu dans tous les cas, et le code de sortie reste 0. Un échec de la relance ne fait jamais échouer la commande : seul le message change. C'est aussi le cas quand le port enregistré appartient à un autre projet.
 
 ```sh
 naht resolve src/Hello.luau

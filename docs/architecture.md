@@ -127,10 +127,14 @@ A `meta` table holds the schema version and project identity. Writes are transac
 instances only the hash is stored (no merge base).
 
 While it runs, `naht serve` also writes its bound port to `.naht/daemon.port` (plain text, next to
-`state.db`) and removes the file on a clean shutdown. `naht resolve` and `naht pull` read that port to
-ask the daemon to re-sync, so `--port` is honoured. `naht pull` falls back to the `naht.toml` port only
+`state.db`, written through a temp file and a rename so a reader never sees a partial value) and removes
+the file on a clean shutdown. A second `naht serve` on the same project refuses to start: the daemon holds
+an exclusive lock on `.naht/daemon.lock` for its whole lifetime, taken before it writes anything.
+`naht resolve` and `naht pull` read that port to ask the daemon to re-sync, so `--port` is honoured. `naht pull` falls back to the `naht.toml` port only
 when the file is absent. Both nudges wait at most 2 s for an answer. A file left behind by a crashed
-daemon points at a closed port, and the nudge then does nothing.
+daemon points at a closed port, and the nudge then does nothing. Before a nudge re-syncs anything, it
+checks that the answer's `/info` names this project (and this place, when `naht.toml` configures one). A
+port that answers for another project counts as not running, and the message says so.
 
 ## 6. Configuration
 
@@ -233,7 +237,8 @@ not a v1 blocker.
   `:209-211`). If `Terrain.read` fails (`:203-208`) or the post fails, the error is swallowed, so the
   daemon gets no snapshot for that connection and filesystem blob changes stay held until the next
   connect. A plugin without the blob channel never polls `/blobs`, so blob sync cannot work with it at
-  all. Not changed: a daemon-side timeout would have to assume that an unreported Studio has no terrain,
+  all. The plugin must retry its terrain snapshot until the daemon accepts it, and report a persistent
+  failure. Not changed: a daemon-side timeout would have to assume that an unreported Studio has no terrain,
   and filesystem terrain could then overwrite Studio's real terrain.
 - **A Studio snapshot can overwrite a pending ToStudio blob.** A `POST /blobs` replaces the session's
   mirror, and a filesystem blob already queued for Studio but not yet applied by the plugin is not
