@@ -2170,6 +2170,24 @@ end
 
 do
 	local tree, root = studioWorld(true)
+	local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	local refusedFolderNames = { "Config: v2", "a:b", ":", ".", "..", "", "a\0b" }
+	for _, name in refusedFolderNames do
+		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, root))
+		check(string.format("path skips a folder named %q, as the daemon refuses it", name), connection:_pathOf(leaf) == nil)
+	end
+	local acceptedFolderNames = { "Config v2", "v2.0", "a-b_c", ".x", "..x" }
+	for _, name in acceptedFolderNames do
+		local leaf = place(tree, "ModuleScript", "Leaf", place(tree, "Folder", name, root))
+		check(
+			string.format("path keeps a folder named %q, as the daemon accepts it", name),
+			connection:_pathOf(leaf) == name .. "/Leaf.luau"
+		)
+	end
+end
+
+do
+	local tree, root = studioWorld(true)
 	local warnings: { string } = {}
 	local dependencies = deps(extentsTerrainWith(extentsRegion), tree)
 	dependencies.warn = function(message: string)

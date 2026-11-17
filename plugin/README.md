@@ -49,8 +49,8 @@ Behaviour notes:
   Only a Studio error while writing the source rejects a patch.
 - Folders on the way to a file are matched only against non-script containers. A `Script` named `Foo`
   never hides a `Folder` named `Foo`: `Foo/Bar.luau` goes under the folder.
-- Instance names containing `/`, `\` or NUL are not synced, because they would split into extra
-  folders on disk. A `ModuleScript` whose name ends in `.server`, `.client` or `.luau` is not synced
+- Instance names containing `/`, `\`, `:` or NUL, and folder names that are empty, `.` or `..`, are not synced,
+  because the daemon refuses them as project paths (and `/`, `\` would split into extra folders on disk). A `ModuleScript` whose name ends in `.server`, `.client` or `.luau` is not synced
   either, because its file name would be ambiguous. The plugin warns once per affected path.
 - A terrain blob with out-of-range dimensions, a non-positive resolution, or a payload length that
   does not match its dimensions is refused. The cursor is held, the widget shows

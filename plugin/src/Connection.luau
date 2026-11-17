@@ -24,7 +24,8 @@ local CLASS_SUFFIX = {
 	ModuleScript = ".luau",
 }
 
-local UNSAFE_NAME_CHARACTERS = { "/", "\\", "\0" }
+local UNSAFE_NAME_CHARACTERS = { "/", "\\", "\0", ":" }
+local UNSAFE_NAMES = { [""] = true, ["."] = true, [".."] = true }
 local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
 
 local TRANSIENT_STATUSES = { [408] = true, [500] = true, [502] = true, [503] = true, [504] = true }
@@ -59,6 +60,9 @@ local function refusedPathsOf(err: any): { string }
 end
 
 local function isSafeName(name: string): boolean
+	if UNSAFE_NAMES[name] then
+		return false
+	end
 	for _, character in UNSAFE_NAME_CHARACTERS do
 		if string.find(name, character, 1, true) ~= nil then
 			return false
@@ -235,7 +239,7 @@ end
 function Connection._unsafeReason(_self, instance: Instance, segments: { string }): string?
 	for _, segment in segments do
 		if not isSafeName(segment) then
-			return "a name contains '/', '\\' or NUL"
+			return "a name contains '/', '\\', ':' or NUL, or is empty, '.' or '..'"
 		end
 	end
 	if instance.ClassName == "ModuleScript" and endsWithScriptSuffix(instance.Name) then
