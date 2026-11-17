@@ -371,6 +371,27 @@ local function countNamed(parent: any, name: string): number
 	return count
 end
 
+local function findByClass(parent: any, name: string, className: string): any
+	for _, child in parent.children do
+		if child.Name == name and child.ClassName == className then
+			return child
+		end
+	end
+	return nil
+end
+
+local function lockedSource(tree: any, name: string, failures: number)
+	local original = tree.setSource
+	local remaining = failures
+	tree.setSource = function(node: any, content: string)
+		if node.Name == name and remaining > 0 then
+			remaining -= 1
+			error("Source is locked")
+		end
+		original(node, content)
+	end
+end
+
 local function freshApplier()
 	local tree, root = studioWorld(true)
 	return tree, root, Apply.create(tree)
@@ -478,20 +499,17 @@ end
 do
 	local tree, root, applier = freshApplier()
 	applier:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
-	local utils = tree.findChild(root, "Utils")
-	local writes = 0
-	local originalSetSource = tree.setSource
-	tree.setSource = function(node, content)
-		writes += 1
-		originalSetSource(node, content)
-	end
+	local folder = tree.findChild(root, "Utils")
 	local ok, err = pcall(function()
 		applier:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Update", content = "print(1)" })
 	end)
-	check("Upsert Utils.luau over a Folder Utils fails", not ok)
-	check("the rejection names the Folder as a non-script", not ok and string.find(tostring(err), "Utils is a non-script Folder", 1, true) ~= nil)
-	check("the Folder Utils is left alone with no Source written", writes == 0 and utils ~= nil and utils.ClassName == "Folder")
-	check("the Folder Utils keeps its children", utils ~= nil and tree.findChild(utils, "Helper") ~= nil)
+	local script = findByClass(root, "Utils", "ModuleScript")
+	check("a same-named Folder does not block a ModuleScript", ok, tostring(err))
+	check(
+		"the ModuleScript Utils sits beside the Folder Utils with its source",
+		countNamed(root, "Utils") == 2 and script ~= nil and script.Source == "print(1)"
+	)
+	check("the Folder Utils keeps its children", folder ~= nil and tree.findChild(folder, "Helper") ~= nil)
 end
 
 do
@@ -1055,7 +1073,7 @@ end
 do
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
-	place(tree, "Folder", "Bad", root)
+	lockedSource(tree, "Bad", 1000)
 	local acks: { { string } } = {}
 	local polls = 0
 	local connection = Connection.new(
@@ -1092,7 +1110,7 @@ do
 			and last.state == "Warning"
 			and last.detail ~= nil
 			and string.find(last.detail, "patch rejected: Bad.luau: ", 1, true) == 1
-			and string.find(last.detail, "non-script Folder", 1, true) ~= nil,
+			and string.find(last.detail, "Source is locked", 1, true) ~= nil,
 		if last ~= nil then tostring(last.detail) else "no state reported"
 	)
 	check("a rejected text patch is left out of the ack", #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau")
@@ -1101,7 +1119,7 @@ end
 do
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
-	local folder = place(tree, "Folder", "Bad", root)
+	lockedSource(tree, "Bad", 1)
 	local bad = { kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" }
 	local polls = 0
 	local connection = Connection.new(
@@ -1112,7 +1130,6 @@ do
 					return { cursor = 1, patches = { bad } }
 				end
 				if polls == 2 then
-					tree.destroy(folder)
 					return { cursor = 2, patches = { bad } }
 				end
 				error("stop")
@@ -1564,8 +1581,8 @@ do
 	connection.session = 1
 	pcall(connection._serve, connection, 1)
 	check(
-		"a patch blocked by a same-named folder is not acked",
-		#acked == 1 and acked[1] == "Other.luau",
+		"a same-named folder does not block a patch, so it is acked",
+		#acked == 2 and acked[1] == "Utils.luau" and acked[2] == "Other.luau",
 		"acked " .. table.concat(acked, ",")
 	)
 end

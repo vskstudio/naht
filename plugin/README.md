@@ -45,8 +45,8 @@ Behaviour notes:
   reverting a source to the value the daemon last sent is pushed as a real edit.
 - An upsert matches an existing child by name and expected class. A same-named script of another class
   is replaced (its children move to the new script). A same-named non-script (a `Folder`, for example)
-  blocks the patch: nothing is written and the patch is not acknowledged. A folder and a script with the
-  same name cannot both be synced.
+  is a sibling and never blocks the patch: `Foo/` and `Foo.luau` coexist, the way the daemon writes them.
+  Only a Studio error while writing the source rejects a patch.
 - Folders on the way to a file are matched only against non-script containers. A `Script` named `Foo`
   never hides a `Folder` named `Foo`: `Foo/Bar.luau` goes under the folder.
 - Instance names containing `/`, `\` or NUL are not synced, because they would split into extra

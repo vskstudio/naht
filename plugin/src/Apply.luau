@@ -116,14 +116,11 @@ function Applier._scriptNode(self, parent: Node, leafName: string, class: string
 	local matching: Node? = nil
 	local stale: { Node } = {}
 	for _, child in tree.children(parent) do
-		if child.Name == leafName then
-			local childClass = tree.className(child)
-			if childClass == class then
+		if child.Name == leafName and SCRIPT_CLASSES[tree.className(child)] then
+			if tree.className(child) == class then
 				matching = matching or child
-			elseif SCRIPT_CLASSES[childClass] then
-				table.insert(stale, child)
 			else
-				error(string.format("%s is a non-script %s, so it blocks the %s patch", leafName, childClass, class))
+				table.insert(stale, child)
 			end
 		end
 	end
