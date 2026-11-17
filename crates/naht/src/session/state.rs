@@ -44,7 +44,7 @@ impl Session {
         }
     }
 
-    /// The handshake payload for `GET /info`.
+    /// The identity payload used by heartbeats, without the conflicted list.
     pub fn info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: PROTOCOL_VERSION,
@@ -52,7 +52,24 @@ impl Session {
             project_name: self.project_name.clone(),
             session_id: self.id.clone(),
             serve_place_id: self.serve_place_id,
+            conflicted: Vec::new(),
         }
+    }
+
+    /// The handshake payload for `GET /info`, carrying every path still frozen in the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] when the conflicted records cannot be read.
+    pub fn handshake_info(&self) -> Result<ServerInfo, SessionError> {
+        let mut info = self.info();
+        info.conflicted = self
+            .store
+            .conflicted()?
+            .into_iter()
+            .map(|record| record.path)
+            .collect();
+        Ok(info)
     }
 
     /// The place id this session is bound to, if any.
@@ -81,5 +98,39 @@ impl Session {
             .into_iter()
             .map(|record| (record.path.clone(), record))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use naht_core::state::{InstanceRecord, StateStore};
+
+    use crate::session::Session;
+
+    fn record(path: &str, conflicted: bool) -> InstanceRecord {
+        InstanceRecord {
+            guid: format!("guid-{path}"),
+            path: path.to_owned(),
+            class: "ModuleScript".to_owned(),
+            content_hash: "hash".to_owned(),
+            base_content: Some(b"base".to_vec()),
+            mtime: 0,
+            conflicted,
+        }
+    }
+
+    #[test]
+    fn handshake_info_lists_the_frozen_paths_after_a_restart() {
+        let store = StateStore::open_in_memory().unwrap();
+        store.upsert(&record("Frozen.luau", true)).unwrap();
+        store.upsert(&record("Clean.luau", false)).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let session = Session::new(root.path(), store, "demo", None, false);
+
+        assert_eq!(
+            session.handshake_info().unwrap().conflicted,
+            vec!["Frozen.luau".to_owned()]
+        );
+        assert_eq!(session.info().conflicted, Vec::<String>::new());
     }
 }

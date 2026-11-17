@@ -1,15 +1,4 @@
 --!strict
--- Build and parse the wire messages, on top of the MessagePack codec.
---
--- Mirrors the daemon's `naht-core::protocol` types. A Studio-side change is expressed as an
--- `Upsert`/`Delete` and encoded into the externally-tagged shape serde expects:
--- `{ Upsert = { path, class, content } }` / `{ Delete = { path } }`.
-
-local MessagePack = require(if script ~= nil then script.Parent.MessagePack else "./MessagePack")
-
-local Protocol = {}
-
-Protocol.PROTOCOL_VERSION = 1
 
 export type ServerInfo = {
 	protocol_version: number,
@@ -17,6 +6,7 @@ export type ServerInfo = {
 	project_name: string,
 	session_id: string,
 	serve_place_id: number?,
+	conflicted: { string }?,
 }
 
 export type Patch = {
@@ -39,7 +29,6 @@ export type Change = {
 	content: string?,
 }
 
--- One opaque binary blob (terrain voxels), its `content` a raw byte string.
 export type BlobInstance = {
 	path: string,
 	class: string,
@@ -59,83 +48,88 @@ export type BlobPatchBatch = {
 	patches: { BlobPatch },
 }
 
--- Decode a `GET /info` body.
-function Protocol.decodeInfo(bytes: string): ServerInfo
-	return MessagePack.decode(bytes)
-end
+export type Codec = {
+	encode: (value: any) -> string,
+	decode: (bytes: string) -> any,
+	array: (items: { any }) -> any,
+	binary: (bytes: string) -> any,
+}
 
--- Reject an incompatible daemon before any sync request can interpret a changed wire shape.
-function Protocol.assertCompatible(info: ServerInfo): ServerInfo
-	if info.protocol_version ~= Protocol.PROTOCOL_VERSION then
-		error(
-			"naht: incompatible protocol version (daemon "
-				.. tostring(info.protocol_version)
-				.. ", plugin "
-				.. tostring(Protocol.PROTOCOL_VERSION)
-				.. ")"
-		)
+local PROTOCOL_VERSION = 1
+
+local function new(MessagePack: Codec)
+	local Protocol = {}
+
+	Protocol.PROTOCOL_VERSION = PROTOCOL_VERSION
+
+	function Protocol.decodeInfo(bytes: string): ServerInfo
+		return MessagePack.decode(bytes)
 	end
-	return info
-end
 
--- Decode a `GET /patches` body.
-function Protocol.decodePatches(bytes: string): PatchBatch
-	return MessagePack.decode(bytes)
-end
-
--- Decode a `GET /blobs` body (terrain blobs). `content` decodes as a raw byte string from MessagePack
--- bin, so the voxel bytes survive untouched.
-function Protocol.decodeBlobs(bytes: string): BlobPatchBatch
-	return MessagePack.decode(bytes)
-end
-
--- Encode a batch of Studio-side blobs into a `POST /blobs` body. Each `content` is a raw byte string
--- carried as a MessagePack binary, matching the daemon's `serde_bytes` blob field.
-function Protocol.encodeBlobs(changes: { BlobInstance }): string
-	local wire = {}
-	for _, change in changes do
-		table.insert(wire, {
-			path = change.path,
-			class = change.class,
-			content = MessagePack.binary(change.content),
-		})
+	function Protocol.assertCompatible(info: ServerInfo): ServerInfo
+		if info.protocol_version ~= Protocol.PROTOCOL_VERSION then
+			error(
+				"naht: incompatible protocol version (daemon "
+					.. tostring(info.protocol_version)
+					.. ", plugin "
+					.. tostring(Protocol.PROTOCOL_VERSION)
+					.. ")"
+			)
+		end
+		return info
 	end
-	return MessagePack.encode({ changes = MessagePack.array(wire) })
-end
 
--- A Studio-side upsert (instance created or source edited).
-function Protocol.upsert(path: string, class: string, content: string): Change
-	return { kind = "Upsert", path = path, class = class, content = content }
-end
+	function Protocol.decodePatches(bytes: string): PatchBatch
+		return MessagePack.decode(bytes)
+	end
 
--- A Studio-side deletion.
-function Protocol.delete(path: string): Change
-	return { kind = "Delete", path = path }
-end
+	function Protocol.decodeBlobs(bytes: string): BlobPatchBatch
+		return MessagePack.decode(bytes)
+	end
 
--- Encode the paths the plugin applied into a `POST /ack` body. Only acked paths advance the
--- daemon's base, so a patch that failed to apply must be left out.
-function Protocol.encodeAck(paths: { string }): string
-	return MessagePack.encode({ paths = MessagePack.array(paths) })
-end
-
--- Encode a batch of Studio-side changes into a `POST /changes` body.
-function Protocol.encodeChanges(changes: { Change }): string
-	local wire = {}
-	for _, change in changes do
-		if change.kind == "Delete" then
-			table.insert(wire, { Delete = { path = change.path } })
-		else
+	function Protocol.encodeBlobs(changes: { BlobInstance }): string
+		local wire = {}
+		for _, change in changes do
 			table.insert(wire, {
-				Upsert = {
-					path = change.path,
-					class = change.class,
-					content = change.content,
-				},
+				path = change.path,
+				class = change.class,
+				content = MessagePack.binary(change.content),
 			})
 		end
+		return MessagePack.encode({ changes = MessagePack.array(wire) })
 	end
-	return MessagePack.encode({ changes = MessagePack.array(wire) })
+
+	function Protocol.upsert(path: string, class: string, content: string): Change
+		return { kind = "Upsert", path = path, class = class, content = content }
+	end
+
+	function Protocol.delete(path: string): Change
+		return { kind = "Delete", path = path }
+	end
+
+	function Protocol.encodeAck(paths: { string }): string
+		return MessagePack.encode({ paths = MessagePack.array(paths) })
+	end
+
+	function Protocol.encodeChanges(changes: { Change }): string
+		local wire = {}
+		for _, change in changes do
+			if change.kind == "Delete" then
+				table.insert(wire, { Delete = { path = change.path } })
+			else
+				table.insert(wire, {
+					Upsert = {
+						path = change.path,
+						class = change.class,
+						content = change.content,
+					},
+				})
+			end
+		end
+		return MessagePack.encode({ changes = MessagePack.array(wire) })
+	end
+
+	return Protocol
 end
 
-return Protocol
+return { new = new }

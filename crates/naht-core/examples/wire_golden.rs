@@ -39,6 +39,7 @@ fn main() -> Result<(), GoldenError> {
         project_name: "demo".to_owned(),
         session_id: "abc".to_owned(),
         serve_place_id: Some(123),
+        conflicted: Vec::new(),
     };
     hex(&mut out, "server_info", &protocol::to_msgpack(&info)?)?;
 

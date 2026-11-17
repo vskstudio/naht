@@ -54,3 +54,55 @@ pub enum ProjectPathError {
     #[error("drive prefixes are not allowed")]
     DrivePrefix,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ProjectPathError, validate_project_path};
+
+    const FIXTURE: &str = include_str!("../../tests/fixtures/project_path_names.json");
+
+    fn fixture_names(key: &str) -> Vec<String> {
+        let fixture: serde_json::Value =
+            serde_json::from_str(FIXTURE).expect("fixture is valid JSON");
+        fixture[key]
+            .as_array()
+            .expect("fixture key is an array")
+            .iter()
+            .map(|name| name.as_str().expect("fixture name is a string").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn folder_names_the_daemon_refuses_are_refused_as_a_segment() {
+        for name in fixture_names("refused") {
+            let path = format!("Dir/{name}/Leaf.luau");
+            assert!(
+                validate_project_path(&path).is_err(),
+                "daemon accepted {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn folder_names_the_daemon_accepts_are_accepted_as_a_segment() {
+        for name in fixture_names("accepted") {
+            let path = format!("Dir/{name}/Leaf.luau");
+            assert!(
+                validate_project_path(&path).is_ok(),
+                "daemon refused {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_middle_segments_are_refused_as_empty_components() {
+        for name in ["", "\\", "a//b"] {
+            let path = format!("Dir/{name}/Leaf.luau");
+            assert_eq!(
+                validate_project_path(&path),
+                Err(ProjectPathError::EmptyComponent),
+                "{name:?}"
+            );
+        }
+    }
+}

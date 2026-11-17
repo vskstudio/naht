@@ -1,15 +1,14 @@
 --!strict
--- The Naht Studio plugin entry point: a toolbar toggle and a small status widget over the
--- connection loop. All transport and apply logic lives in the sibling modules; this script is just
--- wiring and a view.
 
 local ServerStorage = game:GetService("ServerStorage")
 
 local Client = require(script.Parent.Client)
+local Apply = require(script.Parent.Apply)
 local Connection = require(script.Parent.Connection)
+local MessagePack = require(script.Parent.MessagePack)
+local Protocol = require(script.Parent.Protocol).new(MessagePack)
+local Terrain = require(script.Parent.Terrain)
 
--- Where synced source lives in the DataModel, and the daemon to talk to. The full configurable
--- mapping lands later; for v1 the project tree mirrors under one folder.
 local BASE_URL = "http://localhost:34872"
 local ROOT_FOLDER = "Naht"
 
@@ -18,6 +17,7 @@ local STATE_COLOR = {
 	Connected = Color3.fromRGB(80, 200, 120),
 	Reconnecting = Color3.fromRGB(220, 140, 60),
 	Conflict = Color3.fromRGB(220, 80, 80),
+	Warning = Color3.fromRGB(230, 120, 40),
 	Disconnected = Color3.fromRGB(150, 150, 150),
 }
 
@@ -63,7 +63,13 @@ end
 local function connect()
 	local root = ensureRoot()
 	local client = Client.new(BASE_URL)
-	connection = Connection.new(client, root, game.PlaceId, setState)
+	connection = Connection.new(client, root, game.PlaceId, setState, {
+		terrain = workspace.Terrain,
+		tree = Apply.studioTree(root),
+		apply = Apply,
+		protocol = Protocol,
+		terrainBlob = Terrain,
+	})
 	connection:start()
 	widget.Enabled = true
 end

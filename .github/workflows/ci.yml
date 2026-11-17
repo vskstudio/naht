@@ -23,6 +23,7 @@ jobs:
   rust:
     name: fmt + clippy + test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
         with:
@@ -44,6 +45,7 @@ jobs:
   site:
     name: site build + test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: site
@@ -71,6 +73,7 @@ jobs:
   plugin:
     name: plugin headless harness
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
         with:
@@ -91,11 +94,12 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/lune" --version
       - name: Run plugin harness
-        run: lune run plugin/tests/run.luau
+        run: timeout 300 lune run plugin/tests/run.luau
 
   docker:
     name: site image build + scan
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     # Verifies the production Dockerfile builds and is free of HIGH/CRITICAL CVEs.
     # Builds locally only, the image is NEVER pushed to a registry from CI.
     steps:

@@ -200,7 +200,7 @@ fn handshake(session: &mut Session, place_id: Option<u64>) -> Result<ServerInfo,
         });
     }
     session.rescan()?;
-    Ok(session.info())
+    Ok(session.handshake_info()?)
 }
 
 #[derive(Deserialize)]
@@ -243,11 +243,17 @@ async fn changes(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
 }
 
 fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, Rejection> {
-    for change in &batch.changes {
-        let path = match change {
+    let refused: Vec<String> = batch
+        .changes
+        .iter()
+        .map(|change| match change {
             protocol::Change::Upsert { path, .. } | protocol::Change::Delete { path } => path,
-        };
-        session.validate_path(path)?;
+        })
+        .filter(|path| session.validate_path(path).is_err())
+        .cloned()
+        .collect();
+    if !refused.is_empty() {
+        return Err(Rejection::RefusedPaths(refused));
     }
     let count = batch.changes.len();
     session.apply_changes(batch.changes)?;
@@ -364,6 +370,8 @@ enum Rejection {
     Malformed(#[source] ProtocolError),
     #[error(transparent)]
     InvalidPath(#[from] VfsError),
+    #[error("refused project paths: {0:?}")]
+    RefusedPaths(Vec<String>),
     #[error("place id mismatch: project serves {expected}, plugin reported {reported:?}")]
     PlaceMismatch {
         expected: u64,
@@ -380,7 +388,9 @@ enum Rejection {
 impl Rejection {
     fn status(&self) -> StatusCode {
         match self {
-            Self::Malformed(_) | Self::InvalidPath(_) => StatusCode::BAD_REQUEST,
+            Self::Malformed(_) | Self::InvalidPath(_) | Self::RefusedPaths(_) => {
+                StatusCode::BAD_REQUEST
+            }
             Self::PlaceMismatch { .. } => StatusCode::FORBIDDEN,
             Self::Encode(_) | Self::Session(_) | Self::Blocking(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -396,6 +406,15 @@ impl IntoResponse for Rejection {
             tracing::error!(target: "naht::server", status = status.as_u16(), error = ?self, "request failed");
             return (status, "internal server error").into_response();
         }
+        if let Self::RefusedPaths(refused_paths) = &self {
+            let body = serde_json::json!({ "refused_paths": refused_paths });
+            return (
+                status,
+                [(header::CONTENT_TYPE, "application/json")],
+                body.to_string(),
+            )
+                .into_response();
+        }
         (status, self.to_string()).into_response()
     }
 }
@@ -404,7 +423,7 @@ impl IntoResponse for Rejection {
 mod tests {
     use std::path::PathBuf;
 
-    use axum::body::Body;
+    use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use naht_core::state::StateStore;
     use tower::ServiceExt;
@@ -440,6 +459,40 @@ mod tests {
         assert_eq!(
             post_blobs_status(BODY_LIMIT + 1).await,
             StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
+
+    #[tokio::test]
+    async fn text_batches_name_every_refused_path_in_the_body() {
+        use naht_core::protocol::{Change, ChangeBatch};
+
+        let batch = ChangeBatch {
+            changes: vec![
+                Change::Upsert {
+                    path: "Good.luau".to_owned(),
+                    class: "ModuleScript".to_owned(),
+                    content: "return 1".to_owned(),
+                },
+                Change::Upsert {
+                    path: "Config: v2/Leaf.luau".to_owned(),
+                    class: "ModuleScript".to_owned(),
+                    content: "return 2".to_owned(),
+                },
+                Change::Delete {
+                    path: "a:b.luau".to_owned(),
+                },
+            ],
+        };
+        let body = protocol::to_msgpack(&batch).unwrap();
+        let request = Request::post("/changes").body(Body::from(body)).unwrap();
+        let response = router(test_state()).oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let refused: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            refused["refused_paths"],
+            serde_json::json!(["Config: v2/Leaf.luau", "a:b.luau"])
         );
     }
 }
