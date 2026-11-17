@@ -101,7 +101,8 @@ Behaviour notes:
   30 seconds, with the same Warning each time, until three abandonments in a row. The third one stops the automatic
   re-send: the batch stays in pending, and the widget shows `Warning` with `push held: the daemon is not answering,
   the batch is sent on the next edit or reconnect`. The next Studio edit or a reconnect sends it. Any accepted post
-  resets the count. Stop does not cancel a post in flight; only a reply or the watchdog
+  resets the count. A late success from an abandoned post also resets it, since that proves the daemon answers, even
+  while a newer post is still hung. Stop does not cancel a post in flight; only a reply or the watchdog
   does. A late reply from an abandoned post is ignored by the plugin's state, and the re-sent batch is an idempotent
   duplicate of it. A late reply can still land on the daemon after a newer post for the same path, so the daemon can
   end up holding the older content for that path until the next edit to it.
