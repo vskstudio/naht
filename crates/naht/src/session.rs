@@ -25,6 +25,7 @@ use naht_core::reconciler::{Patch, ReconcileError, TextInstance};
 use naht_core::state::{StateError, StateStore};
 use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -43,6 +44,13 @@ pub enum SessionError {
     /// The operating system could not supply the random daemon id.
     #[error("cannot generate a daemon id: {0}")]
     DaemonId(#[from] RandomError),
+    /// A configured source root has a `..`, a root or a drive prefix, so it cannot name a folder
+    /// inside the project.
+    #[error("source root `{}` must stay inside the project root", path.display())]
+    SourceRootOutsideRoot {
+        /// The source root as configured.
+        path: PathBuf,
+    },
 }
 
 const PROJECT_ROOT: &str = "";

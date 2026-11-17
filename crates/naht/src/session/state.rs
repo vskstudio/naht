@@ -113,9 +113,24 @@ impl Session {
     }
 
     /// Protects configured source directories from the emptied-directory removal a batch may trigger.
-    pub fn protect_source_roots(&mut self, roots: impl IntoIterator<Item = PathBuf>) {
-        self.source_roots
-            .extend(roots.into_iter().map(|root| case_folded_key(&root)));
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::SourceRootOutsideRoot`] when a root has a `..`, a root or a prefix
+    /// component. No root of that call is protected.
+    pub fn protect_source_roots(
+        &mut self,
+        roots: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<(), SessionError> {
+        let keys = roots
+            .into_iter()
+            .map(|root| {
+                source_root_key(&root)
+                    .ok_or_else(|| SessionError::SourceRootOutsideRoot { path: root })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.source_roots.extend(keys);
+        Ok(())
     }
 
     pub(super) fn may_remove_emptied_dir(&self, dir: &Path) -> bool {
@@ -123,7 +138,7 @@ impl Session {
     }
 
     pub(super) fn may_remove_init_folder(&self, dir: &Path) -> bool {
-        !self.source_roots.contains(&case_folded_key(dir))
+        source_root_key(dir).is_some_and(|key| !self.source_roots.contains(&key))
     }
 
     /// Whether `path` is currently a directory on disk, so a file batch cannot write over it.
@@ -152,17 +167,16 @@ impl Session {
     }
 }
 
-fn case_folded_key(path: &Path) -> String {
-    path.components()
-        .filter_map(|component| match component {
-            Component::Normal(name) => Some(name.to_string_lossy().to_lowercase()),
-            Component::Prefix(_)
-            | Component::RootDir
-            | Component::CurDir
-            | Component::ParentDir => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
+fn source_root_key(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(name) => parts.push(name.to_string_lossy().to_lowercase()),
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 #[cfg(test)]
@@ -206,7 +220,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = StateStore::open_in_memory().unwrap();
         let mut session = Session::new(root.path(), store, "demo", None, false).unwrap();
-        session.protect_source_roots([PathBuf::from("packages/Shared")]);
+        session
+            .protect_source_roots([PathBuf::from("packages/Shared")])
+            .unwrap();
         session
             .apply_changes(vec![Change::Upsert {
                 path: "packages/Shared/A.luau".to_owned(),
@@ -225,11 +241,44 @@ mod tests {
     }
 
     #[test]
+    fn a_source_root_that_leaves_the_project_is_refused_rather_than_folded() {
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::open_in_memory().unwrap();
+        let mut session = Session::new(root.path(), store, "demo", None, false).unwrap();
+
+        for spelling in ["a/../src", "../src", "/abs/src"] {
+            assert!(
+                session
+                    .protect_source_roots([PathBuf::from(spelling)])
+                    .is_err(),
+                "`{spelling}` was accepted as a source root"
+            );
+        }
+        assert!(session.may_remove_init_folder(Path::new("src")));
+        assert!(session.may_remove_init_folder(Path::new("a/src")));
+    }
+
+    #[test]
+    fn a_refused_source_root_protects_none_of_the_roots_in_its_call() {
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::open_in_memory().unwrap();
+        let mut session = Session::new(root.path(), store, "demo", None, false).unwrap();
+
+        let refused = session
+            .protect_source_roots([PathBuf::from("packages/Shared"), PathBuf::from("a/../src")]);
+
+        assert!(refused.is_err());
+        assert!(session.may_remove_init_folder(Path::new("packages/Shared")));
+    }
+
+    #[test]
     fn a_source_root_configured_in_one_case_protects_the_folder_in_another() {
         let root = tempfile::tempdir().unwrap();
         let store = StateStore::open_in_memory().unwrap();
         let mut session = Session::new(root.path(), store, "demo", None, false).unwrap();
-        session.protect_source_roots([PathBuf::from("packages/Shared")]);
+        session
+            .protect_source_roots([PathBuf::from("packages/Shared")])
+            .unwrap();
 
         assert!(!session.may_remove_emptied_dir(Path::new("packages/shared")));
     }

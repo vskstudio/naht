@@ -183,7 +183,9 @@ fn a_configured_source_root_spelled_with_a_dot_keeps_its_folder_when_only_its_in
     fs::write(root.path().join("src").join("init.luau"), "return 1").unwrap();
     let mut session = session_in(root.path());
     session.rescan().unwrap();
-    session.protect_source_roots([PathBuf::from("./src")]);
+    session
+        .protect_source_roots([PathBuf::from("./src")])
+        .unwrap();
     session
         .apply_changes(vec![upsert("src.luau", "return 1")])
         .unwrap();
@@ -202,7 +204,9 @@ fn a_configured_nested_source_root_spelled_with_a_dot_keeps_its_directory_when_i
     session
         .apply_changes(vec![upsert("packages/Shared/A.luau", "return 1")])
         .unwrap();
-    session.protect_source_roots([PathBuf::from("./packages/Shared")]);
+    session
+        .protect_source_roots([PathBuf::from("./packages/Shared")])
+        .unwrap();
 
     session
         .apply_changes(vec![delete("packages/Shared/A.luau")])
