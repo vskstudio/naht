@@ -63,6 +63,11 @@ Behaviour notes:
 - Terrain larger than 1,048,576 voxels at 4-stud resolution is not pushed live. The widget shows
   `Warning` with `terrain too large for live push, use naht build`, and the widget returns to `Connected`
   once a push fits under the cap.
+- The initial terrain snapshot is retried with an exponential backoff from 1 second up to a cap of 60 seconds
+  until the daemon accepts it. Each failed attempt sets the widget to `Warning` with `terrain push failed: <reason>`,
+  and the next success clears it. Stop or a reconnect ends the retry.
+- If polling the terrain blob stream fails while sync is running, the widget shows `Warning` with
+  `terrain blob poll failed: <reason>` and blob sync stops until the next reconnect.
 - The reconnect backoff restarts (from 1 second) only after a poll completes, so a daemon that
   answers `/info` and then fails on `/patches` keeps backing off.
 
