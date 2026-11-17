@@ -2311,6 +2311,151 @@ do
 	)
 end
 
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local posts: { { string } } = {}
+	local accepted: { string } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				local paths = {}
+				for _, change in changes do
+					table.insert(paths, change.path)
+				end
+				table.insert(posts, paths)
+				if table.find(paths, "Config: v2/Leaf.luau") ~= nil then
+					error({
+						status = 400,
+						message = "naht: /changes returned 400",
+						refused = { "Config: v2/Leaf.luau" },
+					})
+				end
+				for _, path in paths do
+					table.insert(accepted, path)
+				end
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["Good.luau"] = Protocol.upsert("Good.luau", "ModuleScript", "G")
+	connection.pendingPush["Config: v2/Leaf.luau"] = Protocol.upsert("Config: v2/Leaf.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(0.8)
+	connection.running = false
+	local refusedPosts = 0
+	for _, paths in posts do
+		if table.find(paths, "Config: v2/Leaf.luau") ~= nil then
+			refusedPosts += 1
+		end
+	end
+	check(
+		"a path the daemon refuses is posted once and never retried",
+		refusedPosts == 1,
+		string.format("posted %d times", refusedPosts)
+	)
+	check(
+		"the good path in the same batch is accepted after the refusal",
+		table.find(accepted, "Good.luau") ~= nil,
+		table.concat(accepted, ",")
+	)
+	local warnedText = table.concat(warningsOf(log), "\n")
+	check(
+		"the refused path is named in a Warning",
+		string.find(warnedText, "Config: v2/Leaf.luau", 1, true) ~= nil,
+		warnedText
+	)
+	check(
+		"the refused path is not merged back into the pending pushes",
+		connection.pendingPush["Config: v2/Leaf.luau"] == nil,
+		"still pending"
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local attempts = 0
+	local keptEveryTime = true
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				attempts += 1
+				if #changes ~= 1 or changes[1].path ~= "old.luau" then
+					keptEveryTime = false
+				end
+				if attempts <= 2 then
+					error({ status = 503, message = "naht: /changes returned 503", refused = {} })
+				end
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["old.luau"] = Protocol.delete("old.luau")
+	connection:_schedulePush()
+	task.wait(0.6)
+	connection.running = false
+	check(
+		"a 503 raised as a status error keeps the batch and retries it",
+		attempts == 3 and keptEveryTime,
+		string.format("attempts %d, kept %s", attempts, tostring(keptEveryTime))
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local attempts = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, _changes)
+				attempts += 1
+				error({ status = 400, message = "naht: /changes returned 400", refused = {} })
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(0.6)
+	connection.running = false
+	check(
+		"a 400 that names no path drops the batch after one attempt",
+		attempts == 1 and next(connection.pendingPush) == nil,
+		string.format("attempts %d", attempts)
+	)
+	local refusalText = table.concat(warningsOf(log), "\n")
+	check(
+		"a 400 that names no path sets a Warning with the refusal",
+		string.find(refusalText, "naht: /changes returned 400", 1, true) ~= nil,
+		refusalText
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end

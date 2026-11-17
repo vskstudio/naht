@@ -73,10 +73,16 @@ Behaviour notes:
   the daemon should be restarted. The cursor is never skipped, so the poll keeps backing off, and a later success clears it.
 - The reconnect backoff restarts (from 1 second) only after a poll completes, so a daemon that
   answers `/info` and then fails on `/patches` keeps backing off.
-- A studio edit whose push the daemon refuses (for example with a 503) keeps its batch. It is retried with an
-  exponential backoff from 2 seconds up to a cap of 60 seconds, and the widget shows `Warning` with
-  `push failed: <reason>` until a push succeeds. An ack the daemon refuses is retried the same way with
-  `ack failed: <reason>`, and its paths stay unacked until the ack succeeds.
+- A studio edit whose push fails transiently (a 408, 500, 502, 503 or 504, or a network failure) keeps its batch.
+  It is retried with an exponential backoff from 2 seconds up to a cap of 60 seconds, and the widget shows
+  `Warning` with `push failed: <reason>` until a push succeeds.
+- A studio edit whose push the daemon refuses with any other status is not retried. The daemon names the paths
+  it refused in its 400 body, so those paths are dropped and the widget shows `Warning` naming each one as
+  `not synced, the daemon refused <path>`, while the rest of the batch is sent. A refusal that names no path
+  drops the whole batch with `push refused, batch not synced: <reason>`. Dropped edits are never merged back,
+  and their Warnings stay until Stop.
+- An ack the daemon refuses is retried the same way with `ack failed: <reason>`, and its paths stay unacked
+  until the ack succeeds.
 
 ## Tests
 

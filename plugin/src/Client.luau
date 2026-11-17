@@ -88,6 +88,16 @@ function Client.postAck(self: Client, paths: { string })
 	end
 end
 
+local function refusedPaths(body: string?): { string }
+	local ok, decoded = pcall(function()
+		return HttpService:JSONDecode(body or "")
+	end)
+	if not ok or type(decoded) ~= "table" or type(decoded.refused_paths) ~= "table" then
+		return {}
+	end
+	return decoded.refused_paths
+end
+
 function Client.postChanges(self: Client, changes: { any })
 	local response = request(self, {
 		Url = "/changes",
@@ -96,7 +106,11 @@ function Client.postChanges(self: Client, changes: { any })
 		Body = Protocol.encodeChanges(changes),
 	})
 	if not response.Success then
-		error("naht: /changes returned " .. tostring(response.StatusCode))
+		error({
+			status = response.StatusCode,
+			message = "naht: /changes returned " .. tostring(response.StatusCode),
+			refused = refusedPaths(response.Body),
+		})
 	end
 end
 

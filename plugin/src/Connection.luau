@@ -28,8 +28,31 @@ local CLASS_SUFFIX = {
 local UNSAFE_NAME_CHARACTERS = { "/", "\\", "\0" }
 local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
 
+local TRANSIENT_STATUSES = { [408] = true, [500] = true, [502] = true, [503] = true, [504] = true }
+
 local function doubled(current: number, max: number): number
 	return math.min(current * 2, max)
+end
+
+local function isTransientFailure(err: any): boolean
+	if type(err) ~= "table" or err.status == nil then
+		return true
+	end
+	return TRANSIENT_STATUSES[err.status] == true
+end
+
+local function failureMessage(err: any): string
+	if type(err) == "table" then
+		return tostring(err.message)
+	end
+	return tostring(err)
+end
+
+local function refusedPathsOf(err: any): { string }
+	if type(err) ~= "table" or type(err.refused) ~= "table" then
+		return {}
+	end
+	return err.refused
 end
 
 local function isSafeName(name: string): boolean
@@ -567,40 +590,66 @@ function Connection._schedulePush(self, delay: number?)
 end
 
 function Connection._flushPush(self, session: number)
-	local sent = self.pendingPush
+	local remaining = self.pendingPush
 	self.pendingPush = {}
-	local changes = {}
-	for _, change in sent do
-		table.insert(changes, change)
-	end
-	if #changes == 0 then
-		return
-	end
-	self.pushInFlight = true
-	local ok, err = pcall(function()
-		self.client:postChanges(changes)
-	end)
-	self.pushInFlight = false
-	if not self:_isCurrent(session) then
-		return
-	end
-	if ok then
-		self.pushBackoff = PUSH_RETRY
-		self:_clearWarning("push")
-		if next(self.pendingPush) ~= nil then
-			self:_schedulePush()
+	while next(remaining) ~= nil do
+		local changes = {}
+		for _, change in remaining do
+			table.insert(changes, change)
 		end
-		return
+		self.pushInFlight = true
+		local ok, err = pcall(function()
+			self.client:postChanges(changes)
+		end)
+		self.pushInFlight = false
+		if not self:_isCurrent(session) then
+			return
+		end
+		if ok then
+			self.pushBackoff = PUSH_RETRY
+			self:_clearWarning("push")
+			if next(self.pendingPush) ~= nil then
+				self:_schedulePush()
+			end
+			return
+		end
+		if isTransientFailure(err) then
+			self:_setWarning("push", "push failed: " .. failureMessage(err))
+			for path, change in remaining do
+				if self.pendingPush[path] == nil then
+					self.pendingPush[path] = change
+				end
+			end
+			local delay = self.pushBackoff
+			self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+			self:_schedulePush(delay)
+			return
+		end
+		remaining = self:_dropRefused(remaining, err)
 	end
-	self:_setWarning("push", "push failed: " .. tostring(err))
-	for path, change in sent do
-		if self.pendingPush[path] == nil then
-			self.pendingPush[path] = change
+end
+
+function Connection._dropRefused(self, remaining: { [string]: any }, err: any): { [string]: any }
+	local named = {}
+	for _, path in refusedPathsOf(err) do
+		if remaining[path] ~= nil then
+			named[path] = true
 		end
 	end
-	local delay = self.pushBackoff
-	self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
-	self:_schedulePush(delay)
+	local kept = {}
+	if next(named) == nil then
+		self:_setWarning("refused:batch", "push refused, batch not synced: " .. failureMessage(err))
+		return kept
+	end
+	for path, change in remaining do
+		if named[path] == nil then
+			kept[path] = change
+		end
+	end
+	for path in named do
+		self:_setWarning("refused:" .. path, "not synced, the daemon refused " .. path .. ": " .. failureMessage(err))
+	end
+	return kept
 end
 
 return Connection
