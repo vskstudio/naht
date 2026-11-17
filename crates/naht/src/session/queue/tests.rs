@@ -106,6 +106,23 @@ fn an_unchanged_patch_keeps_its_delivered_seq_across_a_rescan() {
     assert_eq!(patches[0].patch.path, "B.luau");
 }
 
+#[test]
+fn a_delivered_unacked_patch_is_redelivered_to_a_restarted_plugin() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_in(root.path());
+    fs::write(root.path().join("A.luau"), "one").unwrap();
+    session.rescan().unwrap();
+    let (cursor, delivered) = session.take_patches(0);
+    assert_eq!(delivered.len(), 1);
+    session.rescan().unwrap();
+    assert_eq!(session.take_patches(cursor).1.len(), 0);
+
+    let (_, replay) = session.take_patches(0);
+
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0].patch.path, "A.luau");
+}
+
 #[derive(Clone, Default)]
 struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
 
