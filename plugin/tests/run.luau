@@ -954,6 +954,43 @@ suite("stop during a patch poll applies nothing", function()
 		check("stop during a patch poll acks nothing", acks == 0)
 end)
 
+suite("a reshape while the daemon's patch is being applied queues nothing", function()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new({
+		postChanges = function(_, _changes) end,
+	}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_attachStudio()
+	local folder = newNode("ModuleScript", "Folder")
+	folder.Parent = root
+	table.insert(root.children, folder)
+	local child = newNode("ModuleScript", "Child")
+	child.Parent = folder
+	table.insert(folder.children, child)
+
+	connection.applying = true
+	root.DescendantAdded:Fire(child)
+	local queuedWhileApplying = next(connection.pendingPush)
+	connection.applying = false
+	connection.pendingPush = {}
+	root.DescendantAdded:Fire(child)
+	local queuedOutsideApply = connection.pendingPush["Folder.luau"] ~= nil
+	connection:stop()
+
+	check(
+		"a reshape while the daemon's patch is being applied queues nothing",
+		queuedWhileApplying == nil,
+		"queued " .. tostring(queuedWhileApplying)
+	)
+	check(
+		"the same reshape outside an apply queues the flat file's delete",
+		queuedOutsideApply,
+		"control did not reshape"
+	)
+end)
+
 suite("a pending push posts nothing after stop", function()
 		local posts = 0
 		local connection = fakeConnection({
