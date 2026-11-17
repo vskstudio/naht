@@ -99,13 +99,10 @@ pub async fn pull(root: &Path, config: &Config) -> Result<(), CommandError> {
         .map_or_else(|| config.port(), |recorded| recorded.port);
     let project = project_name(root, config);
     match fetch_info(port).await {
-        Ok(info) => match ownership(&info, &project, config.serve.place_id, recorded.as_ref()) {
-            Ownership::Ours => Ok(()),
-            Ownership::Foreign { project } => Err(CommandError::ForeignDaemon { port, project }),
-            Ownership::Stale { project } => Err(CommandError::StaleDaemon { port, project }),
-            Ownership::Missing => Err(CommandError::MissingPortFile { port }),
-            Ownership::Unverified => Err(CommandError::UnverifiedDaemon { port }),
-        },
+        Ok(info) => accept_verdict(
+            ownership(&info, &project, config.serve.place_id, recorded.as_ref()),
+            port,
+        ),
         Err(InfoFailure::Status(status)) => Err(CommandError::DaemonStatus { status }),
         Err(InfoFailure::Request(source)) => Err(CommandError::DaemonUnreachable {
             url: info_url(port),
@@ -227,9 +224,20 @@ fn ownership(
     }
 }
 
+fn accept_verdict(verdict: Ownership, port: u16) -> Result<(), CommandError> {
+    match verdict {
+        Ownership::Ours => Ok(()),
+        Ownership::Foreign { project } => Err(CommandError::ForeignDaemon { port, project }),
+        Ownership::Stale { project } => Err(CommandError::StaleDaemon { port, project }),
+        Ownership::Missing => Err(CommandError::MissingPortFile { port }),
+        Ownership::Unverified => Err(CommandError::UnverifiedDaemon { port }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{InfoFailure, Ownership, decode_info, fetch_info, ownership};
+    use super::{InfoFailure, Ownership, accept_verdict, decode_info, fetch_info, ownership};
+    use crate::commands::error::CommandError;
     use crate::daemon_port::Recorded;
     use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo, to_msgpack};
     use std::net::Ipv4Addr;
@@ -308,6 +316,15 @@ mod tests {
     fn a_missing_port_file_is_missing_not_unverified() {
         let verdict = ownership(&info("demo", None, "d-1"), "demo", None, None);
         assert_eq!(verdict, Ownership::Missing);
+    }
+
+    #[test]
+    fn a_missing_port_file_is_refused_as_missing_port_file() {
+        let error = accept_verdict(Ownership::Missing, 34872).unwrap_err();
+        assert!(matches!(
+            error,
+            CommandError::MissingPortFile { port: 34872 }
+        ));
     }
 
     #[test]
