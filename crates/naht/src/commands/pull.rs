@@ -2,21 +2,14 @@ use super::error::CommandError;
 use super::files::canonical;
 use crate::config::Config;
 use crate::daemon_port::{self, Recorded};
-use naht_core::protocol::{ServerInfo, from_msgpack, msgpack_field_names};
+use naht_core::protocol::{ServerInfo, from_msgpack};
 use reqwest::StatusCode;
+use serde::Deserialize;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::time::Duration;
 
 const NUDGE_TIMEOUT: Duration = Duration::from_secs(2);
-
-const OLDER_NAHT_FIELDS: [&str; 5] = [
-    "protocol_version",
-    "server_version",
-    "project_name",
-    "session_id",
-    "serve_place_id",
-];
 
 /// What a re-sync nudge found at the daemon recorded for a project.
 #[derive(Debug, PartialEq, Eq)]
@@ -138,20 +131,35 @@ async fn fetch_info(port: u16) -> Result<ServerInfo, InfoFailure> {
     decode_info(&bytes)
 }
 
+#[derive(Deserialize)]
+struct Answer {
+    protocol_version: u32,
+    server_version: String,
+    project_name: String,
+    session_id: String,
+    daemon_id: Option<String>,
+    serve_place_id: Option<u64>,
+    #[serde(default)]
+    conflicted: Vec<String>,
+}
+
+impl Answer {
+    fn into_info(self) -> Option<ServerInfo> {
+        Some(ServerInfo {
+            protocol_version: self.protocol_version,
+            server_version: self.server_version,
+            project_name: self.project_name,
+            session_id: self.session_id,
+            daemon_id: self.daemon_id?,
+            serve_place_id: self.serve_place_id,
+            conflicted: self.conflicted,
+        })
+    }
+}
+
 fn decode_info(bytes: &[u8]) -> Result<ServerInfo, InfoFailure> {
-    if let Ok(info) = from_msgpack::<ServerInfo>(bytes) {
-        return Ok(info);
-    }
-    let fields = msgpack_field_names(bytes).map_err(|_decode| InfoFailure::NotNaht)?;
-    let is_older_naht = OLDER_NAHT_FIELDS
-        .iter()
-        .all(|field| fields.contains(*field))
-        && !fields.contains("daemon_id");
-    if is_older_naht {
-        Err(InfoFailure::OlderNaht)
-    } else {
-        Err(InfoFailure::NotNaht)
-    }
+    let answer: Answer = from_msgpack(bytes).map_err(|_decode| InfoFailure::NotNaht)?;
+    answer.into_info().ok_or(InfoFailure::OlderNaht)
 }
 
 fn info_url(port: u16) -> String {
@@ -328,6 +336,16 @@ mod tests {
     fn a_current_info_payload_decodes() {
         let bytes = to_msgpack(&info("demo", None, "d-1")).unwrap();
         assert_eq!(decode_info(&bytes).ok(), Some(info("demo", None, "d-1")));
+    }
+
+    #[test]
+    fn an_info_payload_carries_the_frozen_paths_it_reports() {
+        let frozen = ServerInfo {
+            conflicted: vec!["Frozen.luau".to_owned()],
+            ..info("demo", None, "d-1")
+        };
+        let bytes = to_msgpack(&frozen).unwrap();
+        assert_eq!(decode_info(&bytes).ok(), Some(frozen));
     }
 
     #[test]

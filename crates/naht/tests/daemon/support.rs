@@ -11,6 +11,7 @@ use naht_core::protocol::{
 };
 use naht_core::state::StateStore;
 use std::fs;
+use std::iter::repeat_n;
 use tokio::net::TcpListener;
 
 use crate::wire;
@@ -113,6 +114,16 @@ impl Harness {
             .status()
     }
 
+    pub(crate) async fn post_changes_nested(&self, depth: usize) -> reqwest::StatusCode {
+        self.client
+            .post(format!("{}/changes", self.base))
+            .body(nested_map(depth))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
     pub(crate) async fn heartbeat(&self) -> Pong {
         decode(wire::heartbeat(&self.client, &self.base).await.unwrap()).await
     }
@@ -140,4 +151,11 @@ impl Harness {
             .collect();
         assert!(self.ack(paths).await.is_success());
     }
+}
+
+fn nested_map(depth: usize) -> Vec<u8> {
+    let mut bytes = vec![0x81, 0xa1, b'x'];
+    bytes.extend(repeat_n(0x91, depth));
+    bytes.push(0x00);
+    bytes
 }

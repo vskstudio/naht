@@ -5,10 +5,8 @@
 //! layer: nothing above this module names `MessagePack`. Field-named encoding (`to_vec_named`) keeps
 //! the wire self-describing, so the Luau side decodes by key rather than by positional offset.
 
-use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeSet;
-use std::fmt;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::binary::{BlobInstance, BlobPatch};
 use crate::reconciler::{Direction, Patch};
@@ -182,50 +180,47 @@ pub fn to_msgpack<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
 ///
 /// Returns [`ProtocolError::Decode`] when `bytes` is not a valid message of type `T`.
 pub fn from_msgpack<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError> {
-    Ok(rmp_serde::from_slice(bytes)?)
+    let mut deserializer = rmp_serde::Deserializer::from_read_ref(bytes);
+    deserializer.set_max_depth(MAX_MSGPACK_NESTING.saturating_add(1));
+    Ok(T::deserialize(&mut deserializer)?)
 }
 
-/// The field names of a `MessagePack` map, without decoding its values.
-///
-/// # Errors
-///
-/// Returns [`ProtocolError::Decode`] when `bytes` is not a `MessagePack` map.
-pub fn msgpack_field_names(bytes: &[u8]) -> Result<BTreeSet<String>, ProtocolError> {
-    let FieldNames(names) = rmp_serde::from_slice(bytes)?;
-    Ok(names)
-}
-
-struct FieldNames(BTreeSet<String>);
-
-impl<'de> Deserialize<'de> for FieldNames {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_map(FieldNamesVisitor).map(Self)
-    }
-}
-
-struct FieldNamesVisitor;
-
-impl<'de> Visitor<'de> for FieldNamesVisitor {
-    type Value = BTreeSet<String>;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a map")
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let mut names = BTreeSet::new();
-        while let Some(name) = map.next_key::<String>()? {
-            map.next_value::<IgnoredAny>()?;
-            names.insert(name);
-        }
-        Ok(names)
-    }
-}
+const MAX_MSGPACK_NESTING: usize = 32;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::reconciler::PatchKind;
+    use serde::de::IgnoredAny;
+    use std::iter::repeat_n;
+
+    fn nested_map(depth: usize) -> Vec<u8> {
+        let mut bytes = vec![0x81, 0xa1, b'x'];
+        bytes.extend(repeat_n(0x91, depth));
+        bytes.push(0x00);
+        bytes
+    }
+
+    fn nested_arrays(containers: usize) -> Vec<u8> {
+        let mut bytes = vec![0x91; containers];
+        bytes.push(0x00);
+        bytes
+    }
+
+    #[test]
+    fn a_message_nested_past_the_depth_limit_is_refused() {
+        let error = from_msgpack::<ServerInfo>(&nested_map(1000)).unwrap_err();
+        assert!(error.to_string().contains("depth limit"), "{error}");
+    }
+
+    #[test]
+    fn a_message_nested_to_the_limit_decodes_and_one_container_deeper_is_refused() {
+        let limit = MAX_MSGPACK_NESTING;
+        from_msgpack::<IgnoredAny>(&nested_arrays(limit)).unwrap();
+        let error =
+            from_msgpack::<IgnoredAny>(&nested_arrays(limit.saturating_add(1))).unwrap_err();
+        assert!(error.to_string().contains("depth limit"), "{error}");
+    }
 
     #[test]
     fn server_info_round_trips_through_msgpack() {
