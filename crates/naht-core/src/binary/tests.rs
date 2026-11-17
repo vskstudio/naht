@@ -4,7 +4,7 @@ use std::path::Path;
 use super::*;
 use crate::hash::content_hash;
 use crate::reconciler::{Direction, PatchKind, ReconcileError};
-use crate::state::StateStore;
+use crate::state::{InstanceRecord, StateStore};
 use crate::vfs::{MemoryVfs, Vfs, VfsError};
 use crate::walk::{Scan, Unseen};
 use std::path::PathBuf;
@@ -302,7 +302,7 @@ fn an_unseen_path_missing_from_the_studio_report_keeps_its_base() {
 
 fn legacy_frozen_t(store: &StateStore, disk_hash: &[u8]) {
     store
-        .upsert(&crate::state::InstanceRecord {
+        .upsert(&InstanceRecord {
             guid: "t.terrain".to_owned(),
             path: "t.terrain".to_owned(),
             class: CLASS.to_owned(),

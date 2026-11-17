@@ -370,20 +370,23 @@ async fn get_status_and_body(state: &Arc<AppState>, uri: &str) -> (StatusCode, B
         .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
         .body(Body::empty())
         .unwrap();
-    let response = router(state.clone(), TEST_PORT)
+    let response = router(Arc::clone(state), TEST_PORT)
         .oneshot(request)
         .await
         .unwrap();
     let status = response.status();
-    (status, to_bytes(response.into_body(), usize::MAX).await.unwrap())
+    (
+        status,
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+    )
 }
 
 #[tokio::test]
 async fn a_blob_poll_from_a_previous_session_is_refused_409_and_prunes_nothing() {
     let (_root, state) = terrain_with_a_queued_blob();
 
-    let (stale, _) = get_status_and_body(&state, "/blobs?cursor=5&session=previous").await;
-    assert_eq!(stale, StatusCode::CONFLICT);
+    let (rejected, _) = get_status_and_body(&state, "/blobs?cursor=5&session=previous").await;
+    assert_eq!(rejected, StatusCode::CONFLICT);
 
     let current = state.session.lock().await.session_id().to_owned();
     let (status, body) =

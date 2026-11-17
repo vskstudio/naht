@@ -22,14 +22,11 @@ use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use cursor::CursorQuery;
-use rejection::Rejection;
 use naht_core::protocol::{
-    self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong,
-    ServerInfo,
+    self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, ServerInfo,
 };
-use naht_core::vfs::{
-    validate_blob_path, validate_directory_path, validate_source_path,
-};
+use naht_core::vfs::{validate_blob_path, validate_directory_path, validate_source_path};
+use rejection::Rejection;
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinError;
