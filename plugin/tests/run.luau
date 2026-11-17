@@ -396,8 +396,14 @@ local function studioWorld(syncEcho: boolean)
 			end
 		end,
 		destroy = function(node: any)
+			local function fireRemoving(current: any)
+				root.DescendantRemoving:Fire(current)
+				for _, child in current.children do
+					fireRemoving(child)
+				end
+			end
+			fireRemoving(node)
 			detach(node)
-			root.DescendantRemoving:Fire(node)
 		end,
 	}
 	local function flush()
@@ -2054,6 +2060,40 @@ suite("a deferred echo of the applied source is dropped", function()
 		connection:stop()
 end)
 
+suite("removing a folder with a script child posts the child's Delete alone", function()
+		local posts: { string } = {}
+		local tree, root = studioWorld(true)
+		local folder = place(tree, "Folder", "Folder", root)
+		place(tree, "ModuleScript", "A", folder)
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				postChanges = function(_, changes)
+					local described = {}
+					for _, change in changes do
+						table.insert(described, change.kind .. " " .. change.path)
+					end
+					table.insert(posts, table.concat(described, ","))
+				end,
+			},
+			root,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection:_attachStudio()
+		tree.destroy(folder)
+		connection:_flushPush(1)
+		check(
+			"removing a folder with a script child posts the child's Delete alone",
+			#posts == 1 and posts[1] == "Delete Folder/A.luau",
+			table.concat(posts, " | ")
+		)
+		connection:stop()
+end)
+
 suite("a script deleted and recreated with its applied source is pushed", function()
 		local connection, node, flush, tree, root = echoConnection(false)
 		flush()
@@ -2431,6 +2471,9 @@ suite("a path the daemon refuses is posted once and never retried", function()
 						table.insert(paths, change.path)
 					end
 					table.insert(posts, paths)
+					if #posts > 10 then
+						return
+					end
 					if table.find(paths, "Config: v2/Leaf.luau") ~= nil then
 						error({
 							status = 400,
@@ -2531,6 +2574,9 @@ suite("a 400 that names no path drops the batch after one attempt", function()
 			{
 				postChanges = function(_, _changes)
 					attempts += 1
+					if attempts > 10 then
+						return
+					end
 					error({ status = 400, message = "naht: /changes returned 400", refused = {} })
 				end,
 			},
@@ -2584,6 +2630,9 @@ suite("a refused ack is not retried", function()
 				end,
 				postAck = function(_, _paths)
 					ackAttempts += 1
+					if ackAttempts > 10 then
+						return
+					end
 					error({ status = 400, message = "naht: /ack returned 400", refused = {} })
 				end,
 			},
@@ -2756,6 +2805,9 @@ suite("a 400 that names no path posts the batch once and then each path alone", 
 						table.insert(paths, change.path)
 					end
 					table.insert(posts, table.concat(paths, "+"))
+					if #posts > 10 then
+						return
+					end
 					if table.find(paths, "Bad.luau") ~= nil then
 						error({ status = 400, message = "naht: /changes returned 400", refused = {} })
 					end
