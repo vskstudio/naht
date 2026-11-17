@@ -76,6 +76,12 @@ pub enum CommandError {
         #[source]
         source: MapError,
     },
+    /// A `[[tree]]` source path, or a migrated Rojo `$path`, names a location outside the project.
+    #[error("`[[tree]]` path `{path}` must stay inside the project root")]
+    TreePathOutsideRoot {
+        /// The path as written in the project configuration.
+        path: String,
+    },
     /// A Rojo project file is not valid JSON for the fields Naht migrates.
     #[error("cannot parse the Rojo project `{}`", path.display())]
     RojoParse {

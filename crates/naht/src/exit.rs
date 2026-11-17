@@ -52,6 +52,7 @@ impl From<&CommandError> for Exit {
             CommandError::Read { .. } | CommandError::ProjectDir { .. } => Self::NoInput,
             CommandError::Tree { .. }
             | CommandError::RojoParse { .. }
+            | CommandError::TreePathOutsideRoot { .. }
             | CommandError::Build(_)
             | CommandError::ReleaseMismatch { .. }
             | CommandError::Reconcile(
