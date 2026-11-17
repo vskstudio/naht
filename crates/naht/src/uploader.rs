@@ -19,10 +19,16 @@ use crate::config::AssetsConfig;
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart::Form;
 use reqwest::blocking::multipart::Part;
+use reqwest::redirect;
 use std::fmt;
 use std::thread;
+use std::time::Duration;
 
 const ASSETS_ENDPOINT: &str = "https://apis.roblox.com/assets/v1/assets";
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Why the Open Cloud client could not be built from the `[assets]` config.
 #[derive(Debug, Error)]
@@ -87,6 +93,31 @@ fn isolated_on_scoped_thread<T: Send>(
 }
 
 fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, AssetError> {
+    let client = build_client(CONNECT_TIMEOUT, REQUEST_TIMEOUT).map_err(transport)?;
+    upload_with(&client, ASSETS_ENDPOINT, api_key, name, content)
+}
+
+fn build_client(connect: Duration, total: Duration) -> Result<Client, reqwest::Error> {
+    Client::builder()
+        .redirect(redirect::Policy::none())
+        .connect_timeout(connect)
+        .timeout(total)
+        .build()
+}
+
+fn transport(error: reqwest::Error) -> AssetError {
+    AssetError::Upload(UploadFailure::Transport {
+        source: Box::new(error),
+    })
+}
+
+fn upload_with(
+    client: &Client,
+    endpoint: &str,
+    api_key: &str,
+    name: &str,
+    content: &[u8],
+) -> Result<String, AssetError> {
     let request = serde_json::json!({
         "assetType": asset_type(name),
         "displayName": name,
@@ -97,16 +128,12 @@ fn upload_blocking(api_key: &str, name: &str, content: &[u8]) -> Result<String, 
         Part::bytes(content.to_vec()).file_name(name.to_owned()),
     );
 
-    let response = Client::new()
-        .post(ASSETS_ENDPOINT)
+    let response = client
+        .post(endpoint)
         .header("x-api-key", api_key)
         .multipart(form)
         .send()
-        .map_err(|error| {
-            AssetError::Upload(UploadFailure::Transport {
-                source: Box::new(error),
-            })
-        })?;
+        .map_err(transport)?;
     if !response.status().is_success() {
         return Err(AssetError::Upload(UploadFailure::Rejected(
             response.status().as_u16(),
@@ -144,4 +171,91 @@ fn extract_asset_id(body: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
         .or_else(|| id.as_u64().map(|number| number.to_string()))?;
     Some(format!("rbxassetid://{id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use naht_core::assets::{AssetError, UploadFailure};
+
+    use super::{build_client, upload_with};
+
+    fn read_request(stream: &mut TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .unwrap();
+        let mut received = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        while let Ok(read) = stream.read(&mut buffer) {
+            if read == 0 {
+                break;
+            }
+            received.extend_from_slice(&buffer[..read]);
+        }
+        String::from_utf8_lossy(&received).into_owned()
+    }
+
+    fn redirecting_endpoint() -> (String, mpsc::Receiver<String>) {
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        let target_url = format!("http://{}/assets", target.local_addr().unwrap());
+        thread::spawn(move || {
+            let (mut stream, _) = target.accept().unwrap();
+            seen_tx.send(read_request(&mut stream)).unwrap();
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/upload", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target_url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (url, seen_rx)
+    }
+
+    #[test]
+    fn redirects_are_not_followed_so_the_api_key_stays_on_the_endpoint() {
+        let (url, seen) = redirecting_endpoint();
+        let client = build_client(Duration::from_secs(5), Duration::from_secs(5)).unwrap();
+
+        let result = upload_with(&client, &url, "secret-key", "a.png", b"pixels");
+
+        assert!(matches!(
+            result,
+            Err(AssetError::Upload(UploadFailure::Rejected(302)))
+        ));
+        assert!(
+            seen.recv_timeout(Duration::from_millis(500)).is_err(),
+            "the redirect target received a request"
+        );
+    }
+
+    #[test]
+    fn a_stalled_endpoint_fails_within_the_request_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/upload", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_secs(5));
+        });
+        let client = build_client(Duration::from_secs(5), Duration::from_millis(300)).unwrap();
+
+        let started = Instant::now();
+        let result = upload_with(&client, &url, "secret-key", "a.png", b"pixels");
+
+        assert!(matches!(
+            result,
+            Err(AssetError::Upload(UploadFailure::Transport { .. }))
+        ));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
 }
