@@ -60,6 +60,24 @@ local function refusedPathsOf(err: any): { string }
 	return err.refused
 end
 
+local function namedInBatch(batch: { [string]: any }, err: any): { [string]: true }
+	local named = {}
+	for _, path in refusedPathsOf(err) do
+		if batch[path] ~= nil then
+			named[path] = true
+		end
+	end
+	return named
+end
+
+local function countKeys(map: { [string]: any }): number
+	local count = 0
+	for _ in map do
+		count += 1
+	end
+	return count
+end
+
 local function isSafeName(name: string): boolean
 	if UNSAFE_NAMES[name] then
 		return false
@@ -620,11 +638,7 @@ function Connection._flushPush(self, session: number)
 		for _, change in remaining do
 			table.insert(changes, change)
 		end
-		self.pushGate.inFlight = true
-		local ok, err = pcall(function()
-			self.client:postChanges(changes)
-		end)
-		self.pushGate.inFlight = false
+		local ok, err = self:_postChanges(changes)
 		if not self:_isCurrent(session) then
 			return
 		end
@@ -644,22 +658,59 @@ function Connection._flushPush(self, session: number)
 			self:_schedulePush(delay)
 			return
 		end
-		remaining = self:_takePending(self:_dropRefused(remaining, err))
+		if next(namedInBatch(remaining, err)) == nil and countKeys(remaining) > 1 then
+			if not self:_postEach(session, remaining) then
+				return
+			end
+		else
+			remaining = self:_dropRefused(remaining, err)
+		end
+		remaining = self:_takePending(remaining)
 	end
 end
 
+function Connection._postChanges(self, changes: { any }): (boolean, any)
+	self.pushGate.inFlight = true
+	local ok, err = pcall(function()
+		self.client:postChanges(changes)
+	end)
+	self.pushGate.inFlight = false
+	return ok, err
+end
+
+function Connection._postEach(self, session: number, remaining: { [string]: any }): boolean
+	for _, path in Connection._sortedKeys(remaining) do
+		local change = remaining[path]
+		local ok, err = self:_postChanges({ change })
+		if not self:_isCurrent(session) then
+			return false
+		end
+		if ok then
+			remaining[path] = nil
+			self:_clearWarning("push")
+		elseif isTransientFailure(err) then
+			self:_setWarning("push", "push failed: " .. failureMessage(err))
+			self:_restorePending(remaining)
+			local delay = self.pushBackoff
+			self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+			self:_schedulePush(delay)
+			return false
+		else
+			remaining[path] = nil
+			self:_dropRefused({ [path] = change }, err)
+		end
+	end
+	return true
+end
+
 function Connection._dropRefused(self, remaining: { [string]: any }, err: any): { [string]: any }
-	local named = {}
-	for _, path in refusedPathsOf(err) do
-		if remaining[path] ~= nil then
+	local named = namedInBatch(remaining, err)
+	if next(named) == nil then
+		for path in remaining do
 			named[path] = true
 		end
 	end
 	local kept = {}
-	if next(named) == nil then
-		self:_setWarning("refused:batch", "push refused, batch not synced: " .. failureMessage(err))
-		return kept
-	end
 	for path, change in remaining do
 		if named[path] == nil then
 			kept[path] = change

@@ -2704,6 +2704,66 @@ do
 	)
 end
 
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local posts: { string } = {}
+	local accepted: { string } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				local paths = {}
+				for _, change in changes do
+					table.insert(paths, change.path)
+				end
+				table.insert(posts, table.concat(paths, "+"))
+				if table.find(paths, "Bad.luau") ~= nil then
+					error({ status = 400, message = "naht: /changes returned 400", refused = {} })
+				end
+				for _, path in paths do
+					table.insert(accepted, path)
+				end
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["Good.luau"] = Protocol.upsert("Good.luau", "ModuleScript", "G")
+	connection.pendingPush["Bad.luau"] = Protocol.upsert("Bad.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(0.8)
+	connection.running = false
+	local badPosts = 0
+	for _, post in posts do
+		if string.find(post, "Bad.luau", 1, true) ~= nil then
+			badPosts += 1
+		end
+	end
+	check(
+		"a 400 that names no path posts the batch once and then each path alone",
+		badPosts == 2 and #posts == 3,
+		"posts: " .. table.concat(posts, " | ")
+	)
+	check(
+		"a path accepted alone after an unnamed refusal of its batch is sent",
+		table.find(accepted, "Good.luau") ~= nil and #accepted == 1,
+		"accepted: " .. table.concat(accepted, ",")
+	)
+	local warnedText = table.concat(warningsOf(log), "\n")
+	check(
+		"the path refused alone is named in a Warning",
+		string.find(warnedText, "not synced, the daemon refused Bad.luau", 1, true) ~= nil,
+		warnedText
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end
