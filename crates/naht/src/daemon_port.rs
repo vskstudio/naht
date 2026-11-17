@@ -33,21 +33,21 @@ pub(crate) fn remove(root: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{read, write};
-    use std::ffi::OsString;
     use std::fs;
+    use std::process;
 
     #[test]
-    fn a_rewrite_replaces_the_port_and_leaves_no_temp_file_behind() {
+    fn a_failed_write_leaves_the_previous_port_file_intact() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".naht")).unwrap();
         write(dir.path(), 40000).unwrap();
-        write(dir.path(), 40001).unwrap();
+        let temp = dir
+            .path()
+            .join(".naht")
+            .join(format!("daemon.port.tmp-{}", process::id()));
+        fs::create_dir(&temp).unwrap();
 
-        assert_eq!(read(dir.path()), Some(40001));
-        let names: Vec<OsString> = fs::read_dir(dir.path().join(".naht"))
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(names, vec![OsString::from("daemon.port")]);
+        assert!(write(dir.path(), 40001).is_err());
+        assert_eq!(read(dir.path()), Some(40000));
     }
 }
