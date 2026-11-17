@@ -67,7 +67,8 @@ Behaviour notes:
   until the daemon accepts it. Each failed attempt sets the widget to `Warning` with `terrain push failed: <reason>`,
   and the next success clears it. Stop or a reconnect ends the retry.
 - If polling the terrain blob stream fails while sync is running, the widget shows `Warning` with
-  `terrain blob poll failed: <reason>` and blob sync stops until the next reconnect.
+  `terrain blob poll failed: <reason>`, and the poll is retried with an exponential backoff from 2 seconds up
+  to a cap of 60 seconds. The next successful poll clears the Warning.
 - The reconnect backoff restarts (from 1 second) only after a poll completes, so a daemon that
   answers `/info` and then fails on `/patches` keeps backing off.
 

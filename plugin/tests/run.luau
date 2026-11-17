@@ -673,12 +673,14 @@ check("blob backoff is capped at 60 seconds", blobBackoffAfter(32) == 60 and blo
 
 do
 	local calls: { number } = {}
-	local connection = fakeConnection({
+	local connection: any = nil
+	connection = fakeConnection({
 		blobs = function(_, cursor)
 			table.insert(calls, cursor)
 			if #calls == 1 then
 				return { cursor = 5, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
 			end
+			connection.epoch += 1
 			error("stop")
 		end,
 	}, extentsTerrainWith(extentsRegion))
@@ -691,13 +693,15 @@ do
 	local log, onState = stateLog()
 	local calls = 0
 	local tree, root = studioWorld(true)
-	local connection = Connection.new(
+	local connection: any = nil
+	connection = Connection.new(
 		{
 			blobs = function(_, _cursor)
 				calls += 1
 				if calls == 1 then
 					return { cursor = 9, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
 				end
+				connection.epoch += 1
 				error("stop")
 			end,
 		},
@@ -727,12 +731,14 @@ end
 
 do
 	local calls: { number } = {}
-	local connection = fakeConnection({
+	local connection: any = nil
+	connection = fakeConnection({
 		blobs = function(_, cursor)
 			table.insert(calls, cursor)
 			if #calls == 1 then
 				return { cursor = 7, patches = {} }
 			end
+			connection.epoch += 1
 			error("stop")
 		end,
 	}, extentsTerrainWith(extentsRegion))
@@ -1376,15 +1382,20 @@ end
 do
 	local log, onState = stateLog()
 	local polls = 0
-	local connection = terrainConnection({
+	local connection: any = nil
+	connection = terrainConnection({
 		blobs = function(_, _cursor)
 			polls += 1
+			if polls > 1 then
+				connection.epoch += 1
+			end
 			error("boom")
 		end,
 	}, onState, extentsTerrainWith(extentsRegion))
+	connection.blobBackoff = 0.01
 	connection:_serveBlobs(1)
 	local last = log[#log]
-	check("a blob poll failure ends the blob loop", polls == 1, "polls " .. tostring(polls))
+	check("a blob poll failure while running is retried until superseded", polls == 2, "polls " .. tostring(polls))
 	check(
 		"a blob poll failure while running sets a Warning naming the reason",
 		last ~= nil
@@ -1424,6 +1435,38 @@ do
 	}, onState, extentsTerrainWith(extentsRegion))
 	connection:_serveBlobs(1)
 	check("a blob poll failure after a reconnect sets no Warning", #warningsOf(log) == 0, "warnings " .. tostring(#warningsOf(log)))
+end
+
+do
+	local log, onState = stateLog()
+	local calls = 0
+	local connection: any = nil
+	connection = terrainConnection({
+		blobs = function(_, _cursor)
+			calls += 1
+			if calls == 1 then
+				error("timeout")
+			end
+			if calls > 2 then
+				connection.epoch += 1
+			end
+			return { cursor = 6, patches = {} }
+		end,
+	}, onState, extentsTerrainWith(extentsRegion))
+	connection.blobBackoff = 0.01
+	connection:_serveBlobs(1)
+	local warned = false
+	local clearedAfterWarning = false
+	for _, entry in log do
+		if entry.state == "Warning" and entry.detail ~= nil and string.find(entry.detail, "terrain blob poll failed: ", 1, true) == 1 then
+			warned = true
+		elseif warned and entry.state == "Connected" then
+			clearedAfterWarning = true
+		end
+	end
+	check("a transient blob poll failure is retried", calls >= 2, "calls " .. tostring(calls))
+	check("the blob cursor advances once the retry succeeds", connection.blobCursor == 6, "cursor " .. tostring(connection.blobCursor))
+	check("the blob poll Warning is set, then cleared by the retry", warned and clearedAfterWarning and lastStateOf(log) == "Connected", lastStateOf(log))
 end
 
 do

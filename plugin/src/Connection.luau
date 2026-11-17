@@ -291,45 +291,49 @@ function Connection._serveBlobs(self, epoch: number)
 		local ok, batch = pcall(function()
 			return self.client:blobs(self.blobCursor)
 		end)
-		if not ok then
-			if self:_isBlobCurrent(epoch) then
-				self:_setWarning("blob", "terrain blob poll failed: " .. tostring(batch))
-			end
-			return
-		end
 		if not self:_isBlobCurrent(epoch) then
 			return
 		end
-		local allApplied = true
-		local rejection = ""
-		for _, patch in batch.patches do
-			if not self:_isBlobCurrent(epoch) then
-				return
-			end
-			if patch.kind == "Conflict" then
-				self.onState("Conflict", patch.path)
-			elseif patch.direction == "ToStudio" and patch.content ~= nil then
-				local applied, err = pcall(function()
-					self:_applyBlob(patch.content)
-				end)
-				if not applied then
-					allApplied = false
-					rejection = tostring(err)
-				end
-			end
-		end
-		if not self:_isBlobCurrent(epoch) then
-			return
-		end
-		if allApplied then
-			self:_clearWarning("blob")
-			self.blobCursor = batch.cursor
-			self.blobBackoff = BLOB_BACKOFF_START
+		if ok then
+			self:_applyBlobBatch(epoch, batch)
 		else
-			self:_setWarning("blob", "terrain blob rejected: " .. rejection)
+			self:_setWarning("blob", "terrain blob poll failed: " .. tostring(batch))
 			task.wait(self.blobBackoff)
 			self.blobBackoff = Connection.nextBlobBackoff(self.blobBackoff)
 		end
+	end
+end
+
+function Connection._applyBlobBatch(self, epoch: number, batch: any)
+	local allApplied = true
+	local rejection = ""
+	for _, patch in batch.patches do
+		if not self:_isBlobCurrent(epoch) then
+			return
+		end
+		if patch.kind == "Conflict" then
+			self.onState("Conflict", patch.path)
+		elseif patch.direction == "ToStudio" and patch.content ~= nil then
+			local applied, err = pcall(function()
+				self:_applyBlob(patch.content)
+			end)
+			if not applied then
+				allApplied = false
+				rejection = tostring(err)
+			end
+		end
+	end
+	if not self:_isBlobCurrent(epoch) then
+		return
+	end
+	if allApplied then
+		self:_clearWarning("blob")
+		self.blobCursor = batch.cursor
+		self.blobBackoff = BLOB_BACKOFF_START
+	else
+		self:_setWarning("blob", "terrain blob rejected: " .. rejection)
+		task.wait(self.blobBackoff)
+		self.blobBackoff = Connection.nextBlobBackoff(self.blobBackoff)
 	end
 end
 
