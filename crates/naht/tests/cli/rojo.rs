@@ -3,6 +3,8 @@ use naht::commands;
 use super::support::{child, property, read_place, service};
 use rbx_dom_weak::types::Variant;
 use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn from_rojo_migrates_the_tree_so_the_build_matches_rojo() {
@@ -128,4 +130,83 @@ fn from_rojo_reports_what_it_cannot_represent() {
             .any(|warning| warning.contains("$ignoreUnknownInstances")),
         "expected a warning about the unsupported directive, got: {warnings:?}"
     );
+}
+
+fn project_with_a_sibling_outside_the_root(dir: &Path) -> io::Result<PathBuf> {
+    let root = dir.join("game");
+    fs::create_dir_all(root.join("src"))?;
+    let outside = dir.join("outside");
+    fs::create_dir_all(&outside)?;
+    fs::write(outside.join("Secret.luau"), "return 'outside'")?;
+    Ok(root)
+}
+
+fn tree_config(root: &Path, source: &str) -> io::Result<()> {
+    fs::write(
+        root.join("naht.toml"),
+        format!(
+            "[project]\nname = \"Game\"\n\n[[tree]]\ninstance = \"ReplicatedStorage/Shared\"\npath = '{source}'\n"
+        ),
+    )
+}
+
+#[test]
+fn from_rojo_rejects_a_path_that_climbs_out_of_the_project() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = project_with_a_sibling_outside_the_root(dir.path())?;
+    fs::write(
+        root.join("default.project.json"),
+        r#"{
+            "name": "Game",
+            "tree": {
+                "$className": "DataModel",
+                "ReplicatedStorage": { "Shared": { "$path": "../outside" } }
+            }
+        }"#,
+    )?;
+
+    commands::init(&root, true).expect_err("a tree path outside the project is refused");
+    assert!(!root.join("naht.toml").exists());
+    Ok(())
+}
+
+#[test]
+fn build_rejects_a_tree_path_that_climbs_out_of_the_project() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = project_with_a_sibling_outside_the_root(dir.path())?;
+    tree_config(&root, "../outside")?;
+    let place = dir.path().join("game.rbxl");
+
+    commands::build(&root, &place).expect_err("a tree path outside the project is refused");
+    assert!(!place.exists());
+    Ok(())
+}
+
+#[test]
+fn build_rejects_an_absolute_tree_path() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = project_with_a_sibling_outside_the_root(dir.path())?;
+    let outside = dir.path().join("outside");
+    tree_config(&root, &outside.to_string_lossy())?;
+    let place = dir.path().join("game.rbxl");
+
+    commands::build(&root, &place).expect_err("an absolute tree path is refused");
+    assert!(!place.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn build_rejects_a_tree_path_that_leaves_the_project_through_a_symlink() -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir()?;
+    let root = project_with_a_sibling_outside_the_root(dir.path())?;
+    symlink(dir.path().join("outside"), root.join("src").join("link"))?;
+    tree_config(&root, "src/link")?;
+    let place = dir.path().join("game.rbxl");
+
+    commands::build(&root, &place).expect_err("a symlink leaving the project is refused");
+    assert!(!place.exists());
+    Ok(())
 }

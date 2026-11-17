@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::persist::advance_base;
 use super::*;
 use crate::merge;
 use crate::state::StateStore;
-use crate::vfs::{MemoryVfs, Vfs};
+use crate::vfs::{MemoryVfs, Vfs, VfsError};
+use crate::walk::{Scan, Unseen};
 
 const CLASS: &str = "ModuleScript";
 
@@ -34,6 +35,7 @@ fn one_sided_fs_change_pushes_only_to_studio_and_advances_base() {
         &store,
         &sides(&[("m", "v2")]),
         &sides(&[("m", "v1")]),
+        &Unseen::default(),
     )
     .unwrap();
 
@@ -55,6 +57,7 @@ fn one_sided_studio_change_writes_the_file() {
         &store,
         &sides(&[("m", "v1")]),
         &sides(&[("m", "v2")]),
+        &Unseen::default(),
     )
     .unwrap();
 
@@ -76,6 +79,7 @@ fn no_change_produces_no_patches() {
         &store,
         &sides(&[("m", "v1")]),
         &sides(&[("m", "v1")]),
+        &Unseen::default(),
     )
     .unwrap();
     assert_eq!(patches.len(), 0);
@@ -95,6 +99,7 @@ fn non_overlapping_both_changed_auto_merges() {
         &store,
         &sides(&[("m", fs)]),
         &sides(&[("m", studio)]),
+        &Unseen::default(),
     )
     .unwrap();
 
@@ -130,6 +135,7 @@ fn overlapping_both_changed_freezes_with_markers_and_loses_nothing() {
         &store,
         &sides(&[("m", "local a = 11\n")]),
         &sides(&[("m", "local a = 22\n")]),
+        &Unseen::default(),
     )
     .unwrap();
 
@@ -156,6 +162,7 @@ fn a_frozen_path_is_skipped_on_the_next_reconcile() {
         &store,
         &sides(&[("m", "local a = 11\n")]),
         &sides(&[("m", "local a = 22\n")]),
+        &Unseen::default(),
     )
     .unwrap();
 
@@ -164,6 +171,7 @@ fn a_frozen_path_is_skipped_on_the_next_reconcile() {
         &store,
         &sides(&[("m", "local a = 33\n")]),
         &sides(&[("m", "local a = 44\n")]),
+        &Unseen::default(),
     )
     .unwrap();
     assert_eq!(patches.len(), 0);
@@ -180,6 +188,7 @@ fn resolve_refuses_while_markers_remain_then_succeeds() {
         &store,
         &sides(&[("m", "local a = 11\n")]),
         &sides(&[("m", "local a = 22\n")]),
+        &Unseen::default(),
     )
     .unwrap();
 
@@ -206,6 +215,7 @@ fn new_fs_file_creates_in_studio() {
         &store,
         &sides(&[("n", "fresh")]),
         &BTreeMap::new(),
+        &Unseen::default(),
     )
     .unwrap();
 
@@ -232,7 +242,7 @@ fn reconcile_scales_to_a_large_tree_without_quadratic_blowup() {
     let store = StateStore::open_in_memory().unwrap();
 
     let start = Instant::now();
-    let patches = reconcile(&mut vfs, &store, &fs, &BTreeMap::new()).unwrap();
+    let patches = reconcile(&mut vfs, &store, &fs, &BTreeMap::new(), &Unseen::default()).unwrap();
     let create_elapsed = start.elapsed();
     assert_eq!(patches.len(), ITERATIONS);
     assert!(
@@ -241,7 +251,7 @@ fn reconcile_scales_to_a_large_tree_without_quadratic_blowup() {
     );
 
     let steady_start = Instant::now();
-    let steady_patches = reconcile(&mut vfs, &store, &fs, &fs).unwrap();
+    let steady_patches = reconcile(&mut vfs, &store, &fs, &fs, &Unseen::default()).unwrap();
     assert_eq!(steady_patches.len(), 0);
     assert!(
         steady_start.elapsed() < Duration::from_secs(10),
@@ -259,7 +269,7 @@ fn scan_collects_source_files_as_text_instances_and_skips_the_rest() {
         .with_file("proj/folder/init.luau", "return {}")
         .with_file("proj/README.md", "not an instance");
 
-    let scanned = scan_text(&vfs, Path::new("proj")).unwrap();
+    let scanned = scan_text(&vfs, Path::new("proj")).unwrap().instances;
 
     let mut got: Vec<(&str, &str, &str)> = scanned
         .values()
@@ -287,10 +297,106 @@ fn scan_collects_source_files_as_text_instances_and_skips_the_rest() {
 fn deletion_on_one_side_propagates_when_the_other_is_unchanged() {
     let mut vfs = MemoryVfs::new().with_file("m", "v1");
     let store = store_with_base(&[("m", "v1")]);
-    let patches = reconcile(&mut vfs, &store, &BTreeMap::new(), &sides(&[("m", "v1")])).unwrap();
+    let patches = reconcile(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        &sides(&[("m", "v1")]),
+        &Unseen::default(),
+    )
+    .unwrap();
 
     assert_eq!(patches.len(), 1);
     assert_eq!(patches[0].direction, Direction::ToStudio);
     assert_eq!(patches[0].kind, PatchKind::Delete);
     assert_eq!(store.get("m").unwrap(), None);
+}
+
+fn unseen_at(path: &str) -> Unseen {
+    let mut scan = Scan::<TextInstance>::default();
+    scan.skip(
+        PathBuf::from(path),
+        ReconcileError::Vfs(VfsError::InvalidPath("unreadable".to_owned())),
+    );
+    scan.unseen()
+}
+
+#[test]
+fn an_unreadable_file_missing_from_the_fs_side_is_neither_deleted_nor_forgotten() {
+    let mut vfs = MemoryVfs::new().with_file("m", "v1");
+    let store = store_with_base(&[("m", "v1")]);
+    let patches = reconcile(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        &sides(&[("m", "v1")]),
+        &unseen_at("m"),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 0);
+    assert_eq!(vfs.read(Path::new("m")).unwrap(), b"v1");
+    assert_eq!(
+        store.get("m").unwrap().unwrap().base_content,
+        Some(b"v1".to_vec())
+    );
+}
+
+#[test]
+fn a_studio_edit_never_overwrites_a_file_the_scan_could_not_read() {
+    let mut vfs = MemoryVfs::new().with_file("m", "v1");
+    let store = store_with_base(&[("m", "v1")]);
+    let patches = reconcile(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        &sides(&[("m", "v2")]),
+        &unseen_at("m"),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 0);
+    assert_eq!(vfs.read(Path::new("m")).unwrap(), b"v1");
+    assert_eq!(
+        store.get("m").unwrap().unwrap().base_content,
+        Some(b"v1".to_vec())
+    );
+}
+
+#[test]
+fn a_studio_instance_under_an_ignored_directory_is_not_written_to_disk() {
+    let mut vfs = MemoryVfs::new();
+    let store = StateStore::open_in_memory().unwrap();
+    let patches = reconcile(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        &sides(&[("target/A.luau", "return 1")]),
+        &Unseen::default(),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 0);
+    assert!(matches!(
+        vfs.read(Path::new("target/A.luau")),
+        Err(VfsError::NotFound(_))
+    ));
+    assert_eq!(store.get("target/A.luau").unwrap(), None);
+}
+
+#[test]
+fn a_base_record_under_an_ignored_directory_is_kept_when_the_scan_skips_it() {
+    let mut vfs = MemoryVfs::new();
+    let store = store_with_base(&[("target/A.luau", "return 1")]);
+    let patches = reconcile(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &Unseen::default(),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 0);
+    assert!(store.get("target/A.luau").unwrap().is_some());
 }

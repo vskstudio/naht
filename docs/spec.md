@@ -22,7 +22,7 @@ file records what shipped; the per-stage detail lives in git history. Design con
   atomic-save coalescing, large-tree guard) · **11** terrain voxel sync (`naht-core` blob engine +
   Luau `Terrain`) · **12** Open Cloud asset upload (`[assets]`, uploader trait + cache).
 - **13** terrain wired into the live daemon (`[serve] terrain_sync`, `/blobs` channel, `Session` blob
-  reconcile, plugin wiring) · **14** asset-upload failures isolated to the failing path · **15**
+  reconcile, plugin wiring) · **14** asset-upload failures isolated to the failing property (a build warning, and the rest of the build continues) · **15**
   acceptance-coverage hardening (DataModel-root, typed-property round-trips, assets-off determinism).
 - **16** blobs reconciled on Studio text edits too (`apply_changes` → `reconcile_blobs`) · **17**
   `naht init --from-rojo` migrates the project **tree**, not just name/place-id · **18** release &

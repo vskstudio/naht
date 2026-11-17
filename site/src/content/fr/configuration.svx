@@ -74,7 +74,7 @@ api_key_env = "ROBLOX_OPEN_CLOUD_KEY"   # NAME of the env var, never the key its
 
 | Clé | Type | Défaut | Rôle |
 |---|---|---|---|
-| `enabled` | bool | `false` | Upload les fichiers mesh/image locaux et réécrit leurs références en `rbxassetid://…`. |
+| `enabled` | bool | `false` | Upload les fichiers mesh/image locaux et réécrit leurs références en `rbxassetid://…`. Les uploads ont lieu lors de `naht build` seulement ; `sync` et `serve` laissent les références telles quelles. |
 | `api_key_env` | string | _non défini_ | Le **nom** de la variable d'environnement contenant ta clé Open Cloud. |
 
 <Callout type="warning">
@@ -102,7 +102,7 @@ Archivable = false
 | Clé | Type | Rôle |
 |---|---|---|
 | `instance` | string | Le chemin de l'instance dans le DataModel. |
-| `path` | string? | Le chemin du système de fichiers auquel elle se mappe. |
+| `path` | string? | Le chemin du système de fichiers auquel elle se mappe. Il doit être relatif à la racine du projet et y rester, liens symboliques compris : `..`, les chemins absolus et les liens qui sortent du projet sont refusés. |
 | `class` | string? | Le nom de classe Roblox, quand il n'est pas impliqué par la convention. |
 | `properties` | table | Les propriétés non par défaut de ce nœud. |
 

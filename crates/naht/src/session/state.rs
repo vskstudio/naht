@@ -2,7 +2,7 @@ use super::Session;
 use super::{SessionError, new_session_id};
 use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
 use naht_core::state::{InstanceRecord, StateStore};
-use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
+use naht_core::vfs::{DiskVfs, RootedVfs, VfsError, remove_stale_temp_files};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
@@ -16,8 +16,17 @@ impl Session {
         serve_place_id: Option<u64>,
         terrain_sync: bool,
     ) -> Self {
+        let root = root.into();
+        if let Err(error) = remove_stale_temp_files(&root) {
+            tracing::warn!(
+                target: "naht::session",
+                path = %root.display(),
+                %error,
+                "could not remove stale temp files"
+            );
+        }
         Self {
-            vfs: RootedVfs::new(root.into(), DiskVfs::new()),
+            vfs: RootedVfs::new(root, DiskVfs::new()),
             store,
             studio: BTreeMap::new(),
             queue: BTreeMap::new(),

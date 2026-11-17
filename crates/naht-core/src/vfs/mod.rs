@@ -14,7 +14,7 @@ mod rooted;
 #[cfg(test)]
 mod tests;
 
-pub use disk::DiskVfs;
+pub use disk::{DiskVfs, remove_stale_temp_files};
 pub use memory::MemoryVfs;
 pub use project_path::{ProjectPathError, validate_project_path};
 pub use rooted::RootedVfs;

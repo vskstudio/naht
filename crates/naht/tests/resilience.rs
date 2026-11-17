@@ -11,6 +11,7 @@ use naht_core::state::StateStore;
 use std::fs;
 use std::path::Path;
 use std::slice;
+use std::time::{Duration, SystemTime};
 
 fn session(root: &Path) -> Session {
     fs::create_dir_all(root.join("src")).unwrap();
@@ -86,4 +87,58 @@ fn an_unacked_patch_holds_the_base_so_a_racing_studio_edit_merges_not_clobbers()
         .unwrap();
 
     assert_eq!(fs::read_to_string(&file).unwrap(), "A\nb\nC\n");
+}
+
+#[test]
+fn a_file_that_turns_unreadable_is_neither_deleted_nor_reported_as_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut session = session(root);
+    let file = root.join("src").join("A.luau");
+
+    fs::write(&file, "return 1").unwrap();
+    session.rescan().unwrap();
+    let (cursor, first) = session.take_patches(0);
+    let path = first[0].path.clone();
+    session.ack(slice::from_ref(&path)).unwrap();
+    session
+        .apply_changes(vec![Change::Upsert {
+            path: path.clone(),
+            class: "ModuleScript".to_owned(),
+            content: "return 1".to_owned(),
+        }])
+        .unwrap();
+
+    fs::write(&file, [0xff_u8, 0xfe]).unwrap();
+    session.rescan().unwrap();
+
+    assert_eq!(fs::read(&file).unwrap(), vec![0xff, 0xfe]);
+    let (_, later) = session.take_patches(cursor);
+    assert!(
+        later.iter().all(|patch| patch.kind != PatchKind::Delete),
+        "an unreadable file must not produce a delete, got {later:?}"
+    );
+}
+
+#[test]
+fn a_temp_file_left_by_an_interrupted_write_is_removed_when_the_session_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    let stale = root.join("src").join(".A.luau.4242.7.naht-tmp");
+    let kept = root.join("src").join("A.luau");
+    fs::write(&stale, "partial").unwrap();
+    fs::write(&kept, "return 1").unwrap();
+    let an_hour_ago = SystemTime::now() - Duration::from_hours(1);
+    fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(an_hour_ago)
+        .unwrap();
+
+    let _session = session(root);
+
+    assert!(!stale.exists());
+    assert_eq!(fs::read_to_string(&kept).unwrap(), "return 1");
 }

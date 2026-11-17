@@ -49,6 +49,8 @@ print("this script ships disabled")
 La source et ses propriétés restent au même endroit, donc déplacer ou relire un script ne désynchronise
 jamais sa configuration.
 
+Les valeurs texte échappent `\` et `"` par un antislash, et écrivent un saut de ligne ou un retour chariot en `\n` ou `\r`, si bien qu'une valeur reste toujours sur sa ligne de directive. Le lecteur décode les mêmes échappements : une valeur revient donc à l'identique.
+
 ## Quand la convention ne suffit pas
 
 Deux échappatoires, toutes deux dans `naht.toml` :

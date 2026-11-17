@@ -21,6 +21,7 @@ pub mod reconciler;
 pub mod snapshot;
 pub mod state;
 pub mod vfs;
+pub mod walk;
 
 pub use snapshot::Snapshot;
 

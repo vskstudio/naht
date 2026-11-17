@@ -3,9 +3,11 @@ use std::path::Path;
 
 use super::*;
 use crate::hash::content_hash;
-use crate::reconciler::{Direction, PatchKind};
+use crate::reconciler::{Direction, PatchKind, ReconcileError};
 use crate::state::StateStore;
-use crate::vfs::{MemoryVfs, Vfs};
+use crate::vfs::{MemoryVfs, Vfs, VfsError};
+use crate::walk::{Scan, Unseen};
+use std::path::PathBuf;
 
 const CLASS: &str = "Terrain";
 
@@ -24,7 +26,7 @@ fn blobs(items: &[(&str, &[u8])]) -> BTreeMap<String, BlobInstance> {
 fn base_with(store: &StateStore, path: &str, content: &[u8]) {
     let mut vfs = MemoryVfs::new();
     let instances = blobs(&[(path, content)]);
-    reconcile_blobs(&mut vfs, store, &instances, &instances).unwrap();
+    sync_blobs(&mut vfs, store, &instances, &instances).unwrap();
 }
 
 #[test]
@@ -35,7 +37,7 @@ fn scan_blobs_collects_only_terrain_files_with_exact_bytes() {
         .with_file("Workspace/Main.luau", b"return 1".to_vec())
         .with_file("README.md", b"not an instance".to_vec());
 
-    let found = scan_blobs(&vfs, Path::new("")).unwrap();
+    let found = scan_blobs(&vfs, Path::new("")).unwrap().instances;
 
     let keys: Vec<&String> = found.keys().collect();
     assert_eq!(keys, vec!["Workspace/Terrain.terrain"]);
@@ -50,7 +52,7 @@ fn a_blob_round_trips_each_way_without_byte_loss() {
 
     let mut vfs = MemoryVfs::new();
     let store = StateStore::open_in_memory().unwrap();
-    let patches = reconcile_blobs(
+    let patches = sync_blobs(
         &mut vfs,
         &store,
         &blobs(&[("Terrain.terrain", &blob)]),
@@ -63,7 +65,7 @@ fn a_blob_round_trips_each_way_without_byte_loss() {
 
     let mut terrain_vfs = MemoryVfs::new();
     let terrain_store = StateStore::open_in_memory().unwrap();
-    reconcile_blobs(
+    sync_blobs(
         &mut terrain_vfs,
         &terrain_store,
         &BTreeMap::new(),
@@ -82,7 +84,7 @@ fn a_one_sided_change_syncs_and_advances_the_base() {
     let store = StateStore::open_in_memory().unwrap();
     base_with(&store, "t.terrain", b"v1");
 
-    let patches = reconcile_blobs(
+    let patches = sync_blobs(
         &mut vfs,
         &store,
         &blobs(&[("t.terrain", b"v2")]),
@@ -104,7 +106,7 @@ fn a_change_on_both_sides_freezes_a_binary_conflict_without_overwriting() {
     let store = StateStore::open_in_memory().unwrap();
     base_with(&store, "t.terrain", b"base");
 
-    let patches = reconcile_blobs(
+    let patches = sync_blobs(
         &mut vfs,
         &store,
         &blobs(&[("t.terrain", b"fs-edit")]),
@@ -119,7 +121,7 @@ fn a_change_on_both_sides_freezes_a_binary_conflict_without_overwriting() {
     assert!(record.conflicted);
     assert_eq!(record.base_content, None);
 
-    let again = reconcile_blobs(
+    let again = sync_blobs(
         &mut vfs,
         &store,
         &blobs(&[("t.terrain", b"fs-2")]),
@@ -134,7 +136,7 @@ fn a_deleted_blob_propagates() {
     let mut vfs = MemoryVfs::new().with_file("t.terrain", b"v1".to_vec());
     let store = StateStore::open_in_memory().unwrap();
     base_with(&store, "t.terrain", b"v1");
-    let patches = reconcile_blobs(
+    let patches = sync_blobs(
         &mut vfs,
         &store,
         &BTreeMap::new(),
@@ -145,4 +147,42 @@ fn a_deleted_blob_propagates() {
     assert_eq!(patches[0].direction, Direction::ToStudio);
     assert_eq!(patches[0].kind, PatchKind::Delete);
     assert_eq!(store.get("t.terrain").unwrap(), None);
+}
+
+fn sync_blobs(
+    vfs: &mut impl Vfs,
+    store: &StateStore,
+    fs: &BTreeMap<String, BlobInstance>,
+    studio: &BTreeMap<String, BlobInstance>,
+) -> Result<Vec<BlobPatch>, ReconcileError> {
+    reconcile_blobs(vfs, store, fs, studio, &Unseen::default())
+}
+
+fn unseen_at(path: &str) -> Unseen {
+    let mut scan = Scan::<BlobInstance>::default();
+    scan.skip(
+        PathBuf::from(path),
+        ReconcileError::Vfs(VfsError::InvalidPath("unreadable".to_owned())),
+    );
+    scan.unseen()
+}
+
+#[test]
+fn an_unreadable_blob_missing_from_the_fs_side_is_neither_deleted_nor_forgotten() {
+    let mut vfs = MemoryVfs::new().with_file("t.terrain", b"v1".to_vec());
+    let store = StateStore::open_in_memory().unwrap();
+    base_with(&store, "t.terrain", b"v1");
+
+    let patches = reconcile_blobs(
+        &mut vfs,
+        &store,
+        &BTreeMap::new(),
+        &blobs(&[("t.terrain", b"v1")]),
+        &unseen_at("t.terrain"),
+    )
+    .unwrap();
+
+    assert_eq!(patches.len(), 0);
+    assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"v1");
+    assert!(store.get("t.terrain").unwrap().is_some());
 }

@@ -48,6 +48,8 @@ print("this script ships disabled")
 Source and its properties stay in one place, so moving or reviewing a script never desynchronizes its
 configuration.
 
+String values escape `\` and `"` with a backslash, and write a newline or a carriage return as `\n` or `\r`, so a value always stays on its directive line. The reader decodes the same escapes, so a value comes back unchanged.
+
 ## When convention isn't enough
 
 Two escape hatches, both in `naht.toml`:

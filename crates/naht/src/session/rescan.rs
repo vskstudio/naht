@@ -2,7 +2,21 @@ use super::Session;
 use super::{PROJECT_ROOT, SessionError};
 use naht_core::binary::{self};
 use naht_core::reconciler::{self};
+use naht_core::state::InstanceRecord;
+use naht_core::walk::Scan;
+use std::collections::BTreeMap;
 use std::path::Path;
+
+fn warn_skipped<T>(scan: &Scan<T>) {
+    for skipped in &scan.skipped {
+        tracing::warn!(
+            target: "naht::session",
+            path = %skipped.path.display(),
+            error = %skipped.error,
+            "skipped a file that could not be read"
+        );
+    }
+}
 
 impl Session {
     /// Re-read the filesystem and reconcile it against the Studio mirror and persisted base. Used on
@@ -14,18 +28,39 @@ impl Session {
     /// Returns [`SessionError`] when the project cannot be rescanned.
     pub fn rescan(&mut self) -> Result<(), SessionError> {
         let pre_base = self.base_snapshot()?;
-        let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
-        let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
-        self.absorb(patches, &pre_base)?;
+        self.reconcile_text(&pre_base)?;
         if self.terrain_sync {
             self.reconcile_blobs()?;
         }
         Ok(())
     }
 
+    pub(super) fn reconcile_text(
+        &mut self,
+        pre_base: &BTreeMap<String, InstanceRecord>,
+    ) -> Result<(), SessionError> {
+        let scan = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
+        warn_skipped(&scan);
+        let patches = reconciler::reconcile(
+            &mut self.vfs,
+            &self.store,
+            &scan.instances,
+            &self.studio,
+            &scan.unseen(),
+        )?;
+        self.absorb(patches, pre_base)
+    }
+
     pub(super) fn reconcile_blobs(&mut self) -> Result<(), SessionError> {
-        let fs = binary::scan_blobs(&self.vfs, Path::new(PROJECT_ROOT))?;
-        let patches = binary::reconcile_blobs(&mut self.vfs, &self.store, &fs, &self.studio_blobs)?;
+        let scan = binary::scan_blobs(&self.vfs, Path::new(PROJECT_ROOT))?;
+        warn_skipped(&scan);
+        let patches = binary::reconcile_blobs(
+            &mut self.vfs,
+            &self.store,
+            &scan.instances,
+            &self.studio_blobs,
+            &scan.unseen(),
+        )?;
         self.absorb_blobs(patches);
         Ok(())
     }

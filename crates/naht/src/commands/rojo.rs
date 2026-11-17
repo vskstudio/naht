@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 struct RojoProject {
@@ -63,6 +63,11 @@ pub fn migrate_from_rojo(root: &Path) -> Result<Vec<String>, CommandError> {
     let mut warnings = Vec::new();
     if let Some(tree) = &rojo.tree {
         collect_tree_nodes(tree, "", &mut nodes, &mut warnings);
+    }
+    for node in &nodes {
+        if let Some(path) = &node.path {
+            checked_tree_path(path)?;
+        }
     }
     let toml = render_rojo_config(&rojo.name(root), rojo.serve_place_id(), &nodes)?;
     write_file(&root.join(PROJECT_FILE), &toml)?;
@@ -250,7 +255,7 @@ pub(super) fn assemble_project_snapshot(
 
         let mut built = match &node.path {
             Some(path) => {
-                let source_dir = root.join(path);
+                let source_dir = tree_source_dir(root, path)?;
                 let mut from =
                     mapper::snapshot_dir(&DiskVfs::new(), &source_dir).map_err(|source| {
                         CommandError::Tree {
@@ -284,6 +289,35 @@ pub(super) fn assemble_project_snapshot(
     }
 
     Ok((snapshot, warnings))
+}
+
+fn checked_tree_path(path: &str) -> Result<&Path, CommandError> {
+    let relative = Path::new(path);
+    let stays_inside = !relative.as_os_str().is_empty()
+        && relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
+    if stays_inside {
+        Ok(relative)
+    } else {
+        Err(CommandError::TreePathOutsideRoot {
+            path: path.to_owned(),
+        })
+    }
+}
+
+fn tree_source_dir(root: &Path, path: &str) -> Result<PathBuf, CommandError> {
+    let joined = root.join(checked_tree_path(path)?);
+    let (Ok(canonical_root), Ok(canonical)) = (root.canonicalize(), joined.canonicalize()) else {
+        return Ok(joined);
+    };
+    if canonical.starts_with(&canonical_root) {
+        Ok(joined)
+    } else {
+        Err(CommandError::TreePathOutsideRoot {
+            path: path.to_owned(),
+        })
+    }
 }
 
 fn graft(parent: &mut Snapshot, parents: &[&str], leaf: Snapshot) {

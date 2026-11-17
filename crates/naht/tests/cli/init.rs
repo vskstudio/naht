@@ -21,7 +21,9 @@ fn init_scaffolds_a_working_project() {
     assert_eq!(config.project_name(&root), "proj");
 
     let vfs = RootedVfs::new(root.canonicalize().unwrap(), DiskVfs::new());
-    let scanned = reconciler::scan_text(&vfs, Path::new("")).unwrap();
+    let scanned = reconciler::scan_text(&vfs, Path::new(""))
+        .unwrap()
+        .instances;
     assert!(scanned.keys().any(|key| key.ends_with("Hello.luau")));
 }
 

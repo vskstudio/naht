@@ -1,11 +1,10 @@
 use super::Session;
-use super::{MASS_DELETE_WARN, PROJECT_ROOT, SessionError};
+use super::{MASS_DELETE_WARN, SessionError};
 use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::{Change, EventKind, Outcome};
-use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
+use naht_core::reconciler::{Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::InstanceRecord;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 impl Session {
     /// Apply a batch of Studio-side edits to the mirror, then reconcile against the current
@@ -33,9 +32,7 @@ impl Session {
             }
         }
         let pre_base = self.base_snapshot()?;
-        let fs = reconciler::scan_text(&self.vfs, Path::new(PROJECT_ROOT))?;
-        let patches = reconciler::reconcile(&mut self.vfs, &self.store, &fs, &self.studio)?;
-        self.absorb(patches, &pre_base)?;
+        self.reconcile_text(&pre_base)?;
         if self.terrain_sync {
             self.reconcile_blobs()?;
         }

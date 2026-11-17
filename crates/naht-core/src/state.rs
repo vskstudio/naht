@@ -117,7 +117,8 @@ impl StateStore {
              CREATE TABLE IF NOT EXISTS assets (
                  content_hash TEXT PRIMARY KEY,
                  asset_id     TEXT NOT NULL
-             );",
+             );
+             DELETE FROM assets WHERE content_hash NOT LIKE 'blake3:%';",
         )?;
 
         match read_meta_i64(&conn, SCHEMA_VERSION_KEY)? {
@@ -337,6 +338,7 @@ fn read_meta_i64(conn: &Connection, key: &str) -> Result<Option<i64>, StateError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hash::content_hash;
 
     fn text_record(guid: &str) -> InstanceRecord {
         InstanceRecord {
@@ -438,5 +440,31 @@ mod tests {
         assert_eq!(store.project_id().unwrap(), None);
         store.set_project_id("proj-42").unwrap();
         assert_eq!(store.project_id().unwrap(), Some("proj-42".to_owned()));
+    }
+
+    #[test]
+    fn legacy_asset_rows_keyed_by_the_64_bit_hash_are_dropped_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let legacy_key = content_hash(b"v1");
+        let current_key = "blake3:0123";
+        let store = StateStore::open(&path).unwrap();
+        store.cache_asset(current_key, "rbxassetid://2").unwrap();
+        let raw = Connection::open(&path).unwrap();
+        raw.execute(
+            "INSERT INTO assets (content_hash, asset_id) VALUES (?1, ?2)",
+            (&legacy_key, "rbxassetid://777"),
+        )
+        .unwrap();
+        drop(raw);
+        drop(store);
+
+        let reopened = StateStore::open(&path).unwrap();
+
+        assert_eq!(reopened.cached_asset(&legacy_key).unwrap(), None);
+        assert_eq!(
+            reopened.cached_asset(current_key).unwrap(),
+            Some("rbxassetid://2".to_owned())
+        );
     }
 }
