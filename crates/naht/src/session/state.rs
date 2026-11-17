@@ -156,7 +156,10 @@ fn case_folded_key(path: &Path) -> String {
     path.components()
         .filter_map(|component| match component {
             Component::Normal(name) => Some(name.to_string_lossy().to_lowercase()),
-            _ => None,
+            Component::Prefix(_)
+            | Component::RootDir
+            | Component::CurDir
+            | Component::ParentDir => None,
         })
         .collect::<Vec<_>>()
         .join("/")
