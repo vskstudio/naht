@@ -154,6 +154,9 @@ instances only the hash is stored (no merge base).
 - A failed write **pauses the affected path** and surfaces the error; it never kills the session and
   never discards the pending change.
 - A source file that cannot be read or decoded (non-UTF-8, dangling symlink) is skipped and logged as a warning; the rest of the tree still syncs.
+- A path the scan could not see (an unreadable file, or one under an ignored directory) is left alone on both sides and in the base: it is neither deleted nor overwritten by a Studio edit.
+- A write never follows a symlink. A live or dangling link at the target is refused with `VfsError::Symlink`, and nothing behind it is created or changed.
+- Temp files (`.<name>.<pid>.<n>.naht-tmp`) left by an interrupted write are removed when a session opens, outside the walk's ignored directories. This assumes one daemon per project.
 - `thiserror` in `naht-core`, `anyhow` at the binary boundary.
 - **Safety guard:** `servePlaceId`: the daemon refuses to sync into a Studio session whose place id
   doesn't match the project, preventing source from landing in the wrong game.
@@ -166,7 +169,7 @@ lives in the final stage of [`spec.md`](spec.md).
 
 | Case | Status | Approach |
 |---|---|---|
-| **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, a *local* mesh/image file is uploaded once via **Open Cloud**, cached by the BLAKE3 digest of its bytes, and its property rewritten to `rbxassetid://…`. Off by default. Stage 12. |
+| **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, a *local* mesh/image file is uploaded once via **Open Cloud**, cached by the BLAKE3 digest of its bytes, and its property rewritten to `rbxassetid://…`. Only properties that Roblox reflection types as Content are uploaded; a local file named by any other property is reported and left as written. Off by default. Stage 12. |
 | **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob: hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on. Stages 11, 13. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
@@ -182,3 +185,10 @@ not a v1 blocker.
 - **Integration:** a fake Studio HTTP client (the `fake-studio` pattern) drives end-to-end FS ↔
   simulated-Studio scenarios, including conflict and reconnect.
 - **Plugin:** a minimal Luau harness, added once the protocol stabilizes.
+
+## 11. Known gaps & operational notes
+
+- **Frozen binary paths have no unfreeze (C8).** When both sides change a blob, its path freezes, and the resolve API has no way to clear that freeze. Choosing which side wins on resolve is a decision still open, and the fix touches the persist layer (`reconciler/persist.rs`).
+- **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
+- **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
+- **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next sync.

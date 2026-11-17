@@ -56,8 +56,11 @@ enabled = true
 api_key_env = "ROBLOX_OPEN_CLOUD_KEY"
 ```
 
-With this on, a *local* mesh or image file is uploaded once via **Open Cloud**, cached by content hash
-(so it isn't re-uploaded), and its property is rewritten to the resulting `rbxassetid://…`. An upload
+With this on, a *local* mesh or image file is uploaded once via **Open Cloud**, cached by the BLAKE3 digest of
+its bytes (so an unchanged file isn't re-uploaded), and its property is rewritten to the resulting `rbxassetid://…`.
+Only properties Roblox declares as content (for example `MeshId`, `TextureId` or `ColorMap`) are uploaded. A local
+file path under any other property is reported and left as written. Cache rows from older builds, keyed by the
+previous 64-bit hash, are dropped when the state store opens, so those files are uploaded once more. An upload
 failure is **isolated to the failing path**. It never takes down the session.
 
 <Callout type="warning">

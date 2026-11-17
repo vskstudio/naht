@@ -56,8 +56,12 @@ enabled = true
 api_key_env = "ROBLOX_OPEN_CLOUD_KEY"
 ```
 
-Avec ceci activé, un fichier mesh ou image *local* est uploadé une fois via **Open Cloud**, mis en cache par hash de contenu
-(pour ne pas être ré-uploadé), et sa propriété est réécrite vers le `rbxassetid://…` résultant. Un échec d'upload
+Avec ceci activé, un fichier mesh ou image *local* est uploadé une fois via **Open Cloud**, mis en cache par empreinte BLAKE3
+de ses octets (un fichier inchangé n'est pas ré-uploadé), et sa propriété est réécrite vers le `rbxassetid://…` résultant.
+Seules les propriétés que Roblox déclare comme contenu (par exemple `MeshId`, `TextureId` ou `ColorMap`) sont uploadées. Un
+chemin de fichier local sous une autre propriété est signalé et laissé tel quel. Les lignes de cache des anciennes
+versions, indexées par l'ancien hash 64 bits, sont supprimées à l'ouverture de la base d'état : ces fichiers sont donc
+uploadés une fois de plus. Un échec d'upload
 est **isolé au chemin en échec** : il ne fait jamais tomber la session.
 
 <Callout type="warning">
