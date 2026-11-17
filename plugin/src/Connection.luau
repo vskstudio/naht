@@ -651,6 +651,7 @@ function Connection._flushPush(self, session: number)
 		end
 		if ok then
 			self.pushBackoff = PUSH_RETRY
+			self.pushServerErrors = 0
 			self:_clearWarning("push")
 			for path in remaining do
 				self:_clearRefused(path)
@@ -721,6 +722,7 @@ function Connection._postEach(self, session: number, remaining: { [string]: any 
 		end
 		if ok then
 			remaining[path] = nil
+			self.pushServerErrors = 0
 			self:_clearWarning("push")
 			self:_clearRefused(path)
 		elseif isTransientFailure(err) then

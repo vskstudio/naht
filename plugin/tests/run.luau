@@ -2892,6 +2892,53 @@ do
 	)
 end
 
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local script = { 500, nil, 500, 500, nil }
+	local calls = 0
+	local accepted = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				calls += 1
+				local outcome = script[calls]
+				if outcome == 500 then
+					error({ status = 500, message = "naht: /changes returned 500", refused = {} })
+				end
+				table.insert(accepted, changes[1].path)
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["A.luau"] = Protocol.upsert("A.luau", "ModuleScript", "A")
+	connection:_schedulePush()
+	task.wait(0.5)
+	connection.pushBackoff = 0.01
+	connection.pendingPush["B.luau"] = Protocol.upsert("B.luau", "ModuleScript", "B")
+	connection:_schedulePush()
+	task.wait(1)
+	connection.running = false
+	check(
+		"a 500 that is followed by an accepted post does not count toward the bound of consecutive 500s",
+		table.concat(accepted, ",") == "A.luau,B.luau" and next(connection.pendingPush) == nil,
+		string.format("calls %d, accepted: %s", calls, table.concat(accepted, ","))
+	)
+	check(
+		"no path is reported as kept failing after a 500 that was followed by an accepted post",
+		string.find(table.concat(warningsOf(log), "\n"), "kept failing", 1, true) == nil,
+		table.concat(warningsOf(log), "\n")
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end
