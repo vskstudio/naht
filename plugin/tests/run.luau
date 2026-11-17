@@ -2233,6 +2233,84 @@ do
 	)
 end
 
+local function textPushProbe(failFirst: boolean)
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local events: { string } = {}
+	local accepted: { string } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			postChanges = function(_, changes)
+				local content = changes[1].content
+				table.insert(events, "start " .. content)
+				local slow = #events == 1
+				task.wait(if slow then 0.5 else 0.05)
+				table.insert(events, "end " .. content)
+				if failFirst and slow then
+					error("naht: /changes returned 503")
+				end
+				table.insert(accepted, content)
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.pushBackoff = 0.01
+	connection.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v1")
+	connection:_schedulePush()
+	local waited = 0
+	while #events == 0 and waited < 100 do
+		task.wait(0.01)
+		waited += 1
+	end
+	connection.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v2")
+	connection:_schedulePush()
+	task.wait(3.5)
+	connection.running = false
+	return events, accepted
+end
+
+do
+	local events, accepted = textPushProbe(true)
+	local overlapped = false
+	local open = 0
+	for _, event in events do
+		if string.sub(event, 1, 5) == "start" then
+			open += 1
+			if open > 1 then
+				overlapped = true
+			end
+		else
+			open -= 1
+		end
+	end
+	check(
+		"an edit during an in-flight text push never starts a second post",
+		not overlapped,
+		table.concat(events, " | ")
+	)
+	check(
+		"after the in-flight text push fails with a 503 the daemon ends with the newest edit",
+		accepted[#accepted] == "v2",
+		"accepted: " .. table.concat(accepted, ",")
+	)
+end
+
+do
+	local events = textPushProbe(false)
+	check(
+		"a text push waits for the in-flight post to return before the next one starts",
+		table.concat(events, " | ") == "start v1 | end v1 | start v2 | end v2",
+		table.concat(events, " | ")
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end

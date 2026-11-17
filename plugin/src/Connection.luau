@@ -100,6 +100,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		lastApplied = {},
 		pendingPush = {},
 		pushScheduled = false,
+		pushInFlight = false,
 		studioConnections = nil,
 		skippedPaths = {},
 		warnings = {},
@@ -551,7 +552,7 @@ function Connection._detachStudio(self)
 end
 
 function Connection._schedulePush(self, delay: number?)
-	if self.pushScheduled then
+	if self.pushScheduled or self.pushInFlight then
 		return
 	end
 	self.pushScheduled = true
@@ -561,36 +562,45 @@ function Connection._schedulePush(self, delay: number?)
 			return
 		end
 		self.pushScheduled = false
-		local sent = self.pendingPush
-		self.pendingPush = {}
-		local changes = {}
-		for _, change in sent do
-			table.insert(changes, change)
-		end
-		if #changes == 0 then
-			return
-		end
-		local ok, err = pcall(function()
-			self.client:postChanges(changes)
-		end)
-		if not self:_isCurrent(session) then
-			return
-		end
-		if ok then
-			self.pushBackoff = PUSH_RETRY
-			self:_clearWarning("push")
-			return
-		end
-		self:_setWarning("push", "push failed: " .. tostring(err))
-		for path, change in sent do
-			if self.pendingPush[path] == nil then
-				self.pendingPush[path] = change
-			end
-		end
-		local delay = self.pushBackoff
-		self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
-		self:_schedulePush(delay)
+		self:_flushPush(session)
 	end)
+end
+
+function Connection._flushPush(self, session: number)
+	local sent = self.pendingPush
+	self.pendingPush = {}
+	local changes = {}
+	for _, change in sent do
+		table.insert(changes, change)
+	end
+	if #changes == 0 then
+		return
+	end
+	self.pushInFlight = true
+	local ok, err = pcall(function()
+		self.client:postChanges(changes)
+	end)
+	self.pushInFlight = false
+	if not self:_isCurrent(session) then
+		return
+	end
+	if ok then
+		self.pushBackoff = PUSH_RETRY
+		self:_clearWarning("push")
+		if next(self.pendingPush) ~= nil then
+			self:_schedulePush()
+		end
+		return
+	end
+	self:_setWarning("push", "push failed: " .. tostring(err))
+	for path, change in sent do
+		if self.pendingPush[path] == nil then
+			self.pendingPush[path] = change
+		end
+	end
+	local delay = self.pushBackoff
+	self.pushBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+	self:_schedulePush(delay)
 end
 
 return Connection
