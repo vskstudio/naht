@@ -37,15 +37,26 @@ drop it into the local Plugins folder) and enable **Game Settings â†’ Security â
 
 Behaviour notes:
 
-- Turning sync off detaches every Studio listener, and turning it back on attaches them once.
+- Turning sync off detaches every Studio listener, drops any edit still waiting to be pushed, and turning
+  it back on attaches them once. Nothing is sent after sync is turned off.
 - A delete patch removes only the instance of the matching script class (`Script`, `LocalScript` or
   `ModuleScript`) and never creates folders to hold it. A delete for a missing parent does nothing.
-- An applied patch is not echoed back. Only a Studio edit that changes a script's source is pushed.
+- An applied patch is not echoed back. Only a Studio edit that changes a script's source is pushed, and
+  reverting a source to the value the daemon last sent is pushed as a real edit.
+- An upsert matches an existing child by name and expected class. A same-named script of another class
+  is replaced (its children move to the new script). A same-named non-script (a `Folder`, for example)
+  blocks the patch: nothing is written and the patch is not acknowledged. A folder and a script with the
+  same name cannot both be synced.
 - Instance names containing `/`, `\` or NUL are not synced, because they would split into extra
-  folders on disk. The plugin warns once per affected path.
+  folders on disk. A `ModuleScript` whose name ends in `.server`, `.client` or `.luau` is not synced
+  either, because its file name would be ambiguous. The plugin warns once per affected path.
 - A terrain blob with out-of-range dimensions, a non-positive resolution, or a payload length that
-  does not match its dimensions is refused. A blob that fails to apply keeps its place and is retried
-  every 2 seconds; the cursor advances only once every blob in a batch has been applied.
+  does not match its dimensions is refused. The cursor is held, the widget shows
+  `Warning` with `terrain blob rejected: <reason>`, and the blob is retried with an exponential backoff
+  from 2 seconds up to a cap of 60 seconds; the cursor advances only once every blob in a batch has been
+  applied.
+- Terrain larger than 1,048,576 voxels at 4-stud resolution is not pushed live. The widget shows
+  `Warning` with `terrain too large for live push, use naht build`.
 - The reconnect backoff restarts (from 1 second) only after a poll completes, so a daemon that
   answers `/info` and then fails on `/patches` keeps backing off.
 

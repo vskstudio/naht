@@ -1,18 +1,20 @@
 --!strict
--- Minimal Luau harness for the encode/decode and patch-apply paths (Stage 6 acceptance). Run with a
--- Luau runtime, e.g. `lune run plugin/tests/run.luau` from the repo root. It exits non-zero on any
--- failure.
---
--- The MessagePack cases decode bytes captured from the real daemon encoder
--- (`cargo run -p naht-core --example wire_golden`), so the codec is checked against the actual wire
--- format, not just against itself.
+
+task = require("@lune/task") :: any
+Enum = {
+	Material = {
+		FromValue = function(_, value: number)
+			return value
+		end,
+	},
+} :: any
 
 local MessagePack = require("../src/MessagePack")
 local Apply = require("../src/Apply")
 local Terrain = require("../src/Terrain")
 local Protocol = require("../src/Protocol")
+local Connection = require("../src/Connection")
 
--- Golden MessagePack from `naht-core::protocol` (rmp_serde::to_vec_named).
 local GOLDEN = {
 	server_info = "85b070726f746f636f6c5f76657273696f6e01ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263ae73657276655f706c6163655f69647b",
 	patch_batch = "82a6637572736f7202a7706174636865739185a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
@@ -37,23 +39,23 @@ local function fromHex(hex: string): string
 	end))
 end
 
--- === MessagePack decode against the real wire format =========================================
+local function noop() end
 
 local info = MessagePack.decode(fromHex(GOLDEN.server_info))
 check("server_info protocol_version", info.protocol_version == 1)
 check("server_info project_name", info.project_name == "demo")
 check("server_info serve_place_id", info.serve_place_id == 123)
 check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 1)
-local mismatchOk = pcall(function()
-	Protocol.assertCompatible({
+check(
+	"mismatched protocol version is rejected",
+	not pcall(Protocol.assertCompatible, {
 		protocol_version = 999,
 		server_version = "future",
 		project_name = "demo",
 		session_id = "future",
 		serve_place_id = nil,
 	})
-end)
-check("mismatched protocol version is rejected", not mismatchOk)
+)
 
 local batch = MessagePack.decode(fromHex(GOLDEN.patch_batch))
 check("patch_batch cursor", batch.cursor == 2)
@@ -70,8 +72,6 @@ check("change_batch length", #changes.changes == 2)
 check("change upsert (externally tagged)", changes.changes[1].Upsert.path == "src/A.luau")
 check("change upsert content", changes.changes[1].Upsert.content == "return 2")
 check("change delete (externally tagged)", changes.changes[2].Delete.path == "src/B.luau")
-
--- === MessagePack binary (terrain blob) =======================================================
 
 local blobBatch = MessagePack.decode(fromHex(GOLDEN.blob_patch_batch))
 check("blob_batch cursor", blobBatch.cursor == 1)
@@ -93,8 +93,6 @@ local binRoundtrip = MessagePack.decode(MessagePack.encode({
 }))
 check("binary encode/decode round-trip", binRoundtrip.blob == "\0\255\10\127")
 
--- The `POST /blobs` wire shape (mirroring Protocol.encodeBlobs): raw voxel bytes carried as a
--- MessagePack bin survive a round-trip intact, including NUL and high bytes.
 local blobPush = MessagePack.decode(MessagePack.encode({
 	changes = MessagePack.array({
 		{ path = "Terrain.terrain", class = "Terrain", content = MessagePack.binary("\0\1\255\128\127") },
@@ -104,13 +102,10 @@ check("blob push preserves path", blobPush.changes[1].path == "Terrain.terrain")
 check("blob push preserves class", blobPush.changes[1].class == "Terrain")
 check("blob push preserves raw bytes", blobPush.changes[1].content == "\0\1\255\128\127")
 
--- === terrain blob (de)serialization round-trip ===============================================
-
 local grid = {
 	resolution = 4,
 	min = { x = 0, y = 0, z = 0 },
 	max = { x = 8, y = 8, z = 8 },
-	-- nx=2, ny=1, nz=2
 	materials = { { { 1, 256 } }, { { 2, 3 } } },
 	occupancies = { { { 0.0, 1.0 } }, { { 0.5, 0.25 } } },
 }
@@ -137,9 +132,8 @@ local function terrainHeader(nx: number, ny: number, nz: number, resolution: num
 	return string.pack("<i4i4i4fffffff", nx, ny, nz, 0, 0, 0, 1, 1, 1, resolution)
 end
 
-local function rejectsTerrain(name: string, blob: string)
-	local ok = pcall(Terrain.deserialize, blob)
-	check("terrain blob rejects " .. name, not ok)
+local function rejectsTerrain(name: string, blobText: string)
+	check("terrain blob rejects " .. name, not pcall(Terrain.deserialize, blobText))
 end
 
 rejectsTerrain("a truncated header", string.sub(terrainHeader(1, 1, 1, 4), 1, 20))
@@ -162,16 +156,21 @@ local fakeVoxelTerrain = {
 local readBack = Terrain.deserialize(Terrain.read(fakeVoxelTerrain, regionFromStudio, 4))
 check(
 	"terrain read uses region min as center minus half size",
-	readBack.min.x == 6 and readBack.min.y == 18 and readBack.min.z == 29,
-	string.format("min was (%s, %s, %s)", tostring(readBack.min.x), tostring(readBack.min.y), tostring(readBack.min.z))
+	readBack.min.x == 6 and readBack.min.y == 18 and readBack.min.z == 29
 )
 check(
 	"terrain read uses region max as center plus half size",
-	readBack.max.x == 14 and readBack.max.y == 22 and readBack.max.z == 31,
-	string.format("max was (%s, %s, %s)", tostring(readBack.max.x), tostring(readBack.max.y), tostring(readBack.max.z))
+	readBack.max.x == 14 and readBack.max.y == 22 and readBack.max.z == 31
 )
 
--- === MessagePack encode round-trip ===========================================================
+local function voxelCountOf(sizeX: number, sizeY: number, sizeZ: number, resolution: number): number
+	local ok, count = pcall(Terrain.voxelCount, sizeX, sizeY, sizeZ, resolution)
+	return if ok then count else -1
+end
+
+check("voxel count of a 16 stud cube at 4 studs is 64", voxelCountOf(16, 16, 16, 4) == 64)
+check("voxel count rounds a partial voxel up", voxelCountOf(5, 4, 4, 4) == 2)
+check("a 1024x256x1024 region at 4 studs is 4194304 voxels", voxelCountOf(1024, 256, 1024, 4) == 4194304)
 
 local roundtrip = MessagePack.decode(MessagePack.encode({
 	changes = MessagePack.array({
@@ -193,8 +192,7 @@ check("encode number", primitives.count == 4096)
 check("encode string", primitives.text == "hello")
 
 local function rejects(name: string, hex: string)
-	local ok = pcall(MessagePack.decode, fromHex(hex))
-	check(name, not ok)
+	check(name, not pcall(MessagePack.decode, fromHex(hex)))
 end
 
 local function decodesTo(name: string, hex: string, expected: any)
@@ -217,18 +215,86 @@ decodesTo("negative fixint is decoded", "e0", -32)
 decodesTo("int8 is decoded", "d0ff", -1)
 decodesTo("int16 is decoded", "d1fffe", -2)
 decodesTo("int32 is decoded", "d2fffffffe", -2)
-local nestedOk = pcall(MessagePack.decode, fromHex(string.rep("91", 64) .. "01"))
-check("64 nested arrays are accepted", nestedOk)
+check("64 nested arrays are accepted", pcall(MessagePack.decode, fromHex(string.rep("91", 64) .. "01")))
 rejects("65 nested arrays exceed the depth cap", string.rep("91", 65) .. "01")
 
--- === patch-apply against a mock DataModel ====================================================
-
-local function mockTree()
-	local function newNode(className: string, name: string)
-		return { ClassName = className, Name = name, Source = "", children = {}, parent = nil }
+local function signal()
+	local connections: { { handler: (...any) -> (), active: boolean } } = {}
+	local object = {}
+	function object:Connect(handler)
+		local entry = { handler = handler, active = true }
+		table.insert(connections, entry)
+		return {
+			Disconnect = function()
+				entry.active = false
+			end,
+		}
 	end
-	local root = newNode("Folder", "root")
-	return {
+	function object:Fire(...)
+		for _, entry in connections do
+			if entry.active then
+				entry.handler(...)
+			end
+		end
+	end
+	function object:count(): number
+		local live = 0
+		for _, entry in connections do
+			if entry.active then
+				live += 1
+			end
+		end
+		return live
+	end
+	return object
+end
+
+local SCRIPT_CLASSES = { Script = true, LocalScript = true, ModuleScript = true }
+
+local function newNode(className: string, name: string): any
+	local node: any = {
+		ClassName = className,
+		Name = name,
+		Source = "",
+		Parent = nil,
+		children = {},
+		sourceChanged = signal(),
+	}
+	node.GetPropertyChangedSignal = function(_, _property)
+		return node.sourceChanged
+	end
+	return node
+end
+
+local function studioWorld(syncEcho: boolean)
+	local root: any = newNode("Folder", "root")
+	root.DescendantAdded = signal()
+	root.DescendantRemoving = signal()
+	root.GetDescendants = function(self)
+		local list = {}
+		local function visit(node)
+			for _, child in node.children do
+				table.insert(list, child)
+				visit(child)
+			end
+		end
+		visit(self)
+		return list
+	end
+	local queued: { any } = {}
+	local function detach(node)
+		local parent = node.Parent
+		if parent ~= nil then
+			for index, child in parent.children do
+				if child == node then
+					table.remove(parent.children, index)
+					break
+				end
+			end
+		end
+		node.Parent = nil
+	end
+	local tree = {
 		root = root,
 		createInstance = function(className: string, name: string)
 			return newNode(className, name)
@@ -252,60 +318,47 @@ local function mockTree()
 			return node.ClassName
 		end,
 		getSource = function(node: any): string
+			if not SCRIPT_CLASSES[node.ClassName] then
+				error("Folder has no Source property")
+			end
 			return node.Source
 		end,
 		setParent = function(node: any, parent: any)
-			node.parent = parent
+			detach(node)
+			node.Parent = parent
 			table.insert(parent.children, node)
+			root.DescendantAdded:Fire(node)
 		end,
 		setSource = function(node: any, content: string)
+			if not SCRIPT_CLASSES[node.ClassName] then
+				error("Folder has no Source property")
+			end
 			node.Source = content
-		end,
-		destroy = function(node: any)
-			local parent = node.parent
-			if parent ~= nil then
-				for index, child in parent.children do
-					if child == node then
-						table.remove(parent.children, index)
-						break
-					end
-				end
+			if syncEcho then
+				node.sourceChanged:Fire()
+			else
+				table.insert(queued, node)
 			end
 		end,
+		destroy = function(node: any)
+			detach(node)
+			root.DescendantRemoving:Fire(node)
+		end,
 	}
+	local function flush()
+		local pending = queued
+		queued = {}
+		for _, node in pending do
+			node.sourceChanged:Fire()
+		end
+	end
+	return tree, root, flush
 end
 
-local tree = mockTree()
-local applier = Apply.create(tree)
-
-applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
-local src = tree.findChild(tree.root, "src")
-check("apply creates intermediate folder", src ~= nil and src.ClassName == "Folder")
-local a = if src ~= nil then tree.findChild(src, "A") else nil
-check("apply creates leaf with class", a ~= nil and a.ClassName == "ModuleScript")
-check("apply sets source", a ~= nil and a.Source == "return 1")
-
-applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Update", content = "return 2" })
-check("apply update reuses node and sets source", a ~= nil and a.Source == "return 2")
-check("apply update does not duplicate", src ~= nil and #src.children == 1)
-
-applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Delete" })
-check("apply delete removes node", src ~= nil and #src.children == 0)
-
-applier:apply({
-	path = "ui/main.client.luau",
-	class = "LocalScript",
-	kind = "Create",
-	content = "print('hi')",
-})
-local ui = tree.findChild(tree.root, "ui")
-local main = if ui ~= nil then tree.findChild(ui, "main") else nil
-check("apply strips .client.luau suffix", main ~= nil and main.Name == "main")
-check("apply maps LocalScript class", main ~= nil and main.ClassName == "LocalScript")
-
-local function freshApplier()
-	local fresh = mockTree()
-	return fresh, Apply.create(fresh)
+local function place(tree: any, className: string, name: string, parent: any): any
+	local node = tree.createInstance(className, name)
+	tree.setParent(node, parent)
+	return node
 end
 
 local function countNamed(parent: any, name: string): number
@@ -318,252 +371,719 @@ local function countNamed(parent: any, name: string): number
 	return count
 end
 
+local function freshApplier()
+	local tree, root = studioWorld(true)
+	return tree, root, Apply.create(tree)
+end
+
 do
-	local fresh, freshApply = freshApplier()
-	freshApply:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
-	freshApply:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Delete" })
-	local utils = fresh.findChild(fresh.root, "Utils")
+	local tree, root, applier = freshApplier()
+	applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+	local src = tree.findChild(root, "src")
+	check("apply creates intermediate folder", src ~= nil and src.ClassName == "Folder")
+	local a = if src ~= nil then tree.findChild(src, "A") else nil
+	check("apply creates leaf with class", a ~= nil and a.ClassName == "ModuleScript")
+	check("apply sets source", a ~= nil and a.Source == "return 1")
+
+	applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Update", content = "return 2" })
+	check("apply update reuses node and sets source", a ~= nil and a.Source == "return 2")
+	check("apply update does not duplicate", src ~= nil and #src.children == 1)
+
+	applier:apply({ path = "src/A.luau", class = "ModuleScript", kind = "Delete" })
+	check("apply delete removes node", src ~= nil and #src.children == 0)
+end
+
+do
+	local tree, root, applier = freshApplier()
+	applier:apply({ path = "ui/main.client.luau", class = "LocalScript", kind = "Create", content = "print('hi')" })
+	local ui = tree.findChild(root, "ui")
+	local main = if ui ~= nil then tree.findChild(ui, "main") else nil
+	check("apply strips .client.luau suffix", main ~= nil and main.Name == "main")
+	check("apply maps LocalScript class", main ~= nil and main.ClassName == "LocalScript")
+end
+
+do
+	local tree, root, applier = freshApplier()
+	applier:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
+	applier:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Delete" })
+	local utils = tree.findChild(root, "Utils")
 	check(
 		"delete of a file keeps a same-named folder and its children",
-		utils ~= nil and utils.ClassName == "Folder" and fresh.findChild(utils, "Helper") ~= nil
+		utils ~= nil and utils.ClassName == "Folder" and tree.findChild(utils, "Helper") ~= nil
 	)
 end
 
 do
-	local fresh, freshApply = freshApplier()
-	freshApply:apply({ path = "x.luau", class = "ModuleScript", kind = "Create", content = "a" })
-	freshApply:apply({ path = "x.server.luau", class = "Script", kind = "Delete" })
-	local survivor = fresh.findChild(fresh.root, "x")
-	check(
-		"delete of a script whose class changed keeps the new sibling",
-		survivor ~= nil and survivor.ClassName == "ModuleScript" and survivor.Source == "a"
-	)
+	local tree, root, applier = freshApplier()
+	applier:apply({ path = "missing/A.luau", class = "ModuleScript", kind = "Delete" })
+	check("delete never creates missing parent folders", tree.findChild(root, "missing") == nil)
 end
 
 do
-	local fresh, freshApply = freshApplier()
-	freshApply:apply({ path = "missing/A.luau", class = "ModuleScript", kind = "Delete" })
-	check("delete never creates missing parent folders", fresh.findChild(fresh.root, "missing") == nil)
-end
-
-do
-	local fresh, freshApply = freshApplier()
-	freshApply:apply({ path = "x/Inner.luau", class = "ModuleScript", kind = "Create", content = "" })
-	freshApply:apply({ path = "x.luau", class = "ModuleScript", kind = "Create", content = "" })
-	freshApply:apply({ path = "x.luau", class = "ModuleScript", kind = "Delete" })
-	local remaining = countNamed(fresh.root, "x")
-	local folder = fresh.findChild(fresh.root, "x")
+	local tree, root, applier = freshApplier()
+	place(tree, "Folder", "x", root)
+	place(tree, "ModuleScript", "x", root)
+	applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Delete" })
+	local remaining = tree.findChild(root, "x")
 	check(
 		"delete removes only the same-class sibling among same-named instances",
-		remaining == 1 and folder ~= nil and folder.ClassName == "Folder"
+		countNamed(root, "x") == 1 and remaining ~= nil and remaining.ClassName == "Folder"
 	)
 end
 
-task = require("@lune/task") :: any
-local Connection = require("../src/Connection")
+do
+	local tree, root, applier = freshApplier()
+	applier:apply({ path = "x.server.luau", class = "Script", kind = "Create", content = "s" })
+	applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Update", content = "m" })
+	applier:apply({ path = "x.server.luau", class = "Script", kind = "Delete" })
+	local survivor = tree.findChild(root, "x")
+	check(
+		"Script x then batch [x.luau upsert, x.server.luau delete] leaves a ModuleScript x",
+		countNamed(root, "x") == 1 and survivor ~= nil and survivor.ClassName == "ModuleScript"
+	)
+end
 
-local function fakeConnection(client, terrain)
-	return Connection.new(client, {}, 1, function() end, { terrain = terrain, tree = nil })
+do
+	local tree, root, applier = freshApplier()
+	applier:apply({ path = "x.luau", class = "ModuleScript", kind = "Create", content = "m" })
+	applier:apply({ path = "x.server.luau", class = "Script", kind = "Update", content = "s" })
+	local x = tree.findChild(root, "x")
+	check(
+		"Upsert x.server.luau over a ModuleScript x becomes a Script",
+		countNamed(root, "x") == 1 and x ~= nil and x.ClassName == "Script" and x.Source == "s"
+	)
+end
+
+do
+	local tree, root, applier = freshApplier()
+	local oldModule = place(tree, "ModuleScript", "x", root)
+	place(tree, "ModuleScript", "Inner", oldModule)
+	applier:apply({ path = "x.server.luau", class = "Script", kind = "Update", content = "s" })
+	local x = tree.findChild(root, "x")
+	check(
+		"a class change moves the children of the replaced script",
+		countNamed(root, "x") == 1 and x ~= nil and x.ClassName == "Script" and tree.findChild(x, "Inner") ~= nil
+	)
+end
+
+do
+	local tree, root, applier = freshApplier()
+	applier:apply({ path = "Utils/Helper.luau", class = "ModuleScript", kind = "Create", content = "" })
+	local utils = tree.findChild(root, "Utils")
+	local writes = 0
+	local originalSetSource = tree.setSource
+	tree.setSource = function(node, content)
+		writes += 1
+		originalSetSource(node, content)
+	end
+	local ok = pcall(function()
+		applier:apply({ path = "Utils.luau", class = "ModuleScript", kind = "Update", content = "print(1)" })
+	end)
+	check("Upsert Utils.luau over a Folder Utils fails", not ok)
+	check("the Folder Utils is left alone with no Source written", writes == 0 and utils ~= nil and utils.ClassName == "Folder")
+	check("the Folder Utils keeps its children", utils ~= nil and tree.findChild(utils, "Helper") ~= nil)
+end
+
+do
+	local tree, root = studioWorld(true)
+	local expected: { string } = {}
+	local writeApplier = Apply.create(tree, {
+		expect = function(path: string, content: string)
+			table.insert(expected, path .. "=" .. content)
+		end,
+		forget = function(_path: string) end,
+	})
+	local expectedBeforeWrite = -1
+	local originalSetSource = tree.setSource
+	tree.setSource = function(node: any, content: string)
+		expectedBeforeWrite = #expected
+		originalSetSource(node, content)
+	end
+	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
+	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
+	check("apply records the expected echo before the write", expectedBeforeWrite == 1)
+	check(
+		"apply records the expected echo once and not for a no-op",
+		#expected == 1 and expected[1] == "Z.luau=Q" and tree.findChild(root, "Z") ~= nil
+	)
+end
+
+do
+	local tree = studioWorld(true)
+	local forgotten: { string } = {}
+	tree.setSource = function(_node: any, _content: string)
+		error("read only")
+	end
+	local failingApplier = Apply.create(tree, {
+		expect = function(_path: string, _content: string) end,
+		forget = function(path: string)
+			table.insert(forgotten, path)
+		end,
+	})
+	local ok = pcall(function()
+		failingApplier:apply({ kind = "Upsert", path = "F.luau", class = "ModuleScript", content = "Q" })
+	end)
+	check("a failed source write is rolled back out of the echo record", not ok and forgotten[1] == "F.luau")
 end
 
 local extentsRegion = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 16, Y = 16, Z = 16 } }
-local expandedResolution: number? = nil
-local readRegion: any = nil
-local pushedBlobs: { any } = {}
-local extentsTerrain = {
-	MaxExtents = {
-		ExpandToGrid = function(_, resolution)
-			expandedResolution = resolution
-			return extentsRegion
+
+local function extentsTerrainWith(region: any, onRead: ((any) -> ())?, onWrite: ((any) -> ())?)
+	return {
+		MaxExtents = {
+			ExpandToGrid = function(_, _resolution)
+				return region
+			end,
+		},
+		ReadVoxels = function(_, readRegion, _resolution)
+			if onRead ~= nil then
+				onRead(readRegion)
+			end
+			return { { { { Value = 1 } } } }, { { { 0.5 } } }
 		end,
-	},
-	ReadVoxels = function(_, region, _resolution)
-		readRegion = region
-		return { { { { Value = 1 } } } }, { { { 0.5 } } }
-	end,
-}
-local pushClient = {
-	postBlobs = function(_, changes)
-		table.insert(pushedBlobs, changes)
-	end,
-}
-local pushConnection = fakeConnection(pushClient, extentsTerrain)
-pushConnection:_pushTerrain()
-check("terrain push expands MaxExtents to the 4-stud grid", expandedResolution == 4)
-check("terrain push reads the MaxExtents region as-is", readRegion == extentsRegion)
-check("terrain push posts one blob", #pushedBlobs == 1)
+		WriteVoxels = function(_, writeRegion, _resolution, _materials, _occupancies)
+			if onWrite ~= nil then
+				onWrite(writeRegion)
+			end
+		end,
+	}
+end
 
 local function blobPatchOf(content: string)
 	return { kind = "Upsert", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain", content = content }
 end
 
-local blobCalls: { number } = {}
-local failingBlobClient = {
-	blobs = function(_, cursor)
-		table.insert(blobCalls, cursor)
-		if #blobCalls == 1 then
-			return { cursor = 5, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
-		end
-		error("stop")
-	end,
-}
-local failingBlobConnection = fakeConnection(failingBlobClient, extentsTerrain)
-failingBlobConnection.running = true
-failingBlobConnection.epoch = 1
-failingBlobConnection:_serveBlobs(1)
-check("a failed blob keeps the blob cursor where it was", blobCalls[2] == 0 and failingBlobConnection.blobCursor == 0)
+local function deps(terrain: any, tree: any?)
+	return { terrain = terrain, tree = tree, apply = Apply, protocol = Protocol, terrainBlob = Terrain }
+end
 
-local emptyBatchCalls: { number } = {}
-local emptyBlobClient = {
-	blobs = function(_, cursor)
-		table.insert(emptyBatchCalls, cursor)
-		if #emptyBatchCalls == 1 then
-			return { cursor = 7, patches = {} }
-		end
-		error("stop")
-	end,
-}
-local emptyBlobConnection = fakeConnection(emptyBlobClient, extentsTerrain)
-emptyBlobConnection.running = true
-emptyBlobConnection.epoch = 1
-emptyBlobConnection:_serveBlobs(1)
-check("an empty blob batch advances the blob cursor", emptyBatchCalls[2] == 7)
+local function fakeConnection(client: any, terrain: any): any
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(client, root, 1, noop, deps(terrain, tree))
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	return connection
+end
 
-local function newSignal()
-	local signal = { live = 0 }
-	function signal:Connect(_fn)
-		self.live += 1
-		local active = true
-		return {
-			Disconnect = function(_)
-				if active then
-					active = false
-					signal.live -= 1
-				end
-			end,
-		}
+local function stateLog()
+	local log: { { state: string, detail: string? } } = {}
+	local function onState(state: string, detail: string?)
+		table.insert(log, { state = state, detail = detail })
 	end
-	return signal
+	return log, onState
 end
 
-local function fakeRoot()
-	return {
-		ClassName = "Folder",
-		Name = "root",
-		GetDescendants = function(_)
-			return {}
-		end,
-		DescendantAdded = newSignal(),
-		DescendantRemoving = newSignal(),
-	}
+local function lastStateOf(log: { { state: string, detail: string? } }): string
+	return if #log > 0 then log[#log].state else ""
 end
-
-local function failingInfoClient()
-	return {
-		info = function(_, _placeId)
-			error("offline")
-		end,
-	}
-end
-
-local lifecycleRoot = fakeRoot()
-local lifecycle = Connection.new(failingInfoClient(), lifecycleRoot, 1, function() end, { terrain = extentsTerrain, tree = nil })
-lifecycle:start()
-check("start attaches one set of Studio listeners", lifecycleRoot.DescendantAdded.live == 1)
-lifecycle:stop()
-check("stop detaches the Studio listeners", lifecycleRoot.DescendantAdded.live == 0)
-lifecycle:start()
-lifecycle:start()
-check("restart does not stack Studio listeners", lifecycleRoot.DescendantAdded.live == 1)
-lifecycle:stop()
-check("second stop detaches the Studio listeners", lifecycleRoot.DescendantAdded.live == 0)
-
-local function fakeInstance(className: string, name: string, parent: any): any
-	return { ClassName = className, Name = name, Parent = parent }
-end
-
-local pathRoot = fakeRoot()
-local pathConnection = Connection.new(failingInfoClient(), pathRoot, 1, function() end, { terrain = extentsTerrain, tree = nil })
-local pathFolder = fakeInstance("Folder", "dir", pathRoot)
-check("path of a plain script keeps its folders", pathConnection:_pathOf(fakeInstance("ModuleScript", "ok", pathFolder)) == "dir/ok.luau")
-check("path skips a name containing a slash", pathConnection:_pathOf(fakeInstance("ModuleScript", "a/b", pathRoot)) == nil)
-check("path skips a name containing a backslash", pathConnection:_pathOf(fakeInstance("ModuleScript", "a\\b", pathRoot)) == nil)
-check("path skips a name containing NUL", pathConnection:_pathOf(fakeInstance("ModuleScript", "a\0b", pathRoot)) == nil)
-check("path skips a folder whose name contains a slash", pathConnection:_pathOf(fakeInstance("ModuleScript", "leaf", fakeInstance("Folder", "x/y", pathRoot))) == nil)
-
-local backoffProbe = Connection.new(backoffClient, fakeRoot(), 1, function() end, { terrain = extentsTerrain, tree = nil })
-backoffProbe.running = true
-backoffProbe.backoff = 8
-local backoffPollCalls = 0
-backoffProbe.client = {
-	patches = function(_, _cursor)
-		backoffPollCalls += 1
-		if backoffPollCalls == 1 then
-			return { cursor = 1, patches = {} }
-		end
-		error("stop")
-	end,
-	postAck = function(_, _paths) end,
-}
-pcall(function()
-	backoffProbe:_serve(backoffProbe.session)
-end)
-check("a completed poll resets the reconnect backoff", backoffProbe.backoff == 1)
-
-local echoTree = mockTree()
-echoTree.setParent(echoTree.createInstance("ModuleScript", "Mod"), echoTree.root)
-local echoNode = echoTree.findChild(echoTree.root, "Mod")
-echoNode.Source = "X"
-local echoPolls = 0
-local echoClient = {
-	patches = function(_, _cursor)
-		echoPolls += 1
-		if echoPolls == 1 then
-			return { cursor = 1, patches = { { kind = "Upsert", path = "Mod.luau", class = "ModuleScript", content = "X" } } }
-		end
-		error("stop")
-	end,
-	postAck = function(_, _paths) end,
-}
-local echoConnection = Connection.new(echoClient, echoTree.root, 1, function() end, { terrain = extentsTerrain, tree = echoTree })
-echoConnection.running = true
-pcall(function()
-	echoConnection:_serve(echoConnection.session)
-end)
-check("an apply that changes nothing records no echo", echoConnection.lastApplied["Mod.luau"] == nil)
-
-local writtenTree = mockTree()
-local writtenPolls = 0
-local writtenConnection = Connection.new({
-	patches = function(_, _cursor)
-		writtenPolls += 1
-		if writtenPolls == 1 then
-			return { cursor = 1, patches = { { kind = "Upsert", path = "New.luau", class = "ModuleScript", content = "Y" } } }
-		end
-		error("stop")
-	end,
-	postAck = function(_, _paths) end,
-}, writtenTree.root, 1, function() end, { terrain = extentsTerrain, tree = writtenTree })
-writtenConnection.running = true
-pcall(function()
-	writtenConnection:_serve(writtenConnection.session)
-end)
-check("an apply that writes records its echo", writtenConnection.lastApplied["New.luau"] == "Y")
 
 do
-	local writeTree = mockTree()
-	local writes = {}
-	local writeApplier = Apply.create(writeTree, function(path: string, content: string)
-		table.insert(writes, path .. "=" .. content)
+	local readRegion: any = nil
+	local expanded: number? = nil
+	local posts: { any } = {}
+	local terrain = extentsTerrainWith(extentsRegion, function(region)
+		readRegion = region
 	end)
-	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
-	writeApplier:apply({ kind = "Upsert", path = "Z.luau", class = "ModuleScript", content = "Q" })
-	check("apply reports a source write once and not a no-op", #writes == 1 and writes[1] == "Z.luau=Q")
+	terrain.MaxExtents.ExpandToGrid = function(_, resolution)
+		expanded = resolution
+		return extentsRegion
+	end
+	local connection = fakeConnection({
+		postBlobs = function(_, changes)
+			table.insert(posts, changes)
+		end,
+	}, terrain)
+	connection:_pushTerrain(1)
+	check("terrain push expands MaxExtents to the 4-stud grid", expanded == 4)
+	check("terrain push reads the MaxExtents region as-is", readRegion == extentsRegion)
+	check("terrain push posts one blob", #posts == 1)
 end
 
--- === transport modules compile ===============================================================
--- These talk to HttpService / the DataModel, so they can't run headless, but they must at least
--- compile. Catches syntax regressions in the modules the cases above don't load.
+do
+	local hugeRegion = { CFrame = { Position = { X = 0, Y = 0, Z = 0 } }, Size = { X = 1024, Y = 256, Z = 1024 } }
+	local reads = 0
+	local posts = 0
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(
+		{
+			postBlobs = function(_, _changes)
+				posts += 1
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(hugeRegion, function()
+			reads += 1
+		end), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection:_pushTerrain(1)
+	local last = log[#log]
+	check("terrain over the voxel cap is not read", reads == 0)
+	check("terrain over the voxel cap posts nothing", posts == 0)
+	check(
+		"terrain over the voxel cap is reported through onState",
+		last ~= nil
+			and last.state == "Warning"
+			and last.detail == "terrain too large for live push, use naht build",
+		if last ~= nil then tostring(last.detail) else "no state reported"
+	)
+end
+
+local function blobBackoffAfter(value: number): number?
+	local ok, result = pcall(Connection.nextBlobBackoff, value)
+	return if ok then result else nil
+end
+
+check("blob backoff doubles from 2 seconds", blobBackoffAfter(2) == 4)
+check("blob backoff is capped at 60 seconds", blobBackoffAfter(32) == 60 and blobBackoffAfter(60) == 60)
+
+do
+	local calls: { number } = {}
+	local connection = fakeConnection({
+		blobs = function(_, cursor)
+			table.insert(calls, cursor)
+			if #calls == 1 then
+				return { cursor = 5, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
+			end
+			error("stop")
+		end,
+	}, extentsTerrainWith(extentsRegion))
+	connection.blobBackoff = 0.01
+	connection:_serveBlobs(1)
+	check("a failed blob keeps the blob cursor where it was", calls[2] == 0 and connection.blobCursor == 0)
+end
+
+do
+	local log, onState = stateLog()
+	local calls = 0
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(
+		{
+			blobs = function(_, _cursor)
+				calls += 1
+				if calls == 1 then
+					return { cursor = 9, patches = { blobPatchOf(string.sub(terrainHeader(1, 1, 1, 4), 1, 20)) } }
+				end
+				error("stop")
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.blobBackoff = 0.01
+	connection:_serveBlobs(1)
+	local reported = false
+	for _, entry in log do
+		if
+			entry.state == "Warning"
+			and entry.detail ~= nil
+			and string.find(entry.detail, "terrain blob rejected: ", 1, true) == 1
+		then
+			reported = true
+		end
+	end
+	check("a rejected blob is reported through onState", reported)
+	check("a rejected blob keeps the blob cursor", connection.blobCursor == 0)
+end
+
+do
+	local calls: { number } = {}
+	local connection = fakeConnection({
+		blobs = function(_, cursor)
+			table.insert(calls, cursor)
+			if #calls == 1 then
+				return { cursor = 7, patches = {} }
+			end
+			error("stop")
+		end,
+	}, extentsTerrainWith(extentsRegion))
+	connection:_serveBlobs(1)
+	check("an empty blob batch advances the blob cursor", calls[2] == 7)
+end
+
+do
+	local writes = 0
+	local connection: any = nil
+	connection = fakeConnection(
+		{
+			blobs = function(_, _cursor)
+				connection:stop()
+				return { cursor = 4, patches = { blobPatchOf(terrainHeader(1, 1, 1, 4) .. string.pack("<I2f", 1, 0.5)) } }
+			end,
+		},
+		extentsTerrainWith(extentsRegion, nil, function()
+			writes += 1
+		end)
+	)
+	connection:_serveBlobs(1)
+	check("stop during a blob poll writes no voxels", writes == 0 and connection.blobCursor == 0)
+end
+
+do
+	local log, onState = stateLog()
+	local infoConnection: any = nil
+	local patchPolls = 0
+	local blobPosts = 0
+	local tree, root = studioWorld(true)
+	infoConnection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infoConnection:stop()
+				return { project_name = "demo" }
+			end,
+			patches = function(_, _cursor)
+				patchPolls += 1
+				return { cursor = 1, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				return { cursor = 1, patches = {} }
+			end,
+			postBlobs = function(_, _changes)
+				blobPosts += 1
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	infoConnection.running = true
+	infoConnection.session = 1
+	infoConnection:_run(1)
+	check("stop during the handshake leaves the state Disconnected", lastStateOf(log) == "Disconnected", lastStateOf(log))
+	check("stop during the handshake posts no terrain", blobPosts == 0)
+	check("stop during the handshake polls no patches", patchPolls == 0)
+end
+
+do
+	local tree, root = studioWorld(true)
+	local acks = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				connection:stop()
+				return {
+					cursor = 1,
+					patches = { { kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
+				}
+			end,
+			postAck = function(_, _paths)
+				acks += 1
+			end,
+		},
+		root,
+		1,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection:_serve(1)
+	check("stop during a patch poll applies nothing", tree.findChild(root, "Late") == nil)
+	check("stop during a patch poll acks nothing", acks == 0)
+end
+
+do
+	local posts = 0
+	local connection = fakeConnection({
+		postChanges = function(_, _changes)
+			posts += 1
+		end,
+	}, extentsTerrainWith(extentsRegion))
+	connection.pendingPush["x.luau"] = Protocol.delete("x.luau")
+	connection:_schedulePush()
+	connection:stop()
+	task.wait(0.5)
+	check("a pending push posts nothing after stop", posts == 0, "posts after stop: " .. tostring(posts))
+end
+
+do
+	local attempts = 0
+	local connection = fakeConnection({
+		postChanges = function(_, _changes)
+			attempts += 1
+			error("daemon down")
+		end,
+	}, extentsTerrainWith(extentsRegion))
+	connection.pendingPush["x.luau"] = Protocol.delete("x.luau")
+	connection:_schedulePush()
+	task.wait(0.5)
+	connection:stop()
+	local attemptsAtStop = attempts
+	task.wait(4.5)
+	check(
+		"a failing push is not retried after stop",
+		attempts == attemptsAtStop and attemptsAtStop >= 1,
+		string.format("attempts at stop %d, final %d", attemptsAtStop, attempts)
+	)
+end
+
+local function echoConnection(syncEcho: boolean)
+	local tree, root, flush = studioWorld(syncEcho)
+	local polls = 0
+	local connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return {
+						cursor = 1,
+						patches = { { kind = "Upsert", direction = "ToStudio", path = "Z.luau", class = "ModuleScript", content = "A" } },
+					}
+				end
+				error("stop")
+			end,
+			postAck = function(_, _paths) end,
+		},
+		root,
+		1,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection:_attachStudio()
+	pcall(connection._serve, connection, 1)
+	return connection, tree.findChild(root, "Z"), flush
+end
+
+local function editStudio(node: any, content: string)
+	node.Source = content
+	node.sourceChanged:Fire()
+end
+
+do
+	local connection, node = echoConnection(true)
+	editStudio(node, "B")
+	editStudio(node, "A")
+	local pushed = connection.pendingPush["Z.luau"]
+	check(
+		"sync echo: edit to B then revert to A pushes A",
+		pushed ~= nil and pushed.content == "A",
+		if pushed ~= nil then "pushed " .. tostring(pushed.content) else "nothing pushed"
+	)
+	connection:stop()
+end
+
+do
+	local connection, node, flush = echoConnection(false)
+	flush()
+	editStudio(node, "B")
+	editStudio(node, "A")
+	local pushed = connection.pendingPush["Z.luau"]
+	check(
+		"deferred echo: edit to B then revert to A pushes A",
+		pushed ~= nil and pushed.content == "A",
+		if pushed ~= nil then "pushed " .. tostring(pushed.content) else "nothing pushed"
+	)
+	connection:stop()
+end
+
+do
+	local connection, _node, flush = echoConnection(false)
+	flush()
+	check("a deferred echo of the applied source is dropped", connection.pendingPush["Z.luau"] == nil)
+	connection:stop()
+end
+
+do
+	local connection = echoConnection(true)
+	check("a synchronous echo of the applied source is dropped", connection.pendingPush["Z.luau"] == nil)
+	connection:stop()
+end
+
+do
+	local tree, root = studioWorld(true)
+	local acked: { string } = {}
+	local blockedPolls = 0
+	place(tree, "Folder", "Utils", root)
+	local connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				blockedPolls += 1
+				if blockedPolls == 1 then
+					return {
+						cursor = 1,
+						patches = {
+							{ kind = "Upsert", direction = "ToStudio", path = "Utils.luau", class = "ModuleScript", content = "x" },
+							{ kind = "Upsert", direction = "ToStudio", path = "Other.luau", class = "ModuleScript", content = "y" },
+						},
+					}
+				end
+				error("stop")
+			end,
+			postAck = function(_, paths)
+				acked = paths
+			end,
+		},
+		root,
+		1,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	pcall(connection._serve, connection, 1)
+	check(
+		"a patch blocked by a same-named folder is not acked",
+		#acked == 1 and acked[1] == "Other.luau",
+		"acked " .. table.concat(acked, ",")
+	)
+end
+
+do
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				error("offline")
+			end,
+		},
+		root,
+		1,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection:stop()
+	check("stop reports Disconnected", lastStateOf(log) == "Disconnected")
+end
+
+do
+	local tree, root = studioWorld(true)
+	local lifecycle = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	lifecycle:start()
+	check("start attaches one set of Studio listeners", root.DescendantAdded:count() == 1)
+	lifecycle:stop()
+	check("stop detaches the Studio listeners", root.DescendantAdded:count() == 0)
+	lifecycle:start()
+	lifecycle:start()
+	check("restart does not stack Studio listeners", root.DescendantAdded:count() == 1)
+	lifecycle:stop()
+	check("second stop detaches the Studio listeners", root.DescendantAdded:count() == 0)
+end
+
+do
+	local tree, root = studioWorld(true)
+	local connection = Connection.new({}, root, 1, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	local dir = place(tree, "Folder", "dir", root)
+	check(
+		"path of a plain script keeps its folders",
+		connection:_pathOf(place(tree, "ModuleScript", "ok", dir)) == "dir/ok.luau"
+	)
+	check("path skips a name containing a slash", connection:_pathOf(place(tree, "ModuleScript", "a/b", root)) == nil)
+	check("path skips a name containing a backslash", connection:_pathOf(place(tree, "ModuleScript", "a\\b", root)) == nil)
+	check("path skips a name containing NUL", connection:_pathOf(place(tree, "ModuleScript", "a\0b", root)) == nil)
+	check(
+		"path skips a folder whose name contains a slash",
+		connection:_pathOf(place(tree, "ModuleScript", "leaf", place(tree, "Folder", "x/y", root))) == nil
+	)
+	check("path skips a ModuleScript named x.server", connection:_pathOf(place(tree, "ModuleScript", "x.server", root)) == nil)
+	check("path skips a ModuleScript named x.client", connection:_pathOf(place(tree, "ModuleScript", "x.client", root)) == nil)
+	check("path skips a ModuleScript named x.luau", connection:_pathOf(place(tree, "ModuleScript", "x.luau", root)) == nil)
+end
+
+do
+	local tree, root = studioWorld(true)
+	local warnings: { string } = {}
+	local dependencies = deps(extentsTerrainWith(extentsRegion), tree)
+	dependencies.warn = function(message: string)
+		table.insert(warnings, message)
+	end
+	local connection = Connection.new({}, root, 1, noop, dependencies)
+	local suffixed = place(tree, "ModuleScript", "x.server", root)
+	connection:_pathOf(suffixed)
+	connection:_pathOf(suffixed)
+	check("a script-suffixed name is warned once", #warnings == 1, "warnings: " .. tostring(#warnings))
+end
+
+do
+	local tree, root = studioWorld(true)
+	local polls = 0
+	local connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return { cursor = 1, patches = {} }
+				end
+				error("stop")
+			end,
+			postAck = function(_, _paths) end,
+		},
+		root,
+		1,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 8
+	pcall(connection._serve, connection, 1)
+	check("a completed poll resets the reconnect backoff", connection.backoff == 1)
+end
+
+do
+	local tree, root = studioWorld(true)
+	place(tree, "ModuleScript", "Mod", root).Source = "X"
+	local polls = 0
+	local connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return { cursor = 1, patches = { { kind = "Upsert", path = "Mod.luau", class = "ModuleScript", content = "X" } } }
+				end
+				error("stop")
+			end,
+			postAck = function(_, _paths) end,
+		},
+		root,
+		1,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	pcall(connection._serve, connection, 1)
+	check("an apply that changes nothing records no echo", connection.lastApplied["Mod.luau"] == nil)
+end
+
+do
+	local tree, root = studioWorld(false)
+	local polls = 0
+	local connection = Connection.new(
+		{
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return { cursor = 1, patches = { { kind = "Upsert", path = "New.luau", class = "ModuleScript", content = "Y" } } }
+				end
+				error("stop")
+			end,
+			postAck = function(_, _paths) end,
+		},
+		root,
+		1,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	pcall(connection._serve, connection, 1)
+	check("an apply that writes records its echo", connection.lastApplied["New.luau"] == "Y")
+end
 
 local luau = require("@lune/luau")
 local fs = require("@lune/fs")
@@ -575,13 +1095,13 @@ for _, path in
 		"plugin/src/Plugin.server.luau",
 	}
 do
-	local ok = pcall(function()
-		luau.load(fs.readFile(path))
-	end)
-	check("compiles " .. path, ok)
+	check(
+		"compiles " .. path,
+		pcall(function()
+			luau.load(fs.readFile(path))
+		end)
+	)
 end
-
--- === result ==================================================================================
 
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))

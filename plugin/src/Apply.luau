@@ -1,16 +1,7 @@
 --!strict
--- Apply patches received from the daemon to the DataModel.
---
--- This is transport-and-apply, not sync logic: the daemon already decided what each patch does and
--- in which direction (only `ToStudio` patches reach here). The one mapping the plugin owns is
--- *where* a path lives in the tree: folders mirror the path's directories, and the leaf is a script
--- named after the file. All DataModel mutation goes through an injected `Tree` interface so the apply
--- logic is unit-testable without Studio; `Apply.studioTree` is the real binding.
 
 local Apply = {}
 
--- The minimal tree interface Apply needs. The Studio binding wraps real `Instance` calls; tests pass
--- a mock over plain tables.
 export type Node = any
 export type Tree = {
 	root: Node,
@@ -22,6 +13,11 @@ export type Tree = {
 	setParent: (node: Node, parent: Node) -> (),
 	setSource: (node: Node, content: string) -> (),
 	destroy: (node: Node) -> (),
+}
+
+export type Echo = {
+	expect: (path: string, content: string) -> (),
+	forget: (path: string) -> (),
 }
 
 export type Patch = {
@@ -36,6 +32,8 @@ local SCRIPT_KINDS = {
 	{ suffix = ".client.luau", class = "LocalScript" },
 	{ suffix = ".luau", class = "ModuleScript" },
 }
+
+local SCRIPT_CLASSES = { Script = true, LocalScript = true, ModuleScript = true }
 
 local function scriptKind(fileName: string): { suffix: string, class: string }?
 	for _, kind in SCRIPT_KINDS do
@@ -73,13 +71,10 @@ end
 local Applier = {}
 Applier.__index = Applier
 
--- Create an applier rooted at `tree.root`.
-function Apply.create(tree: Tree, onSourceWrite: ((path: string, content: string) -> ())?)
-	return setmetatable({ tree = tree, onSourceWrite = onSourceWrite }, Applier)
+function Apply.create(tree: Tree, echo: Echo?)
+	return setmetatable({ tree = tree, echo = echo }, Applier)
 end
 
--- Walk (creating as needed) the folder chain for every segment but the last, returning the parent the
--- leaf should live under.
 function Applier._ensureParent(self, segments: { string }): Node
 	local tree = self.tree
 	local parent = tree.root
@@ -108,8 +103,50 @@ function Applier._findParent(self, segments: { string }): Node?
 	return parent
 end
 
--- Apply one patch. `Conflict` carries the marker text and is applied like an `Update` so the
--- conflict is visible in Studio; the caller surfaces it in the UI.
+function Applier._scriptNode(self, parent: Node, leafName: string, class: string): Node
+	local tree = self.tree
+	local matching: Node? = nil
+	local stale: { Node } = {}
+	for _, child in tree.children(parent) do
+		if child.Name == leafName then
+			local childClass = tree.className(child)
+			if childClass == class then
+				matching = matching or child
+			elseif SCRIPT_CLASSES[childClass] then
+				table.insert(stale, child)
+			else
+				error(string.format("%s is a %s, so it blocks the %s patch", leafName, childClass, class))
+			end
+		end
+	end
+	local node = matching
+	if node == nil then
+		node = tree.createInstance(class, leafName)
+		tree.setParent(node, parent)
+	end
+	for _, old in stale do
+		for _, grandchild in tree.children(old) do
+			tree.setParent(grandchild, node)
+		end
+		tree.destroy(old)
+	end
+	return node
+end
+
+function Applier._write(self, path: string, node: Node, content: string)
+	local echo = self.echo
+	if echo ~= nil then
+		echo.expect(path, content)
+	end
+	local ok, err = pcall(self.tree.setSource, node, content)
+	if not ok then
+		if echo ~= nil then
+			echo.forget(path)
+		end
+		error(err, 0)
+	end
+end
+
 function Applier.apply(self, patch: Patch)
 	local tree = self.tree
 	local segments = splitPath(patch.path)
@@ -134,28 +171,19 @@ function Applier.apply(self, patch: Patch)
 	end
 
 	local parent = self:_ensureParent(segments)
-	local node = tree.findChild(parent, leafName)
-	if node == nil then
-		node = tree.createInstance(patch.class, leafName)
-		tree.setParent(node, parent)
-	end
+	local node = self:_scriptNode(parent, leafName, expectedClass(fileName, patch.class))
 	local content = patch.content
 	if content ~= nil and tree.getSource(node) ~= content then
-		tree.setSource(node, content)
-		if self.onSourceWrite ~= nil then
-			self.onSourceWrite(patch.path, content)
-		end
+		self:_write(patch.path, node, content)
 	end
 end
 
--- Apply a list of patches in order.
 function Applier.applyBatch(self, patches: { Patch })
 	for _, patch in patches do
 		self:apply(patch)
 	end
 end
 
--- The Studio binding: a `Tree` backed by real `Instance` calls, rooted at `root`.
 function Apply.studioTree(root: Node): Tree
 	return {
 		root = root,

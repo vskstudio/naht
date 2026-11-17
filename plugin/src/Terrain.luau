@@ -1,24 +1,17 @@
 --!strict
--- Terrain voxel sync: read the region via `ReadVoxels`, ship it as an opaque binary blob, and write
--- it back via `WriteVoxels` (architecture §9, Stage 11). There is **no diff/merge** of voxels, the
--- blob is synced whole and conflicts freeze, exactly like the daemon's binary path.
---
--- The (de)serialization is pure and works on plain numbers, so it round-trips headless in the test
--- harness; only `read`/`write` touch the Studio `Terrain` API.
 
 local Terrain = {}
+
+Terrain.MAX_VOXELS = 1048576
 
 export type Grid = {
 	resolution: number,
 	min: { x: number, y: number, z: number },
 	max: { x: number, y: number, z: number },
-	-- materials[x][y][z] = Enum.Material value (a number); occupancies[x][y][z] = 0..1.
 	materials: { { { number } } },
 	occupancies: { { { number } } },
 }
 
--- Serialize a voxel grid to an opaque blob. Layout: a fixed header (dims, region bounds, resolution)
--- then one `(material:u16, occupancy:f32)` record per voxel in x→y→z order. Little-endian throughout.
 function Terrain.serialize(grid: Grid): string
 	local nx = #grid.materials
 	local ny = if nx > 0 then #grid.materials[1] else 0
@@ -59,7 +52,6 @@ local function checkDimension(axis: string, value: number)
 	end
 end
 
--- Reconstruct a voxel grid from a blob produced by `serialize`.
 function Terrain.deserialize(blob: string): Grid
 	if #blob < HEADER_SIZE then
 		error(string.format("Terrain blob is %d bytes, shorter than its %d-byte header", #blob, HEADER_SIZE))
@@ -117,8 +109,10 @@ local function regionBounds(region: any): ({ x: number, y: number, z: number }, 
 	}
 end
 
--- Read the terrain in `region` (a `Region2int16`/`Region3` value) to a blob. Studio-only: materials
--- come back as `Enum.Material`, converted to their numeric value for the opaque blob.
+function Terrain.voxelCount(sizeX: number, sizeY: number, sizeZ: number, resolution: number): number
+	return math.ceil(sizeX / resolution) * math.ceil(sizeY / resolution) * math.ceil(sizeZ / resolution)
+end
+
 function Terrain.read(terrain: any, region: any, resolution: number): string
 	local materials, occupancies = terrain:ReadVoxels(region, resolution)
 	local nx = #materials
@@ -144,7 +138,6 @@ function Terrain.read(terrain: any, region: any, resolution: number): string
 	})
 end
 
--- Write a blob back into the terrain. Studio-only: numeric material values become `Enum.Material`.
 function Terrain.write(terrain: any, region: any, blob: string)
 	local grid = Terrain.deserialize(blob)
 	local materials = {}

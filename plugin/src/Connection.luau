@@ -1,28 +1,17 @@
 --!strict
--- The connection loop: handshake, long-poll + apply, Studio → filesystem change push, and
--- reconnect-with-backoff. State changes are reported through `onState` so the UI stays a dumb view.
---
--- No sync logic lives here: the daemon decides everything. The plugin only carries patches in,
--- carries edits out, and reports connection state. On every (re)connect it resets its cursor to 0 so
--- the daemon's reconnect re-diff drives a clean catch-up rather than a blind replay.
-
-local Apply = require(if script ~= nil then script.Parent.Apply else "./Apply")
-local Protocol = require(if script ~= nil then script.Parent.Protocol else "./Protocol")
-local Terrain = require(if script ~= nil then script.Parent.Terrain else "./Terrain")
 
 local Connection = {}
 Connection.__index = Connection
 
 local BACKOFF_START = 1
 local BACKOFF_MAX = 15
+local BLOB_BACKOFF_START = 2
+local BLOB_BACKOFF_MAX = 60
 local PUSH_DEBOUNCE = 0.3
 local PUSH_RETRY = 2
-
--- Terrain is synced as one opaque voxel blob over the dedicated `/blobs` channel. The whole region is
--- read/written at the engine's 4-stud voxel resolution; there is only one Terrain per place, so its
--- filesystem path is fixed.
 local TERRAIN_RESOLUTION = 4
 local TERRAIN_PATH = "Terrain.terrain"
+local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
 
 local CLASS_SUFFIX = {
 	Script = ".server.luau",
@@ -31,6 +20,7 @@ local CLASS_SUFFIX = {
 }
 
 local UNSAFE_NAME_CHARACTERS = { "/", "\\", "\0" }
+local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
 
 local function isSafeName(name: string): boolean
 	for _, character in UNSAFE_NAME_CHARACTERS do
@@ -41,14 +31,23 @@ local function isSafeName(name: string): boolean
 	return true
 end
 
-export type State = "Connecting" | "Connected" | "Reconnecting" | "Conflict" | "Disconnected"
+local function endsWithScriptSuffix(name: string): boolean
+	for _, suffix in SCRIPT_SUFFIXES do
+		if string.sub(name, -#suffix) == suffix then
+			return true
+		end
+	end
+	return false
+end
+
+export type State = "Connecting" | "Connected" | "Reconnecting" | "Conflict" | "Warning" | "Disconnected"
 
 function Connection.new(
 	client: any,
 	root: Instance,
 	placeId: number,
 	onState: (State, string?) -> (),
-	deps: { terrain: any, tree: Apply.Tree? }
+	deps: { terrain: any, tree: any?, apply: any, protocol: any, terrainBlob: any, warn: ((string) -> ())? }
 )
 	return setmetatable({
 		client = client,
@@ -57,23 +56,28 @@ function Connection.new(
 		onState = onState,
 		terrain = deps.terrain,
 		tree = deps.tree,
+		apply = deps.apply,
+		protocol = deps.protocol,
+		terrainBlob = deps.terrainBlob,
+		warn = deps.warn or warn,
 		running = false,
 		session = 0,
 		backoff = BACKOFF_START,
+		blobBackoff = BLOB_BACKOFF_START,
 		cursor = 0,
 		blobCursor = 0,
-		-- Bumped on every (re)connect so a stale blob long-poll from a prior connection stops itself.
 		epoch = 0,
 		applying = false,
-		-- The content last written by an apply, per path. A Studio change signal whose value matches
-		-- is the echo of our own apply (which may fire deferred, after `applying` clears) and is
-		-- dropped instead of pushed back.
 		lastApplied = {},
 		pendingPush = {},
 		pushScheduled = false,
 		studioConnections = nil,
 		skippedPaths = {},
 	}, Connection)
+end
+
+function Connection.nextBlobBackoff(current: number): number
+	return math.min(current * 2, BLOB_BACKOFF_MAX)
 end
 
 function Connection.start(self)
@@ -93,8 +97,41 @@ function Connection.stop(self)
 	self.running = false
 	self.session += 1
 	self.epoch += 1
+	self.pendingPush = {}
+	self.pushScheduled = false
 	self:_detachStudio()
 	self.onState("Disconnected", nil)
+end
+
+function Connection._isCurrent(self, session: number): boolean
+	return self.running and self.session == session
+end
+
+function Connection._isBlobCurrent(self, epoch: number): boolean
+	return self.running and self.epoch == epoch
+end
+
+function Connection._echo(self)
+	return {
+		expect = function(path: string, content: string)
+			self.lastApplied[path] = content
+		end,
+		forget = function(path: string)
+			self.lastApplied[path] = nil
+		end,
+	}
+end
+
+function Connection._unsafeReason(_self, instance: Instance, segments: { string }): string?
+	for _, segment in segments do
+		if not isSafeName(segment) then
+			return "a name contains '/', '\\' or NUL"
+		end
+	end
+	if instance.ClassName == "ModuleScript" and endsWithScriptSuffix(instance.Name) then
+		return "a ModuleScript name ends in .server, .client or .luau"
+	end
+	return nil
 end
 
 function Connection._pathOf(self, instance: Instance): string?
@@ -109,41 +146,43 @@ function Connection._pathOf(self, instance: Instance): string?
 		current = current.Parent
 	end
 	if current ~= self.root then
-		return nil -- not under the project root
+		return nil
 	end
 	local path = table.concat(segments, "/")
-	for _, segment in segments do
-		if not isSafeName(segment) then
-			if not self.skippedPaths[path] then
-				self.skippedPaths[path] = true
-				warn(string.format("Naht: not syncing %q, a name contains '/', '\\' or NUL", path))
-			end
-			return nil
+	local reason = self:_unsafeReason(instance, segments)
+	if reason ~= nil then
+		if not self.skippedPaths[path] then
+			self.skippedPaths[path] = true
+			self.warn(string.format("Naht: not syncing %q, %s", path, reason))
 		end
+		return nil
 	end
 	return path
 end
 
--- The outer loop: handshake, serve patches, and on any failure back off and retry.
 function Connection._run(self, session: number)
-	while self.running and self.session == session do
+	while self:_isCurrent(session) do
 		self.onState("Connecting", nil)
 		local ok, err = pcall(function()
 			local info = self.client:info(self.placeId)
+			if not self:_isCurrent(session) then
+				return
+			end
 			self.onState("Connected", info.project_name)
-			self.cursor = 0 -- let the daemon's re-diff drive the catch-up
+			self.cursor = 0
 			self.blobCursor = 0
 			self.epoch += 1
-			-- Push the current terrain once on connect, then long-poll the blob channel alongside the
-			-- text patch loop. The blob loop self-stops when its epoch is superseded.
 			local epoch = self.epoch
-			self:_pushTerrain()
+			self:_pushTerrain(session)
+			if not self:_isCurrent(session) then
+				return
+			end
 			task.spawn(function()
 				self:_serveBlobs(epoch)
 			end)
 			self:_serve(session)
 		end)
-		if not (self.running and self.session == session) then
+		if not self:_isCurrent(session) then
 			break
 		end
 		if not ok then
@@ -154,18 +193,19 @@ function Connection._run(self, session: number)
 	end
 end
 
--- The inner long-poll loop. Returns (raising) when the connection breaks, so `_run` can back off.
 function Connection._serve(self, session: number)
-	while self.running and self.session == session do
+	while self:_isCurrent(session) do
 		local batch = self.client:patches(self.cursor)
+		if not self:_isCurrent(session) then
+			return
+		end
 		self.applying = true
-		local applier = Apply.create(self.tree :: Apply.Tree, function(path: string, content: string)
-			self.lastApplied[path] = content
-		end)
+		local applier = self.apply.create(self.tree, self:_echo())
 		local applied = {}
 		for _, patch in batch.patches do
-			-- Apply each patch independently so one failure doesn't sink the whole batch; only the
-			-- ones that land are acked, and the rest re-diff on the next cycle (no loss).
+			if not self:_isCurrent(session) then
+				break
+			end
 			local ok = pcall(function()
 				applier:apply(patch)
 			end)
@@ -177,9 +217,12 @@ function Connection._serve(self, session: number)
 			end
 		end
 		self.applying = false
+		if not self:_isCurrent(session) then
+			return
+		end
 		self.cursor = batch.cursor
 		self.backoff = BACKOFF_START
-		if #applied > 0 then
+		if #applied > 0 and self:_isCurrent(session) then
 			pcall(function()
 				self.client:postAck(applied)
 			end)
@@ -187,55 +230,63 @@ function Connection._serve(self, session: number)
 	end
 end
 
--- The blob long-poll loop: terrain patches flow filesystem → Studio here, applied via `WriteVoxels`.
--- It runs in its own task so it doesn't block the text patch loop; it stops when its epoch is
--- superseded by a reconnect or when a request raises (the outer `_run` then re-handshakes).
 function Connection._serveBlobs(self, epoch: number)
-	while self.running and self.epoch == epoch do
+	while self:_isBlobCurrent(epoch) do
 		local ok, batch = pcall(function()
 			return self.client:blobs(self.blobCursor)
 		end)
-		if not ok then
+		if not ok or not self:_isBlobCurrent(epoch) then
 			return
 		end
 		local allApplied = true
+		local rejection = ""
 		for _, patch in batch.patches do
+			if not self:_isBlobCurrent(epoch) then
+				return
+			end
 			if patch.kind == "Conflict" then
 				self.onState("Conflict", patch.path)
 			elseif patch.direction == "ToStudio" and patch.content ~= nil then
-				-- Apply independently so one bad blob doesn't sink the loop.
-				local applied = pcall(function()
+				local applied, err = pcall(function()
 					self:_applyBlob(patch.content)
 				end)
-				allApplied = allApplied and applied
+				if not applied then
+					allApplied = false
+					rejection = tostring(err)
+				end
 			end
 		end
 		if allApplied then
 			self.blobCursor = batch.cursor
+			self.blobBackoff = BLOB_BACKOFF_START
 		else
-			task.wait(PUSH_RETRY)
+			self.onState("Warning", "terrain blob rejected: " .. rejection)
+			task.wait(self.blobBackoff)
+			self.blobBackoff = Connection.nextBlobBackoff(self.blobBackoff)
 		end
 	end
 end
 
--- The Region3 covering the whole terrain, at voxel resolution, used for both read and write so the
--- blob round-trips against a stable region.
 function Connection._terrainRegion(self): any
 	return self.terrain.MaxExtents:ExpandToGrid(TERRAIN_RESOLUTION)
 end
 
--- Write an incoming voxel blob into the live terrain.
 function Connection._applyBlob(self, blob: string)
-	Terrain.write(self.terrain, self:_terrainRegion(), blob)
+	self.terrainBlob.write(self.terrain, self:_terrainRegion(), blob)
 end
 
--- Read the current terrain and push it to the filesystem as one blob. Best-effort: a read or post
--- failure is left for the next connect rather than killing the session.
-function Connection._pushTerrain(self)
-	local ok, blob = pcall(function()
-		return Terrain.read(self.terrain, self:_terrainRegion(), TERRAIN_RESOLUTION)
-	end)
-	if not ok then
+function Connection._pushTerrain(self, session: number)
+	local regionOk, region = pcall(self._terrainRegion, self)
+	if not regionOk then
+		return
+	end
+	local size = region.Size
+	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainBlob.MAX_VOXELS then
+		self.onState("Warning", TERRAIN_TOO_LARGE)
+		return
+	end
+	local ok, blob = pcall(self.terrainBlob.read, self.terrain, region, TERRAIN_RESOLUTION)
+	if not ok or not self:_isCurrent(session) then
 		return
 	end
 	pcall(function()
@@ -243,8 +294,6 @@ function Connection._pushTerrain(self)
 	end)
 end
 
--- Watch the project subtree for Studio-side edits and push them, debounced. Edits the plugin itself
--- just applied are ignored (the `applying` guard) so a patch does not echo back as a change.
 function Connection._attachStudio(self)
 	if self.studioConnections ~= nil then
 		return
@@ -262,12 +311,16 @@ function Connection._attachStudio(self)
 			return
 		end
 		local source = (instance :: any).Source
-		-- Drop the echo of a patch we just applied (handles deferred change signals too).
-		if self.applying or self.lastApplied[path] == source then
+		local expected = self.lastApplied[path]
+		if expected ~= nil and expected == source then
 			self.lastApplied[path] = nil
 			return
 		end
-		self.pendingPush[path] = Protocol.upsert(path, instance.ClassName, source)
+		if self.applying then
+			return
+		end
+		self.lastApplied[path] = nil
+		self.pendingPush[path] = self.protocol.upsert(path, instance.ClassName, source)
 		self:_schedulePush()
 	end
 
@@ -292,7 +345,7 @@ function Connection._attachStudio(self)
 		end
 		local path = self:_pathOf(descendant)
 		if path ~= nil then
-			self.pendingPush[path] = Protocol.delete(path)
+			self.pendingPush[path] = self.protocol.delete(path)
 			self:_schedulePush()
 		end
 	end)
@@ -314,9 +367,12 @@ function Connection._schedulePush(self, delay: number?)
 		return
 	end
 	self.pushScheduled = true
+	local session = self.session
 	task.delay(delay or PUSH_DEBOUNCE, function()
+		if not self:_isCurrent(session) then
+			return
+		end
 		self.pushScheduled = false
-		-- Snapshot and clear, so edits arriving during the request aren't lost.
 		local sent = self.pendingPush
 		self.pendingPush = {}
 		local changes = {}
@@ -329,9 +385,7 @@ function Connection._schedulePush(self, delay: number?)
 		local ok = pcall(function()
 			self.client:postChanges(changes)
 		end)
-		if not ok then
-			-- Never drop an edit: restore anything not superseded by a newer pending change, and
-			-- retry after a backoff so a downed daemon doesn't spin a hot loop.
+		if not ok and self:_isCurrent(session) then
 			for path, change in sent do
 				if self.pendingPush[path] == nil then
 					self.pendingPush[path] = change

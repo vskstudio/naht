@@ -1,19 +1,9 @@
 --!strict
--- A small, hand-written MessagePack codec: only the subset Naht's wire protocol uses.
---
--- It must match `rmp_serde::to_vec_named` on the daemon side exactly, so the encoding decisions
--- here mirror serde's: structs are string-keyed maps, an `Option::None` is `nil`, a unit enum
--- variant (Direction/PatchKind) is its name as a string, and an externally-tagged struct variant
--- (Change::Upsert/Delete) is a single-entry map `{ VariantName = { fields } }`.
---
--- Values are plain Luau: strings (byte strings), numbers, booleans, nil, string-keyed tables (maps),
--- and arrays wrapped with `MessagePack.array(list)` so an empty array is never mistaken for a map.
 
 local MessagePack = {}
 
 export type Array = { __mpArray: true, items: { any } }
 
--- Wrap a Luau list so the encoder emits a MessagePack array, unambiguously (even when empty).
 function MessagePack.array(items: { any }): Array
 	return { __mpArray = true, items = items }
 end
@@ -24,8 +14,6 @@ end
 
 export type Binary = { __mpBin: true, bytes: string }
 
--- Wrap a byte string so the encoder emits a MessagePack *binary* payload (`bin`), not a text string.
--- Terrain and other blobs travel this way so they survive byte-for-byte.
 function MessagePack.binary(bytes: string): Binary
 	return { __mpBin = true, bytes = bytes }
 end
@@ -34,18 +22,14 @@ local function isBinary(value: any): boolean
 	return type(value) == "table" and (value :: any).__mpBin == true
 end
 
--- === encode ===================================================================================
-
 local function pushByte(out: { string }, byte: number)
 	table.insert(out, string.char(byte))
 end
 
 local function pushUint(out: { string }, value: number)
-	-- Always emit a 64-bit unsigned; the daemon's decoder accepts any width. Split into two 32-bit
-	-- halves because Luau bit ops top out at 32 bits.
 	local high = math.floor(value / 0x100000000)
 	local low = value % 0x100000000
-	pushByte(out, 0xcf) -- uint 64
+	pushByte(out, 0xcf)
 	pushByte(out, math.floor(high / 0x1000000) % 0x100)
 	pushByte(out, math.floor(high / 0x10000) % 0x100)
 	pushByte(out, math.floor(high / 0x100) % 0x100)
@@ -59,16 +43,16 @@ end
 local function pushString(out: { string }, value: string)
 	local len = #value
 	if len < 32 then
-		pushByte(out, 0xa0 + len) -- fixstr
+		pushByte(out, 0xa0 + len)
 	elseif len < 0x100 then
-		pushByte(out, 0xd9) -- str 8
+		pushByte(out, 0xd9)
 		pushByte(out, len)
 	elseif len < 0x10000 then
-		pushByte(out, 0xda) -- str 16
+		pushByte(out, 0xda)
 		pushByte(out, math.floor(len / 0x100))
 		pushByte(out, len % 0x100)
 	else
-		pushByte(out, 0xdb) -- str 32
+		pushByte(out, 0xdb)
 		pushByte(out, math.floor(len / 0x1000000) % 0x100)
 		pushByte(out, math.floor(len / 0x10000) % 0x100)
 		pushByte(out, math.floor(len / 0x100) % 0x100)
@@ -79,9 +63,9 @@ end
 
 local function pushMapHeader(out: { string }, count: number)
 	if count < 16 then
-		pushByte(out, 0x80 + count) -- fixmap
+		pushByte(out, 0x80 + count)
 	else
-		pushByte(out, 0xde) -- map 16
+		pushByte(out, 0xde)
 		pushByte(out, math.floor(count / 0x100))
 		pushByte(out, count % 0x100)
 	end
@@ -89,9 +73,9 @@ end
 
 local function pushArrayHeader(out: { string }, count: number)
 	if count < 16 then
-		pushByte(out, 0x90 + count) -- fixarray
+		pushByte(out, 0x90 + count)
 	else
-		pushByte(out, 0xdc) -- array 16
+		pushByte(out, 0xdc)
 		pushByte(out, math.floor(count / 0x100))
 		pushByte(out, count % 0x100)
 	end
@@ -115,7 +99,7 @@ end
 function encodeValue(out: { string }, value: any)
 	local kind = type(value)
 	if value == nil then
-		pushByte(out, 0xc0) -- nil
+		pushByte(out, 0xc0)
 	elseif kind == "boolean" then
 		pushByte(out, if value then 0xc3 else 0xc2)
 	elseif kind == "number" then
@@ -126,14 +110,14 @@ function encodeValue(out: { string }, value: any)
 		local bytes = (value :: Binary).bytes
 		local len = #bytes
 		if len < 0x100 then
-			pushByte(out, 0xc4) -- bin 8
+			pushByte(out, 0xc4)
 			pushByte(out, len)
 		elseif len < 0x10000 then
-			pushByte(out, 0xc5) -- bin 16
+			pushByte(out, 0xc5)
 			pushByte(out, math.floor(len / 0x100))
 			pushByte(out, len % 0x100)
 		else
-			pushByte(out, 0xc6) -- bin 32
+			pushByte(out, 0xc6)
 			pushByte(out, math.floor(len / 0x1000000) % 0x100)
 			pushByte(out, math.floor(len / 0x10000) % 0x100)
 			pushByte(out, math.floor(len / 0x100) % 0x100)
@@ -153,14 +137,11 @@ function encodeValue(out: { string }, value: any)
 	end
 end
 
--- Encode a Luau value into a MessagePack byte string.
 function MessagePack.encode(value: any): string
 	local out = {}
 	encodeValue(out, value)
 	return table.concat(out)
 end
-
--- === decode ===================================================================================
 
 local MAX_DEPTH = 64
 
@@ -234,35 +215,35 @@ function decodeValue(bytes: string, pos: number, depth: number): (any, number)
 	elseif byte == 0xd3 then
 		return readBinary(">i8", bytes, pos, 8)
 	elseif byte == 0xc4 then
-		local len, next = readUint(bytes, pos, 1)
-		return decodeStr(bytes, next, len)
+		local len, after = readUint(bytes, pos, 1)
+		return decodeStr(bytes, after, len)
 	elseif byte == 0xc5 then
-		local len, next = readUint(bytes, pos, 2)
-		return decodeStr(bytes, next, len)
+		local len, after = readUint(bytes, pos, 2)
+		return decodeStr(bytes, after, len)
 	elseif byte == 0xc6 then
-		local len, next = readUint(bytes, pos, 4)
-		return decodeStr(bytes, next, len)
+		local len, after = readUint(bytes, pos, 4)
+		return decodeStr(bytes, after, len)
 	elseif byte == 0xd9 then
-		local len, next = readUint(bytes, pos, 1)
-		return decodeStr(bytes, next, len)
+		local len, after = readUint(bytes, pos, 1)
+		return decodeStr(bytes, after, len)
 	elseif byte == 0xda then
-		local len, next = readUint(bytes, pos, 2)
-		return decodeStr(bytes, next, len)
+		local len, after = readUint(bytes, pos, 2)
+		return decodeStr(bytes, after, len)
 	elseif byte == 0xdb then
-		local len, next = readUint(bytes, pos, 4)
-		return decodeStr(bytes, next, len)
+		local len, after = readUint(bytes, pos, 4)
+		return decodeStr(bytes, after, len)
 	elseif byte == 0xdc then
-		local len, next = readUint(bytes, pos, 2)
-		return decodeArray(bytes, next, len, depth)
+		local len, after = readUint(bytes, pos, 2)
+		return decodeArray(bytes, after, len, depth)
 	elseif byte == 0xdd then
-		local len, next = readUint(bytes, pos, 4)
-		return decodeArray(bytes, next, len, depth)
+		local len, after = readUint(bytes, pos, 4)
+		return decodeArray(bytes, after, len, depth)
 	elseif byte == 0xde then
-		local len, next = readUint(bytes, pos, 2)
-		return decodeMap(bytes, next, len, depth)
+		local len, after = readUint(bytes, pos, 2)
+		return decodeMap(bytes, after, len, depth)
 	elseif byte == 0xdf then
-		local len, next = readUint(bytes, pos, 4)
-		return decodeMap(bytes, next, len, depth)
+		local len, after = readUint(bytes, pos, 4)
+		return decodeMap(bytes, after, len, depth)
 	end
 	error(string.format("MessagePack: unsupported byte 0x%02x at %d", byte, pos - 1))
 end
