@@ -35,32 +35,38 @@ fn is_bare_key(key: &str) -> bool {
         && !key.contains(['=', ',', '{', '}', '(', ')', '"', '\n', '\r'])
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "rbx_dom_weak adds variants over time; every unlisted one must become an error, never Debug text"
-)]
 fn render_value(value: &Variant) -> Result<String, FrontmatterError> {
-    let rendered = match value {
-        Variant::Bool(flag) => flag.to_string(),
-        Variant::Int64(number) => number.to_string(),
-        Variant::Float64(float) => format!("{float:?}"),
-        Variant::String(text) => format!("\"{}\"", escape(text)),
-        Variant::Color3(color) => format!("Color3({:?}, {:?}, {:?})", color.r, color.g, color.b),
-        Variant::Vector3(vector) => {
-            format!("Vector3({:?}, {:?}, {:?})", vector.x, vector.y, vector.z)
-        }
-        Variant::Enum(enum_value) => format!("Enum({})", enum_value.to_u32()),
-        Variant::Tags(tags) => {
-            let items: Vec<String> = tags
-                .iter()
-                .map(|tag| format!("\"{}\"", escape(tag)))
-                .collect();
-            format!("Tags({})", items.join(", "))
-        }
-        Variant::Attributes(attributes) => render_attributes(attributes)?,
-        other => return Err(FrontmatterError::Unsupported(format!("{:?}", other.ty()))),
-    };
-    Ok(rendered)
+    if let Variant::Bool(flag) = value {
+        Ok(flag.to_string())
+    } else if let Variant::Int64(number) = value {
+        Ok(number.to_string())
+    } else if let Variant::Float64(float) = value {
+        Ok(format!("{float:?}"))
+    } else if let Variant::String(text) = value {
+        Ok(format!("\"{}\"", escape(text)))
+    } else if let Variant::Color3(color) = value {
+        Ok(format!(
+            "Color3({:?}, {:?}, {:?})",
+            color.r, color.g, color.b
+        ))
+    } else if let Variant::Vector3(vector) = value {
+        Ok(format!(
+            "Vector3({:?}, {:?}, {:?})",
+            vector.x, vector.y, vector.z
+        ))
+    } else if let Variant::Enum(enum_value) = value {
+        Ok(format!("Enum({})", enum_value.to_u32()))
+    } else if let Variant::Tags(tags) = value {
+        let items: Vec<String> = tags
+            .iter()
+            .map(|tag| format!("\"{}\"", escape(tag)))
+            .collect();
+        Ok(format!("Tags({})", items.join(", ")))
+    } else if let Variant::Attributes(attributes) = value {
+        render_attributes(attributes)
+    } else {
+        Err(FrontmatterError::Unsupported(format!("{:?}", value.ty())))
+    }
 }
 
 fn render_attributes(attributes: &Attributes) -> Result<String, FrontmatterError> {
