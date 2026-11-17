@@ -11,6 +11,8 @@ use std::time::Duration;
 
 const NUDGE_TIMEOUT: Duration = Duration::from_secs(2);
 
+const INFO_LIMIT: usize = 64 * 1024;
+
 /// What a re-sync nudge found at the daemon recorded for a project.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResyncOutcome {
@@ -127,8 +129,19 @@ async fn fetch_info(port: u16) -> Result<ServerInfo, InfoFailure> {
     if !status.is_success() {
         return Err(InfoFailure::Status(status));
     }
-    let bytes = response.bytes().await.map_err(InfoFailure::Request)?;
+    let bytes = read_capped(response).await?;
     decode_info(&bytes)
+}
+
+async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>, InfoFailure> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(InfoFailure::Request)? {
+        if bytes.len().saturating_add(chunk.len()) > INFO_LIMIT {
+            return Err(InfoFailure::NotNaht);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 #[derive(Deserialize)]
@@ -216,9 +229,14 @@ fn ownership(
 
 #[cfg(test)]
 mod tests {
-    use super::{InfoFailure, Ownership, decode_info, ownership};
+    use super::{InfoFailure, Ownership, decode_info, fetch_info, ownership};
     use crate::daemon_port::Recorded;
     use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo, to_msgpack};
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::time::sleep;
 
     fn info(project: &str, place: Option<u64>, daemon_id: &str) -> ServerInfo {
         ServerInfo {
@@ -365,5 +383,71 @@ mod tests {
     fn an_answer_that_is_not_naht_info_is_not_naht() {
         let bytes = to_msgpack(&"not a daemon").unwrap();
         assert!(matches!(decode_info(&bytes), Err(InfoFailure::NotNaht)));
+    }
+
+    #[derive(serde::Serialize)]
+    struct PaddedInfo {
+        protocol_version: u32,
+        server_version: String,
+        project_name: String,
+        session_id: String,
+        daemon_id: String,
+        serve_place_id: Option<u64>,
+        padding: String,
+    }
+
+    async fn serve_body_once(body: Vec<u8>) -> u16 {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            drop(socket.read(&mut request).await);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            drop(socket.write_all(head.as_bytes()).await);
+            drop(socket.write_all(&body).await);
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn an_info_body_past_the_cap_is_not_naht() {
+        let body = to_msgpack(&PaddedInfo {
+            protocol_version: PROTOCOL_VERSION,
+            server_version: "test".to_owned(),
+            project_name: "demo".to_owned(),
+            session_id: "s-1".to_owned(),
+            daemon_id: "d-1".to_owned(),
+            serve_place_id: None,
+            padding: "x".repeat(128 * 1024),
+        })
+        .unwrap();
+        let port = serve_body_once(body).await;
+        assert!(matches!(fetch_info(port).await, Err(InfoFailure::NotNaht)));
+    }
+
+    async fn serve_a_declared_body_that_stalls() -> u16 {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            drop(socket.read(&mut request).await);
+            let head = "HTTP/1.1 200 OK\r\nContent-Length: 16777216\r\nConnection: close\r\n\r\n";
+            drop(socket.write_all(head.as_bytes()).await);
+            let filler = vec![b'x'; 128 * 1024];
+            drop(socket.write_all(&filler).await);
+            sleep(Duration::from_secs(30)).await;
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn an_info_body_past_the_cap_is_refused_without_waiting_for_the_rest() {
+        let port = serve_a_declared_body_that_stalls().await;
+        assert!(matches!(fetch_info(port).await, Err(InfoFailure::NotNaht)));
     }
 }
