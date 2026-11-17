@@ -15,6 +15,7 @@ use naht_core::state::StateStore;
 use reqwest::Client;
 use tokio::time::sleep;
 
+mod instances;
 #[cfg(test)]
 #[path = "../wire/mod.rs"]
 mod wire;
