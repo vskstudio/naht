@@ -16,6 +16,7 @@ use rbx_dom_weak::types::Variant;
 use crate::frontmatter::{self, FrontmatterError};
 use crate::snapshot::{SOURCE_PROPERTY, Snapshot};
 use crate::vfs::{EntryKind, Vfs, VfsError};
+use crate::walk::is_ignored_entry;
 
 const SCRIPT: &str = "Script";
 const LOCAL_SCRIPT: &str = "LocalScript";
@@ -55,7 +56,11 @@ pub enum MapError {
 /// Returns an error when `dir` cannot be read or a file is not valid UTF-8.
 pub fn snapshot_dir(vfs: &impl Vfs, dir: &Path) -> Result<Snapshot, MapError> {
     let name = file_name(dir)?;
-    let entries = vfs.list(dir)?;
+    let entries: Vec<_> = vfs
+        .list(dir)?
+        .into_iter()
+        .filter(|entry| !is_ignored_entry(&entry.path))
+        .collect();
 
     let init = entries.iter().find_map(|entry| {
         if entry.kind != EntryKind::File {
@@ -359,5 +364,37 @@ mod tests {
                 "{class} named {name:?} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn snapshot_skips_dependency_and_hidden_directories_like_the_scanners() {
+        let vfs = MemoryVfs::new()
+            .with_file("proj/Real.luau", "return 1")
+            .with_file("proj/node_modules/Dep.luau", "return 2")
+            .with_file("proj/target/Build.luau", "return 3")
+            .with_file("proj/.hidden/Secret.luau", "return 4")
+            .with_file("proj/.init.luau", "return 5");
+
+        let tree = snapshot_dir(&vfs, Path::new("proj")).unwrap();
+
+        let names: Vec<&str> = tree
+            .children
+            .iter()
+            .map(|child| child.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Real"]);
+    }
+
+    #[test]
+    fn an_ignored_init_file_does_not_turn_its_directory_into_a_script() {
+        let vfs = MemoryVfs::new()
+            .with_file("proj/folder/.init.luau", "return 1")
+            .with_file("proj/folder/Child.luau", "return 2");
+
+        let tree = snapshot_dir(&vfs, Path::new("proj")).unwrap();
+
+        let folder = child(&tree, "folder");
+        assert_eq!(folder.class, FOLDER);
+        assert_eq!(folder.children.len(), 1);
     }
 }
