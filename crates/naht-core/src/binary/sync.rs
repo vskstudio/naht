@@ -131,7 +131,13 @@ impl<V: Vfs> Pass<'_, V> {
                 self.reconcile_one_side(path, &class, &fs.content, base_state.as_ref(), Side::Fs)?;
             }
             (None, Some(studio)) => {
-                self.reconcile_one_side(path, &class, &studio.content, base_state.as_ref(), Side::Studio)?;
+                self.reconcile_one_side(
+                    path,
+                    &class,
+                    &studio.content,
+                    base_state.as_ref(),
+                    Side::Studio,
+                )?;
             }
             (None, None) => {}
         }

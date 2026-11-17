@@ -23,12 +23,7 @@ pub(crate) async fn heartbeat(client: &Client, base: &str) -> reqwest::Result<Re
     plugin(client.get(format!("{base}/heartbeat"))).send().await
 }
 
-pub(crate) async fn ack(
-    client: &Client,
-    base: &str,
-    session: &str,
-    seqs: Vec<u64>,
-) -> StatusCode {
+pub(crate) async fn ack(client: &Client, base: &str, session: &str, seqs: Vec<u64>) -> StatusCode {
     let body = protocol::to_msgpack(&Ack { seqs }).unwrap();
     plugin(client.post(format!("{base}/ack?session={session}")))
         .body(body)
