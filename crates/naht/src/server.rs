@@ -423,7 +423,7 @@ impl IntoResponse for Rejection {
 mod tests {
     use std::path::PathBuf;
 
-    use axum::body::Body;
+    use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use naht_core::state::StateStore;
     use tower::ServiceExt;
@@ -488,9 +488,7 @@ mod tests {
         let response = router(test_state()).oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let refused: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             refused["refused_paths"],
