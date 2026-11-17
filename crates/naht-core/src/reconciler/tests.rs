@@ -334,7 +334,7 @@ fn an_unreadable_file_missing_from_the_fs_side_is_neither_deleted_nor_forgotten(
     )
     .unwrap();
 
-    assert!(patches.is_empty());
+    assert_eq!(patches.len(), 0);
     assert_eq!(vfs.read(Path::new("m")).unwrap(), b"v1");
     assert_eq!(
         store.get("m").unwrap().unwrap().base_content,
@@ -355,7 +355,7 @@ fn a_studio_edit_never_overwrites_a_file_the_scan_could_not_read() {
     )
     .unwrap();
 
-    assert!(patches.is_empty());
+    assert_eq!(patches.len(), 0);
     assert_eq!(vfs.read(Path::new("m")).unwrap(), b"v1");
     assert_eq!(
         store.get("m").unwrap().unwrap().base_content,
@@ -376,8 +376,11 @@ fn a_studio_instance_under_an_ignored_directory_is_not_written_to_disk() {
     )
     .unwrap();
 
-    assert!(patches.is_empty());
-    assert!(vfs.read(Path::new("target/A.luau")).is_err());
+    assert_eq!(patches.len(), 0);
+    assert!(matches!(
+        vfs.read(Path::new("target/A.luau")),
+        Err(VfsError::NotFound(_))
+    ));
     assert_eq!(store.get("target/A.luau").unwrap(), None);
 }
 
@@ -394,6 +397,6 @@ fn a_base_record_under_an_ignored_directory_is_kept_when_the_scan_skips_it() {
     )
     .unwrap();
 
-    assert!(patches.is_empty());
+    assert_eq!(patches.len(), 0);
     assert!(store.get("target/A.luau").unwrap().is_some());
 }

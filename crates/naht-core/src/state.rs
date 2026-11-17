@@ -338,6 +338,7 @@ fn read_meta_i64(conn: &Connection, key: &str) -> Result<Option<i64>, StateError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hash::content_hash;
 
     fn text_record(guid: &str) -> InstanceRecord {
         InstanceRecord {
@@ -445,18 +446,18 @@ mod tests {
     fn legacy_asset_rows_keyed_by_the_64_bit_hash_are_dropped_on_open() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.db");
-        let legacy_key = crate::hash::content_hash(b"v1");
+        let legacy_key = content_hash(b"v1");
         let current_key = "blake3:0123";
-        {
-            let store = StateStore::open(&path).unwrap();
-            store.cache_asset(current_key, "rbxassetid://2").unwrap();
-            let raw = Connection::open(&path).unwrap();
-            raw.execute(
-                "INSERT INTO assets (content_hash, asset_id) VALUES (?1, ?2)",
-                (&legacy_key, "rbxassetid://777"),
-            )
-            .unwrap();
-        }
+        let store = StateStore::open(&path).unwrap();
+        store.cache_asset(current_key, "rbxassetid://2").unwrap();
+        let raw = Connection::open(&path).unwrap();
+        raw.execute(
+            "INSERT INTO assets (content_hash, asset_id) VALUES (?1, ?2)",
+            (&legacy_key, "rbxassetid://777"),
+        )
+        .unwrap();
+        drop(raw);
+        drop(store);
 
         let reopened = StateStore::open(&path).unwrap();
 

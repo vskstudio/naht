@@ -34,7 +34,9 @@ pub fn has_ignored_component(path: &Path) -> bool {
     })
 }
 
-/// The paths a scan did not see: files it could not read, and everything under a skipped directory.
+/// Paths the scan did not see.
+///
+/// Covers unreadable files and everything under a skipped directory.
 /// The reconciler leaves these untouched on both sides, so an unseen file is never mistaken for a
 /// deleted one.
 #[derive(Debug, Default, Clone)]

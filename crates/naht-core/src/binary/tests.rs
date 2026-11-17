@@ -182,7 +182,7 @@ fn an_unreadable_blob_missing_from_the_fs_side_is_neither_deleted_nor_forgotten(
     )
     .unwrap();
 
-    assert!(patches.is_empty());
+    assert_eq!(patches.len(), 0);
     assert_eq!(vfs.read(Path::new("t.terrain")).unwrap(), b"v1");
     assert!(store.get("t.terrain").unwrap().is_some());
 }

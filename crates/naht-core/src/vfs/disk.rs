@@ -42,24 +42,30 @@ fn is_temp_name(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with('.') && name.ends_with(".naht-tmp"))
 }
 
-/// Remove the temp files an interrupted write left under `root`, outside the walk's ignored directories.
+/// Remove the temp files an interrupted write left under `root`, and return how many were removed.
+///
+/// The walk skips the same ignored directories as the scanners.
+///
+/// # Errors
+///
+/// Returns [`VfsError`] when a directory cannot be listed or a temp file cannot be removed.
 pub fn remove_stale_temp_files(root: &Path) -> Result<usize, VfsError> {
     let mut vfs = DiskVfs::new();
     let mut pending = vec![root.to_path_buf()];
-    let mut removed = 0;
+    let mut removed = Vec::new();
     while let Some(dir) = pending.pop() {
         for entry in vfs.list(&dir)? {
             match entry.kind {
                 EntryKind::File if is_temp_name(&entry.path) => {
                     vfs.remove(&entry.path)?;
-                    removed += 1;
+                    removed.push(entry.path);
                 }
                 EntryKind::Dir if !is_ignored_entry(&entry.path) => pending.push(entry.path),
                 EntryKind::File | EntryKind::Dir => {}
             }
         }
     }
-    Ok(removed)
+    Ok(removed.len())
 }
 
 fn is_symlink(path: &Path) -> bool {
@@ -174,7 +180,7 @@ impl Vfs for DiskVfs {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{MetadataExt, symlink};
 
     #[test]
     fn write_replaces_the_file_and_leaves_no_temp_file_behind() {
@@ -200,7 +206,7 @@ mod tests {
         let outside = dir.path().join("outside.txt");
         let link = dir.path().join("Main.luau");
         fs::write(&outside, "keep").unwrap();
-        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        symlink(&outside, &link).unwrap();
 
         let result = DiskVfs::new().write(&link, b"replaced");
 
@@ -219,7 +225,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("missing.txt");
         let link = dir.path().join("Main.luau");
-        std::os::unix::fs::symlink(&missing, &link).unwrap();
+        symlink(&missing, &link).unwrap();
 
         let result = DiskVfs::new().write(&link, b"new");
 
