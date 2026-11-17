@@ -16,14 +16,15 @@ use std::time::Duration;
 
 #[cfg(test)]
 mod busy_tests;
+mod schema;
 #[cfg(test)]
 mod schema_tests;
 mod studio_side;
 
+use schema::{migrate, schema_is_current};
 pub use studio_side::StudioSide;
 
 const SCHEMA_VERSION: i64 = 1;
-const SCHEMA_TABLE_COUNT: i64 = 4;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -299,53 +300,6 @@ impl StateStore {
             )
             .optional()?)
     }
-}
-
-fn schema_is_current(conn: &Connection) -> Result<bool, StateError> {
-    let tables: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master
-         WHERE type = 'table' AND name IN ('meta', 'instances', 'assets', 'studio_sides')",
-        [],
-        |row| row.get(0),
-    )?;
-    if tables != SCHEMA_TABLE_COUNT {
-        return Ok(false);
-    }
-    let legacy_assets: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM assets WHERE content_hash NOT LIKE 'blake3:%')",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok(!legacy_assets && read_meta_i64(conn, SCHEMA_VERSION_KEY)? == Some(SCHEMA_VERSION))
-}
-
-fn migrate(conn: &Connection) -> Result<(), StateError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS meta (
-             key   TEXT PRIMARY KEY,
-             value TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS instances (
-             guid         TEXT PRIMARY KEY,
-             path         TEXT NOT NULL,
-             class        TEXT NOT NULL,
-             content_hash TEXT NOT NULL,
-             base_content BLOB,
-             mtime        INTEGER NOT NULL,
-             conflicted   INTEGER NOT NULL DEFAULT 0
-         );
-         CREATE TABLE IF NOT EXISTS assets (
-             content_hash TEXT PRIMARY KEY,
-             asset_id     TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS studio_sides (
-             path    TEXT PRIMARY KEY,
-             class   TEXT NOT NULL,
-             content TEXT
-         );
-         DELETE FROM assets WHERE content_hash NOT LIKE 'blake3:%';",
-    )?;
-    Ok(())
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstanceRecord> {
