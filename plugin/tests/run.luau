@@ -318,6 +318,9 @@ local function newNode(className: string, name: string): any
 	node.GetPropertyChangedSignal = function(_, _property)
 		return node.sourceChanged
 	end
+	node.GetChildren = function(self)
+		return table.clone(self.children)
+	end
 	return node
 end
 
@@ -2267,6 +2270,142 @@ local function editStudio(node: any, content: string)
 	node.Source = content
 	node.sourceChanged:Fire()
 end
+
+suite("a script with children is named by its init file, the way the daemon writes it", function()
+		local initNames = { ModuleScript = "init.luau", Script = "init.server.luau", LocalScript = "init.client.luau" }
+		for className, initName in initNames do
+			local tree, root = studioWorld(true)
+			local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+			local script = place(tree, className, "Folder", root)
+			place(tree, "ModuleScript", "Child", script)
+			local path = connection:_pathOf(script)
+			check(
+				"a " .. className .. " with children is named Folder/" .. initName,
+				path == "Folder/" .. initName,
+				"path " .. tostring(path)
+			)
+			local freshTree, freshRoot, applier = freshApplier()
+			applier:apply({ path = "Folder/" .. initName, class = className, kind = "Create", content = "return 1" })
+			local made = freshTree.findChild(freshRoot, "Folder")
+			check(
+				"the daemon path for a " .. className .. " with children rebuilds a " .. className,
+				made ~= nil and made.ClassName == className,
+				"made " .. tostring(made and made.ClassName)
+			)
+		end
+end)
+
+suite("a script that gains its first child moves from its file to init, and back", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.session = 1
+		connection:_attachStudio()
+		local script = place(tree, "ModuleScript", "Folder", root)
+		connection.pendingPush = {}
+		local child = place(tree, "ModuleScript", "Child", script)
+		local removedFile = connection.pendingPush["Folder.luau"]
+		local newInit = connection.pendingPush["Folder/init.luau"]
+		check(
+			"gaining a child deletes the childless file",
+			removedFile ~= nil and removedFile.kind == "Delete",
+			"Folder.luau " .. tostring(removedFile and removedFile.kind)
+		)
+		check(
+			"gaining a child upserts the init file",
+			newInit ~= nil and newInit.kind == "Upsert",
+			"Folder/init.luau " .. tostring(newInit and newInit.kind)
+		)
+		connection.pendingPush = {}
+		tree.destroy(child)
+		task.wait(0.01)
+		local deletedInit = connection.pendingPush["Folder/init.luau"]
+		local restoredFile = connection.pendingPush["Folder.luau"]
+		check(
+			"losing the last child deletes the init file",
+			deletedInit ~= nil and deletedInit.kind == "Delete",
+			"Folder/init.luau " .. tostring(deletedInit and deletedInit.kind)
+		)
+		check(
+			"losing the last child upserts the childless file",
+			restoredFile ~= nil and restoredFile.kind == "Upsert",
+			"Folder.luau " .. tostring(restoredFile and restoredFile.kind)
+		)
+		connection:stop()
+end)
+
+suite("destroying a script with children leaves no file behind", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.session = 1
+		connection:_attachStudio()
+		local script = place(tree, "Script", "Folder", root)
+		place(tree, "ModuleScript", "Child", script)
+		connection.pendingPush = {}
+		tree.destroy(script)
+		task.wait(0.01)
+		local initDelete = connection.pendingPush["Folder/init.server.luau"]
+		check(
+			"destroying the script deletes its init file",
+			initDelete ~= nil and initDelete.kind == "Delete",
+			"Folder/init.server.luau " .. tostring(initDelete and initDelete.kind)
+		)
+		check(
+			"destroying the script does not resurrect its childless file",
+			connection.pendingPush["Folder.server.luau"] == nil,
+			"Folder.server.luau " .. tostring(connection.pendingPush["Folder.server.luau"] and connection.pendingPush["Folder.server.luau"].kind)
+		)
+		connection:stop()
+end)
+
+suite("a rejected patch batch waits 1 s, then doubles per rejection up to the cap", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local waits = {}
+		for _ = 1, 8 do
+			table.insert(waits, connection:_takeRejectedDelay())
+		end
+		check(
+			"a rejected batch waits 1, 2, 4, 8, 16, 32, then the 60 s cap",
+			table.concat(waits, " ") == "1 2 4 8 16 32 60 60",
+			"waits " .. table.concat(waits, " ")
+		)
+end)
+
+suite("a clean batch resets the rejected wait to its first step", function()
+		local tree, root = studioWorld(true)
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return {
+							cursor = 1,
+							patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Z.luau", class = "ModuleScript", content = "A" } },
+						}
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.rejectedBackoff = 8
+		connection:_attachStudio()
+		pcall(connection._serve, connection, 1)
+		check(
+			"a clean batch resets the rejected wait to 1 s",
+			connection.rejectedBackoff == 1,
+			"rejected wait " .. tostring(connection.rejectedBackoff)
+		)
+		connection:stop()
+end)
 
 suite("sync echo: edit to B then revert to A pushes A", function()
 		local connection, node = echoConnection(true)

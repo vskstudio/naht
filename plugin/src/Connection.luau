@@ -18,7 +18,7 @@ local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
 local DECODE_FAILURE_LIMIT = 5
 local ACK_BACKOFF_START = 2
-local REJECTED_PATCH_DELAY = 1
+local REJECTED_PATCH_START = 1
 local RETRY_BACKOFF_MAX = 60
 local SERVER_ERROR_LIMIT = 3
 local PUSH_ABANDON_AFTER = 30
@@ -160,6 +160,7 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		pushServerErrors = 0,
 		pushAbandons = 0,
 		ackBackoff = ACK_BACKOFF_START,
+		rejectedBackoff = REJECTED_PATCH_START,
 		terrainInFlight = false,
 		cursor = 0,
 		blobCursor = 0,
@@ -294,11 +295,15 @@ function Connection._unsafeReason(_self, instance: Instance, segments: { string 
 end
 
 function Connection._pathOf(self, instance: Instance): string?
+	return self:_shapePath(instance, #instance:GetChildren() > 0)
+end
+
+function Connection._shapePath(self, instance: Instance, hasChildren: boolean): string?
 	local suffix = CLASS_SUFFIX[instance.ClassName]
 	if suffix == nil then
 		return nil
 	end
-	local segments = { instance.Name .. suffix }
+	local segments = if hasChildren then { instance.Name, "init" .. suffix } else { instance.Name .. suffix }
 	local current = instance.Parent
 	while current ~= nil and current ~= self.root do
 		table.insert(segments, 1, current.Name)
@@ -411,6 +416,9 @@ function Connection._serve(self, session: number, sessionId: string)
 		end
 		self.cursor = nextCursor
 		self.backoff = BACKOFF_START
+		if not rejected then
+			self.rejectedBackoff = REJECTED_PATCH_START
+		end
 		if #unacked > 0 then
 			unacked = self:_ack(session, unacked)
 			if not self:_isCurrent(session) then
@@ -418,9 +426,15 @@ function Connection._serve(self, session: number, sessionId: string)
 			end
 		end
 		if rejected then
-			task.wait(REJECTED_PATCH_DELAY)
+			task.wait(self:_takeRejectedDelay())
 		end
 	end
+end
+
+function Connection._takeRejectedDelay(self: any): number
+	local delay = self.rejectedBackoff
+	self.rejectedBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+	return delay
 end
 
 function Connection._ack(self, session: number, seqs: { number }): { number }
@@ -581,11 +595,7 @@ function Connection._attachStudio(self)
 		table.insert(connections, signal:Connect(handler))
 	end
 
-	local function onChanged(instance: Instance)
-		local path = self:_pathOf(instance)
-		if path == nil then
-			return
-		end
+	local function pushInstance(instance: Instance, path: string)
 		local source = (instance :: any).Source
 		local expected = self.lastApplied[path]
 		if expected ~= nil and expected == source then
@@ -598,6 +608,42 @@ function Connection._attachStudio(self)
 		self.lastApplied[path] = nil
 		self.pendingPush[path] = self.protocol.upsert(path, instance.ClassName, source)
 		self:_schedulePush()
+	end
+
+	local function onChanged(instance: Instance)
+		local path = self:_pathOf(instance)
+		if path == nil then
+			return
+		end
+		pushInstance(instance, path)
+	end
+
+	local function reshape(parent: Instance, hadChildren: boolean, hasChildren: boolean)
+		if self.applying then
+			return
+		end
+		local previous = self:_shapePath(parent, hadChildren)
+		local current = self:_shapePath(parent, hasChildren)
+		if previous == current then
+			return
+		end
+		if previous ~= nil then
+			self.lastApplied[previous] = nil
+			self.pendingPush[previous] = self.protocol.delete(previous)
+		end
+		if current ~= nil then
+			pushInstance(parent, current)
+		end
+		self:_schedulePush()
+	end
+
+	local function reshapeAfterRemoval(parent: Instance)
+		task.defer(function()
+			if self.studioConnections ~= connections then
+				return
+			end
+			reshape(parent, true, #parent:GetChildren() > 0)
+		end)
 	end
 
 	local function track(instance: Instance)
@@ -614,6 +660,10 @@ function Connection._attachStudio(self)
 	listen(self.root.DescendantAdded, function(descendant: Instance)
 		track(descendant)
 		onChanged(descendant)
+		local parent = descendant.Parent
+		if parent ~= nil then
+			reshape(parent, #parent:GetChildren() > 1, true)
+		end
 	end)
 	listen(self.root.DescendantRemoving, function(descendant: Instance)
 		if self.applying then
@@ -623,6 +673,10 @@ function Connection._attachStudio(self)
 		if path ~= nil then
 			self.pendingPush[path] = self.protocol.delete(path)
 			self:_schedulePush()
+		end
+		local parent = descendant.Parent
+		if parent ~= nil then
+			reshapeAfterRemoval(parent)
 		end
 	end)
 end
