@@ -94,8 +94,6 @@ function Applier._ensureParent(self, segments: { string }): Node
 	return parent
 end
 
--- Walk the folder chain for every segment but the last without creating anything; nil when a folder is
--- missing.
 function Applier._findParent(self, segments: { string }): Node?
 	local tree = self.tree
 	local parent = tree.root

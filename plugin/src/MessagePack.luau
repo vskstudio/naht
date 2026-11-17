@@ -162,12 +162,21 @@ end
 
 -- === decode ===================================================================================
 
-local decodeValue: (string, number) -> (any, number)
-local decodeStr: (string, number, number) -> (string, number)
-local decodeArray: (string, number, number) -> ({ any }, number)
-local decodeMap: (string, number, number) -> ({ [string]: any }, number)
+local MAX_DEPTH = 64
 
-local function readBytesUint(bytes: string, pos: number, count: number): (number, number)
+local decodeValue: (string, number, number) -> (any, number)
+local decodeStr: (string, number, number) -> (string, number)
+local decodeArray: (string, number, number, number) -> ({ any }, number)
+local decodeMap: (string, number, number, number) -> ({ [string]: any }, number)
+
+local function requireBytes(bytes: string, pos: number, count: number)
+	if pos + count - 1 > #bytes then
+		error(string.format("MessagePack: truncated input at byte %d (needs %d more)", pos, count))
+	end
+end
+
+local function readUint(bytes: string, pos: number, count: number): (number, number)
+	requireBytes(bytes, pos, count)
 	local value = 0
 	for index = 0, count - 1 do
 		value = value * 0x100 + string.byte(bytes, pos + index)
@@ -175,18 +184,27 @@ local function readBytesUint(bytes: string, pos: number, count: number): (number
 	return value, pos + count
 end
 
-function decodeValue(bytes: string, pos: number): (any, number)
+local function readBinary(format: string, bytes: string, pos: number, count: number): (any, number)
+	requireBytes(bytes, pos, count)
+	return string.unpack(format, bytes, pos)
+end
+
+function decodeValue(bytes: string, pos: number, depth: number): (any, number)
+	if depth > MAX_DEPTH then
+		error(string.format("MessagePack: nesting deeper than %d", MAX_DEPTH))
+	end
+	requireBytes(bytes, pos, 1)
 	local byte = string.byte(bytes, pos)
 	pos += 1
 
 	if byte < 0x80 then
-		return byte, pos -- positive fixint
+		return byte, pos
 	elseif byte >= 0xe0 then
-		return byte - 0x100, pos -- negative fixint
+		return byte - 0x100, pos
 	elseif byte >= 0x80 and byte <= 0x8f then
-		return decodeMap(bytes, pos, byte - 0x80)
+		return decodeMap(bytes, pos, byte - 0x80, depth)
 	elseif byte >= 0x90 and byte <= 0x9f then
-		return decodeArray(bytes, pos, byte - 0x90)
+		return decodeArray(bytes, pos, byte - 0x90, depth)
 	elseif byte >= 0xa0 and byte <= 0xbf then
 		return decodeStr(bytes, pos, byte - 0xa0)
 	elseif byte == 0xc0 then
@@ -195,85 +213,94 @@ function decodeValue(bytes: string, pos: number): (any, number)
 		return false, pos
 	elseif byte == 0xc3 then
 		return true, pos
+	elseif byte == 0xca then
+		return readBinary(">f", bytes, pos, 4)
+	elseif byte == 0xcb then
+		return readBinary(">d", bytes, pos, 8)
 	elseif byte == 0xcc then
-		return readBytesUint(bytes, pos, 1)
+		return readUint(bytes, pos, 1)
 	elseif byte == 0xcd then
-		return readBytesUint(bytes, pos, 2)
+		return readUint(bytes, pos, 2)
 	elseif byte == 0xce then
-		return readBytesUint(bytes, pos, 4)
+		return readUint(bytes, pos, 4)
 	elseif byte == 0xcf then
-		return readBytesUint(bytes, pos, 8)
+		return readUint(bytes, pos, 8)
 	elseif byte == 0xd0 then
-		local value, next = readBytesUint(bytes, pos, 1)
-		return (if value >= 0x80 then value - 0x100 else value), next
+		return readBinary(">i1", bytes, pos, 1)
 	elseif byte == 0xd1 then
-		local value, next = readBytesUint(bytes, pos, 2)
-		return (if value >= 0x8000 then value - 0x10000 else value), next
+		return readBinary(">i2", bytes, pos, 2)
 	elseif byte == 0xd2 then
-		local value, next = readBytesUint(bytes, pos, 4)
-		return (if value >= 0x80000000 then value - 0x100000000 else value), next
+		return readBinary(">i4", bytes, pos, 4)
+	elseif byte == 0xd3 then
+		return readBinary(">i8", bytes, pos, 8)
 	elseif byte == 0xc4 then
-		local len, next = readBytesUint(bytes, pos, 1)
-		return decodeStr(bytes, next, len) -- bin 8: raw bytes, returned as a Luau string
+		local len, next = readUint(bytes, pos, 1)
+		return decodeStr(bytes, next, len)
 	elseif byte == 0xc5 then
-		local len, next = readBytesUint(bytes, pos, 2)
-		return decodeStr(bytes, next, len) -- bin 16
+		local len, next = readUint(bytes, pos, 2)
+		return decodeStr(bytes, next, len)
 	elseif byte == 0xc6 then
-		local len, next = readBytesUint(bytes, pos, 4)
-		return decodeStr(bytes, next, len) -- bin 32
+		local len, next = readUint(bytes, pos, 4)
+		return decodeStr(bytes, next, len)
 	elseif byte == 0xd9 then
-		local len, next = readBytesUint(bytes, pos, 1)
+		local len, next = readUint(bytes, pos, 1)
 		return decodeStr(bytes, next, len)
 	elseif byte == 0xda then
-		local len, next = readBytesUint(bytes, pos, 2)
+		local len, next = readUint(bytes, pos, 2)
 		return decodeStr(bytes, next, len)
 	elseif byte == 0xdb then
-		local len, next = readBytesUint(bytes, pos, 4)
+		local len, next = readUint(bytes, pos, 4)
 		return decodeStr(bytes, next, len)
 	elseif byte == 0xdc then
-		local len, next = readBytesUint(bytes, pos, 2)
-		return decodeArray(bytes, next, len)
+		local len, next = readUint(bytes, pos, 2)
+		return decodeArray(bytes, next, len, depth)
 	elseif byte == 0xdd then
-		local len, next = readBytesUint(bytes, pos, 4)
-		return decodeArray(bytes, next, len)
+		local len, next = readUint(bytes, pos, 4)
+		return decodeArray(bytes, next, len, depth)
 	elseif byte == 0xde then
-		local len, next = readBytesUint(bytes, pos, 2)
-		return decodeMap(bytes, next, len)
+		local len, next = readUint(bytes, pos, 2)
+		return decodeMap(bytes, next, len, depth)
 	elseif byte == 0xdf then
-		local len, next = readBytesUint(bytes, pos, 4)
-		return decodeMap(bytes, next, len)
+		local len, next = readUint(bytes, pos, 4)
+		return decodeMap(bytes, next, len, depth)
 	end
 	error(string.format("MessagePack: unsupported byte 0x%02x at %d", byte, pos - 1))
 end
 
 function decodeStr(bytes: string, pos: number, len: number): (string, number)
+	requireBytes(bytes, pos, len)
 	return string.sub(bytes, pos, pos + len - 1), pos + len
 end
 
-function decodeArray(bytes: string, pos: number, count: number): ({ any }, number)
+function decodeArray(bytes: string, pos: number, count: number, depth: number): ({ any }, number)
 	local items = {}
 	for index = 1, count do
 		local value
-		value, pos = decodeValue(bytes, pos)
+		value, pos = decodeValue(bytes, pos, depth + 1)
 		items[index] = value
 	end
 	return items, pos
 end
 
-function decodeMap(bytes: string, pos: number, count: number): ({ [string]: any }, number)
+function decodeMap(bytes: string, pos: number, count: number, depth: number): ({ [string]: any }, number)
 	local map = {}
 	for _ = 1, count do
 		local key, value
-		key, pos = decodeValue(bytes, pos)
-		value, pos = decodeValue(bytes, pos)
+		key, pos = decodeValue(bytes, pos, depth + 1)
+		if type(key) ~= "string" then
+			error("MessagePack: map keys must be strings")
+		end
+		value, pos = decodeValue(bytes, pos, depth + 1)
 		map[key] = value
 	end
 	return map, pos
 end
 
--- Decode a MessagePack byte string into a Luau value.
 function MessagePack.decode(bytes: string): any
-	local value = decodeValue(bytes, 1)
+	local value, pos = decodeValue(bytes, 1, 0)
+	if pos ~= #bytes + 1 then
+		error(string.format("MessagePack: %d trailing byte(s) after the value", #bytes + 1 - pos))
+	end
 	return value
 end
 

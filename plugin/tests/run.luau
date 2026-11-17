@@ -154,6 +154,35 @@ check("encode bool", primitives.flag == true)
 check("encode number", primitives.count == 4096)
 check("encode string", primitives.text == "hello")
 
+local function rejects(name: string, hex: string)
+	local ok = pcall(MessagePack.decode, fromHex(hex))
+	check(name, not ok)
+end
+
+local function decodesTo(name: string, hex: string, expected: any)
+	local ok, value = pcall(MessagePack.decode, fromHex(hex))
+	check(name, ok and value == expected, if ok then "got " .. tostring(value) else tostring(value))
+end
+
+rejects("str8 shorter than its declared length is rejected", "d90a616263")
+rejects("bin8 shorter than its declared length is rejected", "c40a010203")
+rejects("array with a missing element is rejected", "9201")
+rejects("map with a missing value is rejected", "81a161")
+rejects("truncated uint16 is rejected", "cd01")
+rejects("empty input is rejected", "")
+rejects("trailing bytes after the top-level value are rejected", "0102")
+rejects("unsupported byte 0xc1 is rejected", "c1")
+decodesTo("float32 is decoded", "ca3fc00000", 1.5)
+decodesTo("float64 is decoded", "cb3ff8000000000000", 1.5)
+decodesTo("int64 is decoded", "d3fffffffffffffffe", -2)
+decodesTo("negative fixint is decoded", "e0", -32)
+decodesTo("int8 is decoded", "d0ff", -1)
+decodesTo("int16 is decoded", "d1fffe", -2)
+decodesTo("int32 is decoded", "d2fffffffe", -2)
+local nestedOk = pcall(MessagePack.decode, fromHex(string.rep("91", 64) .. "01"))
+check("64 nested arrays are accepted", nestedOk)
+rejects("65 nested arrays exceed the depth cap", string.rep("91", 65) .. "01")
+
 -- === patch-apply against a mock DataModel ====================================================
 
 local function mockTree()
