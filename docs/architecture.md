@@ -156,7 +156,7 @@ instances only the hash is stored (no merge base).
 - A source file that cannot be read or decoded (non-UTF-8, dangling symlink) is skipped and logged as a warning; the rest of the tree still syncs.
 - A path the scan could not see (an unreadable file, or one under an ignored directory) is left alone on both sides and in the base: it is neither deleted nor overwritten by a Studio edit.
 - A write never follows a symlink. A live or dangling link at the target is refused with `VfsError::Symlink`, and nothing behind it is created or changed.
-- Temp files (`.<name>.<pid>.<n>.naht-tmp`) left by an interrupted write are removed when a session opens, outside the walk's ignored directories. This assumes one daemon per project.
+- Temp files (`.<name>.<pid>.<n>.naht-tmp`) untouched for ten minutes are removed when a session opens, outside the walk's ignored directories. Younger ones are left alone, so a write running in another process (a second daemon or a concurrent `naht` command) is not broken.
 - `thiserror` in `naht-core`, `anyhow` at the binary boundary.
 - **Safety guard:** `servePlaceId`: the daemon refuses to sync into a Studio session whose place id
   doesn't match the project, preventing source from landing in the wrong game.

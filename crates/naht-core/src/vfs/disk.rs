@@ -3,6 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use super::{DirEntry, EntryKind, Vfs, VfsError};
 use crate::walk::is_ignored_entry;
@@ -42,9 +43,20 @@ fn is_temp_name(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with('.') && name.ends_with(".naht-tmp"))
 }
 
+const STALE_TEMP_AGE: Duration = Duration::from_mins(10);
+
+fn is_stale_temp(path: &Path) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= STALE_TEMP_AGE)
+}
+
 /// Remove the temp files an interrupted write left under `root`, and return how many were removed.
 ///
-/// The walk skips the same ignored directories as the scanners.
+/// Only temp files untouched for ten minutes are removed, so a write still running in another process
+/// is never broken. The walk skips the same ignored directories as the scanners.
 ///
 /// # Errors
 ///
@@ -56,7 +68,7 @@ pub fn remove_stale_temp_files(root: &Path) -> Result<usize, VfsError> {
     while let Some(dir) = pending.pop() {
         for entry in vfs.list(&dir)? {
             match entry.kind {
-                EntryKind::File if is_temp_name(&entry.path) => {
+                EntryKind::File if is_temp_name(&entry.path) && is_stale_temp(&entry.path) => {
                     vfs.remove(&entry.path)?;
                     removed.push(entry.path);
                 }
@@ -198,6 +210,31 @@ mod tests {
             "the write must replace the file, not truncate it in place"
         );
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn the_temp_sweep_spares_a_fresh_temp_file_and_removes_an_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join(".Fresh.luau.1.1.naht-tmp");
+        let old = dir.path().join(".Old.luau.1.2.naht-tmp");
+        fs::write(&fresh, "in progress").unwrap();
+        fs::write(&old, "interrupted").unwrap();
+        let an_hour_ago = SystemTime::now() - Duration::from_hours(1);
+        fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(an_hour_ago)
+            .unwrap();
+
+        let removed = remove_stale_temp_files(dir.path()).unwrap();
+
+        assert_eq!(removed, 1);
+        assert!(
+            fresh.exists(),
+            "a fresh temp file may belong to a live write"
+        );
+        assert!(!old.exists());
     }
 
     #[test]

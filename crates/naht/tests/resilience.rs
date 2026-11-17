@@ -11,6 +11,7 @@ use naht_core::state::StateStore;
 use std::fs;
 use std::path::Path;
 use std::slice;
+use std::time::{Duration, SystemTime};
 
 fn session(root: &Path) -> Session {
     fs::create_dir_all(root.join("src")).unwrap();
@@ -128,6 +129,13 @@ fn a_temp_file_left_by_an_interrupted_write_is_removed_when_the_session_opens() 
     let kept = root.join("src").join("A.luau");
     fs::write(&stale, "partial").unwrap();
     fs::write(&kept, "return 1").unwrap();
+    let an_hour_ago = SystemTime::now() - Duration::from_hours(1);
+    fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(an_hour_ago)
+        .unwrap();
 
     let _session = session(root);
 
