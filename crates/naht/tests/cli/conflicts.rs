@@ -2,6 +2,7 @@ use naht::commands;
 use naht_core::reconciler;
 use naht_core::state::StateStore;
 use naht_core::vfs::{DiskVfs, RootedVfs};
+use naht_core::walk::Unseen;
 
 use super::support::one;
 use std::fs;
@@ -21,6 +22,7 @@ fn status_and_resolve_reflect_the_conflict_state() {
         &store,
         &one(rel, "local a = 1\n"),
         &one(rel, "local a = 1\n"),
+        &Unseen::default(),
     )
     .unwrap();
     reconciler::reconcile(
@@ -28,6 +30,7 @@ fn status_and_resolve_reflect_the_conflict_state() {
         &store,
         &one(rel, "local a = 11\n"),
         &one(rel, "local a = 22\n"),
+        &Unseen::default(),
     )
     .unwrap();
     assert_eq!(

@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::merge::{self, Merge};
 use crate::state::{InstanceRecord, StateStore};
 use crate::vfs::Vfs;
+use crate::walk::Unseen;
 
 use super::model::{Direction, Patch, PatchKind, ReconcileError, TextInstance, patch};
 use super::persist::{advance_base, freeze};
@@ -24,6 +25,7 @@ pub fn reconcile(
     store: &StateStore,
     fs: &BTreeMap<String, TextInstance>,
     studio: &BTreeMap<String, TextInstance>,
+    unseen: &Unseen,
 ) -> Result<Vec<Patch>, ReconcileError> {
     let base: BTreeMap<String, InstanceRecord> = store
         .all()?
@@ -39,6 +41,9 @@ pub fn reconcile(
         patches: Vec::new(),
     };
     for key in keys {
+        if unseen.contains(key) {
+            continue;
+        }
         pass.reconcile_one(key, fs.get(key), studio.get(key), base.get(key))?;
     }
     Ok(pass.patches)

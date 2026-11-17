@@ -2,7 +2,7 @@
 //! that reports what could not be read.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::reconciler::ReconcileError;
 
@@ -20,6 +20,41 @@ pub fn is_ignored_entry(path: &Path) -> bool {
     path.file_name()
         .and_then(|os_name| os_name.to_str())
         .is_some_and(is_ignored_name)
+}
+
+/// Whether any normal component of `path` is skipped by every scan, so the path lies under an
+/// ignored directory. Current and parent markers are not names and never match.
+#[must_use]
+pub fn has_ignored_component(path: &Path) -> bool {
+    path.components().any(|component| match component {
+        Component::Normal(name) => name.to_str().is_some_and(is_ignored_name),
+        Component::CurDir | Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+            false
+        }
+    })
+}
+
+/// The paths a scan did not see: files it could not read, and everything under a skipped directory.
+/// The reconciler leaves these untouched on both sides, so an unseen file is never mistaken for a
+/// deleted one.
+#[derive(Debug, Default, Clone)]
+pub struct Unseen {
+    skipped: Vec<PathBuf>,
+}
+
+impl Unseen {
+    /// Whether the path-keyed instance `key` is unseen: it lies under an ignored directory or is, or
+    /// lies under, a file the scan could not read.
+    #[must_use]
+    pub fn contains(&self, key: &str) -> bool {
+        let path = Path::new(key);
+        has_ignored_component(path) || self.skipped.iter().any(|skipped| path.starts_with(skipped))
+    }
+
+    /// The unreadable paths, in walk order.
+    pub fn skipped(&self) -> impl Iterator<Item = &Path> {
+        self.skipped.iter().map(PathBuf::as_path)
+    }
 }
 
 /// A file a scan could not read, left out of the result instead of aborting the whole scan.
@@ -44,6 +79,18 @@ impl<T> Scan<T> {
     /// Record `path` as skipped because of `error`.
     pub fn skip(&mut self, path: PathBuf, error: ReconcileError) {
         self.skipped.push(SkippedFile { path, error });
+    }
+
+    /// The paths this scan did not see, for the reconciler to leave untouched.
+    #[must_use]
+    pub fn unseen(&self) -> Unseen {
+        Unseen {
+            skipped: self
+                .skipped
+                .iter()
+                .map(|skipped| skipped.path.clone())
+                .collect(),
+        }
     }
 }
 
