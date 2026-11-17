@@ -5,6 +5,7 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{DirEntry, EntryKind, Vfs, VfsError};
+use crate::walk::is_ignored_entry;
 
 /// The real-disk [`Vfs`] used by the daemon.
 #[derive(Debug, Clone)]
@@ -33,6 +34,32 @@ fn temp_sibling(target: &Path) -> PathBuf {
         .unwrap_or_default();
     let serial = NEXT.fetch_add(1, Ordering::Relaxed);
     target.with_file_name(format!(".{name}.{}.{serial}.naht-tmp", process::id()))
+}
+
+fn is_temp_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|os_name| os_name.to_str())
+        .is_some_and(|name| name.starts_with('.') && name.ends_with(".naht-tmp"))
+}
+
+/// Remove the temp files an interrupted write left under `root`, outside the walk's ignored directories.
+pub fn remove_stale_temp_files(root: &Path) -> Result<usize, VfsError> {
+    let mut vfs = DiskVfs::new();
+    let mut pending = vec![root.to_path_buf()];
+    let mut removed = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in vfs.list(&dir)? {
+            match entry.kind {
+                EntryKind::File if is_temp_name(&entry.path) => {
+                    vfs.remove(&entry.path)?;
+                    removed += 1;
+                }
+                EntryKind::Dir if !is_ignored_entry(&entry.path) => pending.push(entry.path),
+                EntryKind::File | EntryKind::Dir => {}
+            }
+        }
+    }
+    Ok(removed)
 }
 
 fn is_symlink(path: &Path) -> bool {
@@ -179,7 +206,12 @@ mod tests {
 
         assert!(matches!(result, Err(VfsError::Symlink(_))));
         assert_eq!(fs::read(&outside).unwrap(), b"keep");
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]
@@ -193,6 +225,11 @@ mod tests {
 
         assert!(matches!(result, Err(VfsError::Symlink(_))));
         assert!(!missing.exists());
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 }

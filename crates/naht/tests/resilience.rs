@@ -118,3 +118,19 @@ fn a_file_that_turns_unreadable_is_neither_deleted_nor_reported_as_deleted() {
         "an unreadable file must not produce a delete, got {later:?}"
     );
 }
+
+#[test]
+fn a_temp_file_left_by_an_interrupted_write_is_removed_when_the_session_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    let stale = root.join("src").join(".A.luau.4242.7.naht-tmp");
+    let kept = root.join("src").join("A.luau");
+    fs::write(&stale, "partial").unwrap();
+    fs::write(&kept, "return 1").unwrap();
+
+    let _session = session(root);
+
+    assert!(!stale.exists());
+    assert_eq!(fs::read_to_string(&kept).unwrap(), "return 1");
+}
