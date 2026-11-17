@@ -11,6 +11,7 @@ use crate::shutdown;
 use crate::watcher;
 use naht_core::mapper;
 use naht_core::vfs::DiskVfs;
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -34,6 +35,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     out: &mut Output<Stdout, Stderr>,
 ) -> Result<(), CommandError> {
     let root = canonical(root)?;
+    let _instance = take_instance_lock(&root)?;
     let startup_snapshot = {
         let root = root.clone();
         task::spawn_blocking(move || mapper::snapshot_dir(&DiskVfs::new(), &root)).await
@@ -92,6 +94,32 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     state.tasks().close();
     state.tasks().wait().await;
     served.and(unpublished)
+}
+
+fn take_instance_lock(root: &Path) -> Result<File, CommandError> {
+    let state_dir = root.join(".naht");
+    fs::create_dir_all(&state_dir).map_err(|source| CommandError::CreateDir {
+        path: state_dir.clone(),
+        source,
+    })?;
+    let path = state_dir.join("daemon.lock");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|source| CommandError::Lock {
+            path: path.clone(),
+            source,
+        })?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(TryLockError::WouldBlock) => Err(CommandError::AlreadyRunning {
+            path: root.to_path_buf(),
+        }),
+        Err(TryLockError::Error(source)) => Err(CommandError::Lock { path, source }),
+    }
 }
 
 #[cfg(test)]
