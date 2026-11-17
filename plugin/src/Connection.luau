@@ -17,6 +17,7 @@ local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
 local DECODE_FAILURE_LIMIT = 5
 local ACK_BACKOFF_START = 2
 local RETRY_BACKOFF_MAX = 60
+local sharedPushGate = { inFlight = false }
 
 local CLASS_SUFFIX = {
 	Script = ".server.luau",
@@ -101,6 +102,7 @@ export type Deps = {
 		write: (terrain: any, region: any, blob: string) -> (),
 	},
 	warn: ((string) -> ())?,
+	pushGate: { inFlight: boolean }?,
 }
 
 function Connection.new(client: any, root: Instance, placeId: number, onState: (State, string?) -> (), deps: Deps)
@@ -130,7 +132,7 @@ function Connection.new(client: any, root: Instance, placeId: number, onState: (
 		lastApplied = {},
 		pendingPush = {},
 		pushScheduled = false,
-		pushInFlight = false,
+		pushGate = deps.pushGate or sharedPushGate,
 		studioConnections = nil,
 		skippedPaths = {},
 		warnings = {},
@@ -577,7 +579,7 @@ function Connection._detachStudio(self)
 end
 
 function Connection._schedulePush(self, delay: number?)
-	if self.pushScheduled or self.pushInFlight then
+	if self.pushScheduled then
 		return
 	end
 	self.pushScheduled = true
@@ -608,17 +610,21 @@ function Connection._restorePending(self, remaining: { [string]: any })
 end
 
 function Connection._flushPush(self, session: number)
+	if self.pushGate.inFlight then
+		self:_schedulePush(PUSH_DEBOUNCE)
+		return
+	end
 	local remaining = self:_takePending({})
 	while next(remaining) ~= nil do
 		local changes = {}
 		for _, change in remaining do
 			table.insert(changes, change)
 		end
-		self.pushInFlight = true
+		self.pushGate.inFlight = true
 		local ok, err = pcall(function()
 			self.client:postChanges(changes)
 		end)
-		self.pushInFlight = false
+		self.pushGate.inFlight = false
 		if not self:_isCurrent(session) then
 			return
 		end

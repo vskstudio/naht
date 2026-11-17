@@ -2654,6 +2654,56 @@ do
 	)
 end
 
+do
+	local events: { string } = {}
+	local accepted: { string } = {}
+	local function clientFor(slow: boolean)
+		return {
+			postChanges = function(_, changes)
+				local content = changes[1].content
+				table.insert(events, "start " .. content)
+				task.wait(if slow then 0.5 else 0.05)
+				table.insert(events, "end " .. content)
+				table.insert(accepted, content)
+			end,
+		}
+	end
+	local tree, root = studioWorld(true)
+	local _, onState = stateLog()
+	local old = Connection.new(clientFor(true), root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	old.running = true
+	old.session = 1
+	old.epoch = 1
+	old.pushBackoff = 0.01
+	old.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v1")
+	old:_schedulePush()
+	local waited = 0
+	while #events == 0 and waited < 100 do
+		task.wait(0.01)
+		waited += 1
+	end
+	old:stop()
+	local fresh = Connection.new(clientFor(false), root, 1, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	fresh.running = true
+	fresh.session = 1
+	fresh.epoch = 1
+	fresh.pushBackoff = 0.01
+	fresh.pendingPush["x.luau"] = Protocol.upsert("x.luau", "ModuleScript", "v2")
+	fresh:_schedulePush()
+	task.wait(1.5)
+	fresh.running = false
+	check(
+		"after a stop and start the new connection waits for the old post before its own",
+		table.concat(events, " | ") == "start v1 | end v1 | start v2 | end v2",
+		table.concat(events, " | ")
+	)
+	check(
+		"after a stop and start the daemon ends with the newest edit",
+		accepted[#accepted] == "v2",
+		"accepted: " .. table.concat(accepted, ",")
+	)
+end
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end
