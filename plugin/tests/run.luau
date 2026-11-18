@@ -4699,6 +4699,12 @@ suite("a push after a dropped batch waits the first retry delay, not the grown o
 		)
 end)
 
+local function placeReader(placeId: number): () -> number
+	return function()
+		return placeId
+	end
+end
+
 local function fakeHttp(respond: (any) -> any)
 	local fake = { calls = {} :: { any } }
 	function fake.RequestAsync(_self, options)
@@ -4719,7 +4725,7 @@ suite("an ack names its session and a 409 on /ack reports a changed session", fu
 	local acks = fakeHttp(function(_options)
 		return reply(409, "")
 	end)
-	local client = Client.new("http://127.0.0.1:34872", 123, acks)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), acks)
 	local ok, err = pcall(function()
 		client:postAck({ 7 }, "s1")
 	end)
@@ -4744,7 +4750,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 	end
 
 	local everything = fakeHttp(answerEverything)
-	local everyRequest = Client.new("http://127.0.0.1:34872", 123, everything)
+	local everyRequest = Client.new("http://127.0.0.1:34872", placeReader(123), everything)
 	everyRequest:info()
 	everyRequest:patches(0, "s1")
 	everyRequest:blobs(0, "s1")
@@ -4761,7 +4767,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local missingClient = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(403, "outdated-plugin: missing x-naht-client header")
 		end)
@@ -4776,7 +4782,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local wrongPlace = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(403, "place id mismatch")
 		end)
@@ -4792,7 +4798,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local wordingOnly = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(403, "missing x-naht-client header")
 		end)
@@ -4807,7 +4813,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local accepting = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(200, "")
 		end)
@@ -4818,10 +4824,31 @@ suite("the client sends the headers on every request and reports an outdated plu
 	check("an accepted batch answers an empty 200 and raises nothing", okAccepted)
 end)
 
+suite("the place id header is read on each request, so a publish needs no reconnect", function()
+	local placeId = 0
+	local http = fakeHttp(function(_options)
+		return reply(200, "")
+	end)
+	local client = Client.new("http://127.0.0.1:34872", function()
+		return placeId
+	end, http)
+	client:postAck({}, "s1")
+	placeId = 456
+	client:postAck({}, "s1")
+	check(
+		"a request before the publish names the unpublished place",
+		#http.calls == 2 and http.calls[1].Headers["x-naht-place-id"] == "0"
+	)
+	check(
+		"the next request after the publish names the published place",
+		#http.calls == 2 and http.calls[2].Headers["x-naht-place-id"] == "456"
+	)
+end)
+
 suite("a 400 refused_paths body is surfaced with its paths", function()
 	local refusing = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(400, '{"refused_paths":["src/Dir"]}')
 		end)
@@ -4886,7 +4913,7 @@ suite("an incompatible protocol version is terminal and names the side to update
 			})
 		)
 	end)
-	local connection = Connection.new(Client.new("http://127.0.0.1:34872", 123, http), root, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	local connection = Connection.new(Client.new("http://127.0.0.1:34872", placeReader(123), http), root, onState, deps(extentsTerrainWith(extentsRegion), tree))
 	connection:start()
 	waitFor(function()
 		return lastStateOf(log) == "Disconnected"
@@ -5009,7 +5036,7 @@ suite("a poll names the session it handshook with, and a 409 sends the plugin ba
 		return reply(200, MessagePack.encode({ cursor = 0, patches = {} }))
 	end)
 	connection = Connection.new(
-		Client.new("http://127.0.0.1:34872", 123, http),
+		Client.new("http://127.0.0.1:34872", placeReader(123), http),
 		root,
 		onState,
 		deps(extentsTerrainWith(extentsRegion), tree)
@@ -5317,7 +5344,7 @@ suite("a script named .Hidden is never listed in the inventory", function()
 end)
 
 suite("a 400 on /inventory warns and the run still pulls patches, without a Reconnecting state", function()
-	local real = Client.new("http://127.0.0.1:34872", 123, fakeHttp(function(_options)
+	local real = Client.new("http://127.0.0.1:34872", placeReader(123), fakeHttp(function(_options)
 		return reply(400, '{"refused_paths":[".Hidden.luau"]}')
 	end))
 	local log, onState = stateLog()

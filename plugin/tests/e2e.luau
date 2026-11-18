@@ -111,7 +111,7 @@ local function startDaemon(root, port, log)
 	table.insert(daemons, daemon)
 	for _ = 1, READY_ATTEMPTS do
 		if isAlive(base) then
-			daemon.client = Client.new(base, PLACE_ID, httpBridge())
+			daemon.client = Client.new(base, function(): number return PLACE_ID end, httpBridge())
 			return daemon
 		end
 		task.wait(TICK)
@@ -352,7 +352,7 @@ local function otherPlaceRefused(root, port, log)
 	stopDaemon(bound)
 
 	local other = startDaemon(root, math.random(20000, 60000), log)
-	local otherClient = Client.new(other.base, OTHER_PLACE_ID, httpBridge())
+	local otherClient = Client.new(other.base, function(): number return OTHER_PLACE_ID end, httpBridge())
 	local infoOk, infoErr = pcall(otherClient.info, otherClient)
 	check(
 		"a session from a place the project is not bound to is refused at the handshake",

@@ -126,7 +126,7 @@ Behaviour notes:
   other status is not retried: the widget shows `Warning` with `ack refused: <reason>` until Stop, and those
   paths are dropped from the unacked list.
 
-Every request carries `x-naht-client: plugin` and `x-naht-place-id` (the id of the open place). The
+Every request carries `x-naht-client: plugin` and `x-naht-place-id` (the id of the open place, read on each request, so a publish during a session needs no reconnect). The
 daemon answers `403` to a request without the client header, with a body that starts with the token
 `outdated-plugin`, and to a place id that differs from the project's `servePlaceId` when one is set. Without a
 `servePlaceId`, it also answers `403` to a malformed place id, to a `POST` without the place id once the project is

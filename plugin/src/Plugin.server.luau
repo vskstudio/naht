@@ -62,7 +62,9 @@ end
 
 local function connect()
 	local root = ensureRoot()
-	local client = Client.new(BASE_URL, game.PlaceId)
+	local client = Client.new(BASE_URL, function(): number
+		return game.PlaceId
+	end)
 	connection = Connection.new(client, root, setState, {
 		terrain = workspace.Terrain,
 		tree = Apply.studioTree(root),
