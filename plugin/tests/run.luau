@@ -2782,6 +2782,54 @@ suite("a Windows device name is warned once and yields no path", function()
 		)
 end)
 
+suite("a second rename before the post keeps the first rename's Delete in the refused group", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".C.luau") then
+				error({ status = 400, message = "refused", refused = { ".C.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "B"
+		script.Name = ".C"
+		task.wait(1)
+		check(
+			"a chain of renames whose last name is refused never sends the first old file's Delete",
+			not anyChange(posts, "Delete", "A.luau"),
+			tostring(#posts) .. " posts"
+		)
+		check(
+			"a chain of renames whose last name is refused restores the first old path as the placed path",
+			connection.placed[script] == "A.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("a rename made while the first post is in flight ends with the old file deleted and the new one upserted", function()
+		local gate = true
+		local client, posts, attempts = recordingClient(function(_changes)
+			while gate do
+				task.wait(0.05)
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "B"
+		task.wait(0.5)
+		script.Name = "C"
+		gate = false
+		task.wait(1.5)
+		check(
+			"a rename made during an in-flight post deletes the first old file and upserts the last name",
+			anyChange(posts, "Delete", "A.luau") and anyChange(posts, "Upsert", "C.luau"),
+			tostring(#posts) .. " posts"
+		)
+		connection:stop()
+end)
+
 suite("moving a script out of the root deletes its file", function()
 		local client, posts, attempts = recordingClient()
 		local connection, tree, root = renameWorld(client)

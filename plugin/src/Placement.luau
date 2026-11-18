@@ -117,6 +117,15 @@ function Placement._queue(self, path: string, change: any, group: any?)
 end
 
 function Placement._queueMove(self, script: Instance, from: string, to: string)
+	local pendingGroup = self.groupOf[self.pendingPush[from]]
+	if pendingGroup ~= nil and pendingGroup.to == from and pendingGroup.script == script then
+		self.pendingPush[from] = nil
+		pendingGroup.to = to
+		self.lastApplied[from] = nil
+		self:_queue(to, self.protocol.upsert(to, script.ClassName, (script :: any).Source), pendingGroup)
+		self.placed[script] = to
+		return
+	end
 	local group = { script = script, from = from, to = to }
 	self.lastApplied[from] = nil
 	self:_queue(from, self.protocol.delete(from), group)
