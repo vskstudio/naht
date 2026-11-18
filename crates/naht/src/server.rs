@@ -15,8 +15,8 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::DefaultBodyLimit;
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{Extension, Query, State};
+use axum::http::{StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -248,8 +248,11 @@ pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()
     listen::accept_until_cancelled(listener, router(state, port), shutdown, connections).await
 }
 
-async fn info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let authenticated = guard::presents_token(&state, &headers);
+async fn info(
+    State(state): State<Arc<AppState>>,
+    authenticated: Option<Extension<guard::Authenticated>>,
+) -> Response {
+    let authenticated = authenticated.is_some();
     let outcome = state
         .with_session(move |session| handshake(session, authenticated))
         .await;

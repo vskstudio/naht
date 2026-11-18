@@ -29,6 +29,9 @@ pub(super) const POST_BODY_SLOTS: usize = 2;
 
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(15);
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Authenticated;
+
 #[derive(Debug)]
 pub(super) struct PostGate {
     slots: Arc<Semaphore>,
@@ -109,7 +112,7 @@ impl Gate {
         }
     }
 
-    async fn admit(&self, method: &Method, path: &str, headers: &HeaderMap) -> Result<(), Refusal> {
+    async fn admit(&self, method: &Method, path: &str, headers: &HeaderMap) -> Result<bool, Refusal> {
         if headers.contains_key(header::ORIGIN) {
             return Err(Refusal::forbidden("cross-origin requests are not allowed"));
         }
@@ -132,8 +135,10 @@ impl Gate {
             Some(expected) if !place_id_matches(headers, expected) => {
                 Err(Refusal::forbidden("place id mismatch"))
             }
-            Some(_) => Ok(()),
-            None if !authenticated => self.refuse_other_bound_place(headers),
+            Some(_) => Ok(authenticated),
+            None if !authenticated => self
+                .refuse_other_bound_place(headers)
+                .map(|()| authenticated),
             None => {
                 if method == Method::POST
                     && !headers.contains_key(PLACE_ID_HEADER)
@@ -141,7 +146,10 @@ impl Gate {
                 {
                     return Err(Refusal::Forbidden(unplaced_write_refused(*bound)));
                 }
-                self.bind_place(headers).await.map_err(Refusal::Forbidden)
+                self.bind_place(headers)
+                    .await
+                    .map_err(Refusal::Forbidden)
+                    .map(|()| authenticated)
             }
         }
     }
@@ -252,18 +260,21 @@ fn unplaced_write_refused(bound: u64) -> String {
     )
 }
 
-pub(super) fn presents_token(state: &AppState, headers: &HeaderMap) -> bool {
-    headers
-        .get(TOKEN_HEADER)
-        .is_some_and(|presented| state.token().matches(presented.as_bytes()))
-}
-
-pub(super) async fn guard(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> Response {
-    match gate
+pub(super) async fn guard(
+    State(gate): State<Arc<Gate>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let decision = gate
         .admit(request.method(), request.uri().path(), request.headers())
-        .await
-    {
-        Ok(()) => next.run(request).await,
+        .await;
+    match decision {
+        Ok(authenticated) => {
+            if authenticated {
+                request.extensions_mut().insert(Authenticated);
+            }
+            next.run(request).await
+        }
         Err(refusal) => {
             tracing::warn!(target: "naht::server", reason = refusal.reason(), "request refused");
             refusal.into_response()

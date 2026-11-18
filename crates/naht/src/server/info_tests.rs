@@ -35,3 +35,15 @@ async fn a_tokenless_info_does_not_rescan_the_project() {
     assert_eq!(info_status(&state, Some(TEST_TOKEN)).await, StatusCode::OK);
     assert!(state.session.lock().await.has_patches_after(0));
 }
+
+#[tokio::test]
+async fn a_wrong_token_on_info_is_treated_like_no_token() {
+    let (root, state) = fresh_state(Duration::from_secs(1));
+    fs::write(root.path().join("Added.luau"), "return 1").unwrap();
+
+    assert_eq!(
+        info_status(&state, Some("not-the-token")).await,
+        StatusCode::OK
+    );
+    assert!(!state.session.lock().await.has_patches_after(0));
+}
