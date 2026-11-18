@@ -1,6 +1,7 @@
 use std::fs;
 
 use super::{Token, TokenError, load_or_create, path, read};
+use crate::test_logs::LogBuffer;
 
 #[test]
 fn generated_tokens_are_64_lowercase_hex_digits_and_differ() {
@@ -64,6 +65,62 @@ fn the_token_file_is_readable_only_by_its_owner() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_token_file_readable_by_others_is_tightened_with_one_warning() {
+    use std::os::unix::fs::PermissionsExt;
+    use tracing::subscriber::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    fs::create_dir_all(root.path().join(".naht")).unwrap();
+    fs::write(path(root.path()), token.as_str()).unwrap();
+    fs::set_permissions(path(root.path()), fs::Permissions::from_mode(0o644)).unwrap();
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+
+    let loaded = with_default(subscriber, || load_or_create(root.path()).unwrap());
+
+    assert_eq!(loaded.token, token);
+    assert!(!loaded.created);
+    let mode = fs::metadata(path(root.path()))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("WARN"), "{text}");
+    assert!(!text.contains(token.as_str()), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_private_token_file_logs_nothing_when_loaded() {
+    use tracing::subscriber::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    load_or_create(root.path()).unwrap();
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+
+    with_default(subscriber, || load_or_create(root.path()).unwrap());
+
+    assert_eq!(logs.text(), "");
 }
 
 #[test]

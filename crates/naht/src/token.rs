@@ -105,10 +105,13 @@ pub fn path(root: &Path) -> PathBuf {
 /// Returns [`TokenError`] when the file exists but holds no token, or cannot be read or created.
 pub fn load_or_create(root: &Path) -> Result<Loaded, TokenError> {
     match read(root) {
-        Ok(token) => Ok(Loaded {
-            token,
-            created: false,
-        }),
+        Ok(token) => {
+            restrict_to_owner(&path(root))?;
+            Ok(Loaded {
+                token,
+                created: false,
+            })
+        }
         Err(error) if error.is_missing() => create(root).map(|token| Loaded {
             token,
             created: true,
@@ -130,6 +133,32 @@ pub fn read(root: &Path) -> Result<Token, TokenError> {
         source,
     })?;
     Token::parse(text.trim()).ok_or(TokenError::Malformed { path })
+}
+
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
+    use std::os::unix::fs::PermissionsExt;
+    let io_error = |source| TokenError::Io {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mode = fs::metadata(path).map_err(io_error)?.permissions().mode();
+    let shared_with_others = mode & 0o077;
+    if shared_with_others == 0 {
+        return Ok(());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(io_error)?;
+    tracing::warn!(
+        target: "naht::token",
+        path = %path.display(),
+        "the token file was readable by other users; it is now owner-only"
+    );
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) -> Result<(), TokenError> {
+    Ok(())
 }
 
 fn create(root: &Path) -> Result<Token, TokenError> {
