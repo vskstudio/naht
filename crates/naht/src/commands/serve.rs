@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn serve_refuses_a_tree_path_naming_a_windows_device_or_a_forbidden_character() {
-        for path in ["src/NUL", "CON/src", "src/lpt9.txt", "src/a<b"] {
+        for path in ["src/NUL", "CON/src", "src/lpt9.txt", "src/a<b", "src\\lib"] {
             assert!(
                 matches!(
                     checked_tree_paths(&config_with_tree_path(path)),

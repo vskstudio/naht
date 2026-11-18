@@ -293,6 +293,11 @@ pub(super) fn assemble_project_snapshot(
 }
 
 pub(super) fn checked_tree_path(path: &str) -> Result<&Path, CommandError> {
+    if path.contains('\\') {
+        return Err(CommandError::TreePathNotPortable {
+            path: path.to_owned(),
+        });
+    }
     let relative = Path::new(path);
     if !stays_inside_project(relative) {
         return Err(CommandError::TreePathOutsideRoot {
