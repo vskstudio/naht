@@ -13,12 +13,15 @@ use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, Pong, SequencedPatc
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 use naht_core::state::StateStore;
 use reqwest::Client;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 mod instances;
 #[cfg(test)]
 #[path = "../wire/mod.rs"]
 mod wire;
+
+static DAEMON_STARTS: Mutex<()> = Mutex::const_new(());
 
 const FILE: &str = "src/A.luau";
 const READY_DEADLINE: Duration = Duration::from_secs(10);
@@ -67,6 +70,7 @@ impl Daemon {
     }
 
     async fn try_start(root: &Path) -> Option<Self> {
+        let _starting = DAEMON_STARTS.lock().await;
         let port = free_port();
         let child = Command::new(env!("CARGO_BIN_EXE_naht"))
             .arg("serve")
