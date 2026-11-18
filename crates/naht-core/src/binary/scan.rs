@@ -11,7 +11,8 @@ use super::model::{BlobInstance, TERRAIN_CLASS};
 ///
 /// Studio holds one terrain, so the blob channel syncs that single file and ignores every other
 /// `*.terrain` file in the project. Non-blob files are left to the text scan. A blob that cannot be
-/// read is recorded in [`Scan::skipped`].
+/// read is recorded in [`Scan::skipped`]. A file whose name differs from `Terrain.terrain` only by
+/// case is recorded there under `Terrain.terrain`, so neither copy is reconciled.
 ///
 /// # Errors
 ///
@@ -20,11 +21,28 @@ pub fn scan_blobs(vfs: &impl Vfs, dir: &Path) -> Result<Scan<BlobInstance>, Reco
     let terrain = dir.join(TERRAIN_PATH);
     let mut scan = Scan::default();
     for entry in vfs.list(dir)? {
-        if entry.kind == EntryKind::File && entry.path == terrain {
+        if entry.kind != EntryKind::File {
+            continue;
+        }
+        if entry.path == terrain {
             collect_blob(vfs, &entry.path, &mut scan);
+        } else if let Some(found) = case_variant_of_terrain(&entry.path) {
+            scan.skip(
+                terrain.clone(),
+                ReconcileError::TerrainNameCase {
+                    found,
+                    expected: TERRAIN_PATH,
+                },
+            );
         }
     }
     Ok(scan)
+}
+
+fn case_variant_of_terrain(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    name.eq_ignore_ascii_case(TERRAIN_PATH)
+        .then(|| name.to_owned())
 }
 
 fn collect_blob(vfs: &impl Vfs, path: &Path, scan: &mut Scan<BlobInstance>) {

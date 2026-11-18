@@ -109,6 +109,16 @@ pub enum ReconcileError {
     /// `--keep` was given for a path that is not a frozen binary conflict.
     #[error("--keep applies only to a frozen binary conflict, not {}", .0.display())]
     KeepNotBinary(PathBuf),
+    /// The project holds the terrain under a name that differs from the synced one only by case.
+    #[error(
+        "`{found}` is not named `{expected}`: rename it to `{expected}` to sync it; both copies are left alone until then"
+    )]
+    TerrainNameCase {
+        /// The name found on disk.
+        found: String,
+        /// The name the sync holds.
+        expected: &'static str,
+    },
 }
 
 pub(super) fn patch(

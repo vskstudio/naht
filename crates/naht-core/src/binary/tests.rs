@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 const CLASS: &str = "Terrain";
 
-fn blobs(items: &[(&str, &[u8])]) -> BTreeMap<String, BlobInstance> {
+pub(super) fn blobs(items: &[(&str, &[u8])]) -> BTreeMap<String, BlobInstance> {
     items
         .iter()
         .map(|(path, content)| {

@@ -13,8 +13,8 @@ fn warn_skipped<T>(scan: &Scan<T>) {
         tracing::warn!(
             target: "naht::session",
             path = ?skipped.path,
-            error = ?skipped.error,
-            "skipped a file that could not be read"
+            error = %skipped.error,
+            "skipped a file the sync cannot use"
         );
     }
 }
