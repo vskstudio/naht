@@ -259,7 +259,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let first = serve_for_a_moment(root.path()).await;
         let later = serve_for_a_moment(root.path()).await;
-        assert_eq!(first.matches("naht created the token").count(), 1, "{first}");
+        assert_eq!(
+            first.matches("naht created the token").count(),
+            1,
+            "{first}"
+        );
         assert!(!later.contains("naht created the token"), "{later}");
     }
 
