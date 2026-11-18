@@ -37,7 +37,11 @@ Le daemon vérifie chaque route avant son handler. Une requête reçoit `403` qu
   rattachent un nom DNS à l'adresse de bouclage (DNS rebinding) ;
 - elle n'a pas le header `x-naht-client`. Un navigateur ne peut pas envoyer un header personnalisé à une autre
   origine sans preflight, et le daemon n'en répond jamais ;
-- le projet définit `[serve] place_id` et le header `x-naht-place-id` manque ou diffère.
+- le projet définit `[serve] place_id` et le header `x-naht-place-id` manque ou diffère ;
+- le projet n'a pas de `[serve] place_id` et il est rattaché à une place : un `POST` sans le header
+  `x-naht-place-id`, un header qui nomme une autre place, ou un header qui nomme la place `0` (une place non
+  publiée) est refusé. Un projet non rattaché accepte la place `0` sans l'enregistrer ;
+- le header `x-naht-place-id` est mal formé.
 
 Ces contrôles arrêtent les navigateurs et le DNS rebinding. Ce ne sont pas une authentification : tout processus
 de la machine qui atteint le port et envoie les headers est accepté. Sur une machine partagée, c'est donc le

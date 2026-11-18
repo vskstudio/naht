@@ -146,8 +146,11 @@ instances only the hash is stored (no merge base).
   `localhost:<port>` or `[::1]:<port>` (this stops a web page or a DNS-rebinding host from reading or
   writing through the daemon), when `x-naht-client` is missing or empty (a custom header forces a browser
   preflight that the daemon never answers), or, when `servePlaceId` is set, when `x-naht-place-id` is
-  missing or differs. The 403 body names the reason, and for a missing client header it starts with the token
-  `outdated-plugin`. `POST /changes` accepts only visible paths the mapper turns into a Studio script: a batch
+  missing, malformed or differs. Without `servePlaceId`, a request is also refused with `403` when its
+  `x-naht-place-id` is malformed, when a `POST` omits the header once the project is bound to a place, or when
+  the header names another place than the bound one (`bound to place N, not M`). A header naming place `0`, an
+  unpublished place, is refused once the project is bound and accepted without binding while it is not (§11).
+  The 403 body names the reason, and for a missing client header it starts with the token `outdated-plugin`. `POST /changes` accepts only visible paths the mapper turns into a Studio script: a batch
   with any refused change is refused whole, answered `400` with `{"refused_paths": [...]}` naming every refused
   path, and nothing in it is written; a batch with every change accepted is answered `200` with an empty body.
   `POST /blobs` accepts only `Terrain.terrain` at the project root; a batch naming any other path is `400`
@@ -263,7 +266,9 @@ not a v1 blocker.
   from syncing, but the place id is a value the client sends, so it is not a credential. Without `[serve] place_id`
   the daemon binds the project to the first place that attaches (recorded in `.naht/state.db`) and refuses any other
   with a message naming both ids. The binding is not a credential either: a first attach to the wrong place binds
-  the project to it, and the fix is to delete `.naht/state.db` (or set `[serve] place_id`). Once a place is recorded,
+  the project to it, and the fix is `naht unbind` (or set `[serve] place_id`). `naht unbind` clears only the recorded
+  place, under the daemon lock, because deleting `.naht/state.db` would also drop the bases, the recorded conflicts
+  and the asset cache. Once a place is recorded,
   every `POST` (`/changes`, `/blobs`, `/inventory`, `/ack`) without an `x-naht-place-id` header is refused with `403`,
   so omitting the header cannot write into a bound project (`a_write_without_a_place_header_is_refused_once_a_place_is_bound`,
   `a_write_without_a_place_header_is_refused_after_a_restart`). `GET` routes without the header stay open, which covers
@@ -271,6 +276,15 @@ not a v1 blocker.
   client that passes the Host and Origin checks, so a local process can read the project's source through it; the
   place guard does not restrict reads. The shipped plugin always sends the header.
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
+- **Place 0 is never bound.** Studio reports place id `0` until a place is published, and every unpublished place
+  reports it, so the daemon cannot tell them apart and never records it. An unbound project accepts a request for
+  place `0` without binding, so an unpublished place can attach before it is published; a bound project refuses it
+  with `403`. `[serve] place_id = 0` is a config error. A project bound to `0` by an earlier version needs one
+  `naht unbind` before it can attach a published place.
+- **A live rename from an unsaved Studio session is reverted on disk (open).** A rename synced live from a session
+  that is never saved looks, at the next attach, like a rename made while the plugin was stopped, so the inventory
+  pairs it and moves the file back to its old name. The content is preserved. This follows from the pairing rule in
+  §7 and is accepted.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.
 - **The inventory applies renames only (open).** A script created in Studio while the plugin was stopped is not written to disk, and a script deleted in Studio while the plugin was stopped stays on disk. Both are left alone and counted in one info line on the `naht::sync` target. Applying them would make Studio authoritative over the disk, which discards unsaved editor work (§7 rules that out).

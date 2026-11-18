@@ -30,6 +30,20 @@ it, or run on a different port:
 naht serve --port 40000
 ```
 
+## "This project is bound to place N" (403)
+
+The first published place that attaches is recorded in `.naht/state.db`, and the daemon refuses any other place.
+Studio reports place id `0` until a place is published, and that id is refused too once the project is bound.
+
+- Attached the wrong place once, or moved to a new place on purpose? Stop `naht serve`, run `naht unbind` in the
+  project, then attach the right place: it binds the project.
+- Want the project pinned to one place instead? Set `[serve] place_id` in `naht.toml`. It governs, and the recorded
+  binding is left alone.
+- A project bound to `0` by an earlier version of Naht needs one `naht unbind` as well.
+
+Do not delete `.naht/state.db` to reset the binding: it also holds the bases, the recorded conflicts and the asset
+cache.
+
 ## "Place id mismatch" at connect
 
 If your project sets `[serve] place_id`, the daemon only syncs with the Studio session whose place id
