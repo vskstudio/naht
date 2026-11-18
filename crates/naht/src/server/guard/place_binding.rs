@@ -97,3 +97,58 @@ async fn a_malformed_place_header_is_refused() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(body.contains("malformed place id header"), "{body}");
 }
+
+fn write_request(place: Option<&str>) -> Request<Body> {
+    let request = Request::post("/changes")
+        .header(CLIENT_HEADER, "plugin")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"));
+    let request = match place {
+        Some(place) => request.header(PLACE_ID_HEADER, place),
+        None => request,
+    };
+    request.body(Body::empty()).unwrap()
+}
+
+async fn write(state: &Arc<AppState>, place: Option<&str>) -> (StatusCode, String) {
+    let response = router(Arc::clone(state), PORT)
+        .oneshot(write_request(place))
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+#[tokio::test]
+async fn a_write_without_a_place_header_is_refused_once_a_place_is_bound() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+    info(&state, Some("11")).await;
+
+    let (status, body) = write(&state, None).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(body.contains("bound to place 11"), "{body}");
+    assert_ne!(write(&state, Some("11")).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(info(&state, None).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_write_without_a_place_header_is_refused_after_a_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let first = bound_state(root.path());
+    info(&first, Some("11")).await;
+    drop(first);
+
+    let second = bound_state(root.path());
+
+    assert_eq!(write(&second, None).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_write_without_a_place_header_passes_while_nothing_is_recorded() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+
+    assert_ne!(write(&state, None).await.0, StatusCode::FORBIDDEN);
+}

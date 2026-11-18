@@ -1,5 +1,5 @@
 use std::error::Error as StdError;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -44,7 +44,6 @@ pub(super) struct Gate {
     hosts: [String; 3],
     serve_place_id: Option<u64>,
     state: Arc<AppState>,
-    bound: OnceLock<u64>,
 }
 
 impl Gate {
@@ -57,11 +56,10 @@ impl Gate {
             ],
             serve_place_id: state.serve_place_id,
             state,
-            bound: OnceLock::new(),
         }
     }
 
-    async fn admit(&self, headers: &HeaderMap) -> Result<(), String> {
+    async fn admit(&self, method: &Method, headers: &HeaderMap) -> Result<(), String> {
         if headers.contains_key(header::ORIGIN) {
             return Err("cross-origin requests are not allowed".to_owned());
         }
@@ -80,7 +78,15 @@ impl Gate {
                 Err("place id mismatch".to_owned())
             }
             Some(_) => Ok(()),
-            None => self.bind_place(headers).await,
+            None => {
+                if method == Method::POST
+                    && !headers.contains_key(PLACE_ID_HEADER)
+                    && let Some(bound) = self.state.bound_place.get()
+                {
+                    return Err(unplaced_write_refused(*bound));
+                }
+                self.bind_place(headers).await
+            }
         }
     }
 
@@ -88,7 +94,7 @@ impl Gate {
         let Some(place_id) = requested_place_id(headers)? else {
             return Ok(());
         };
-        if let Some(bound) = self.bound.get() {
+        if let Some(bound) = self.state.bound_place.get() {
             return if *bound == place_id {
                 Ok(())
             } else {
@@ -100,7 +106,7 @@ impl Gate {
             .await
             .bind_place(place_id)
             .map_err(|error| error.to_string())?;
-        self.bound.get_or_init(|| place_id);
+        self.state.bound_place.get_or_init(|| place_id);
         Ok(())
     }
 
@@ -136,8 +142,15 @@ fn place_bound_elsewhere(bound: u64, requested: u64) -> String {
     SessionError::PlaceBoundElsewhere { bound, requested }.to_string()
 }
 
+fn unplaced_write_refused(bound: u64) -> String {
+    format!(
+        "missing {} header: this project is bound to place {bound}, a write must name it",
+        protocol::PLACE_ID_HEADER
+    )
+}
+
 pub(super) async fn guard(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> Response {
-    match gate.admit(request.headers()).await {
+    match gate.admit(request.method(), request.headers()).await {
         Ok(()) => next.run(request).await,
         Err(reason) => {
             tracing::warn!(target: "naht::server", reason = reason.as_str(), "request refused");

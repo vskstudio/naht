@@ -50,6 +50,7 @@ impl<V: Vfs> Session<V> {
         terrain_sync: bool,
     ) -> Result<Self, SessionError> {
         let studio = reconciler::studio_at_base(&store)?;
+        let recorded_place = store.place_id()?;
         Ok(Self {
             vfs,
             store,
@@ -68,6 +69,7 @@ impl<V: Vfs> Session<V> {
             id: new_session_id(),
             daemon_id: new_daemon_id()?,
             serve_place_id,
+            recorded_place,
             terrain_sync,
         })
     }
@@ -115,6 +117,11 @@ impl<V: Vfs> Session<V> {
     /// The place id this session is bound to, if any.
     pub fn serve_place_id(&self) -> Option<u64> {
         self.serve_place_id
+    }
+
+    /// The place id recorded in this project's state when the session opened, if one was bound.
+    pub fn recorded_place_id(&self) -> Option<u64> {
+        self.recorded_place
     }
 
     /// Bind this project's state to the Studio place that attaches first. A configured

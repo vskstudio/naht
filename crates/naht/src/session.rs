@@ -110,6 +110,7 @@ pub struct Session<V: Vfs = DiskVfs> {
     id: String,
     daemon_id: String,
     serve_place_id: Option<u64>,
+    recorded_place: Option<u64>,
     terrain_sync: bool,
 }
 

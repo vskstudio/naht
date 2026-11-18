@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::Router;
@@ -69,6 +69,7 @@ const POST_WAIT: Duration = Duration::from_secs(10);
 pub struct AppState {
     session: Arc<Mutex<Session>>,
     serve_place_id: Option<u64>,
+    bound_place: OnceLock<u64>,
     patches_ready: Notify,
     blobs_ready: Notify,
     long_poll: Duration,
@@ -91,9 +92,13 @@ impl AppState {
     /// Like [`AppState::new`], but a mutating `POST` waits at most `post_wait` for a slot or the lock.
     pub fn with_post_wait(session: Session, long_poll: Duration, post_wait: Duration) -> Arc<Self> {
         let serve_place_id = session.serve_place_id();
+        let bound_place = session
+            .recorded_place_id()
+            .map_or_else(OnceLock::new, OnceLock::from);
         Arc::new(Self {
             session: Arc::new(Mutex::new(session)),
             serve_place_id,
+            bound_place,
             patches_ready: Notify::new(),
             blobs_ready: Notify::new(),
             long_poll,
