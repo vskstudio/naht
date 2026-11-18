@@ -45,6 +45,53 @@ impl<V: Vfs> Session<V> {
         Ok(())
     }
 
+    /// Diff the scripts Studio lists on attach against the mirror: upsert what differs or is
+    /// missing, delete what the mirror holds but Studio no longer lists. An empty inventory
+    /// changes nothing, so a place with no scripts can never clear the filesystem.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] when the reconciled changes cannot be applied.
+    pub fn apply_inventory(&mut self, instances: &[TextInstance]) -> Result<(), SessionError> {
+        if instances.is_empty() {
+            return Ok(());
+        }
+        let listed: BTreeSet<&str> = instances
+            .iter()
+            .map(|instance| instance.path.as_str())
+            .collect();
+        let upserts = instances
+            .iter()
+            .filter(|instance| !self.has_pending_patch(&instance.path))
+            .filter(|instance| self.differs_from_mirror(instance))
+            .map(|instance| Change::Upsert {
+                path: instance.path.clone(),
+                class: instance.class.clone(),
+                content: instance.content.clone(),
+            });
+        let deletes = self
+            .studio
+            .keys()
+            .filter(|path| !listed.contains(path.as_str()))
+            .filter(|path| !self.has_pending_patch(path))
+            .map(|path| Change::Delete { path: path.clone() });
+        let changes: Vec<Change> = upserts.chain(deletes).collect();
+        if changes.is_empty() {
+            return Ok(());
+        }
+        self.apply_changes(changes)
+    }
+
+    fn differs_from_mirror(&self, instance: &TextInstance) -> bool {
+        self.studio
+            .get(&instance.path)
+            .is_none_or(|known| known.class != instance.class || known.content != instance.content)
+    }
+
+    fn has_pending_patch(&self, path: &str) -> bool {
+        self.queue.contains_key(path) || self.unacked.contains_key(path)
+    }
+
     pub(super) fn remove_emptied_dirs(&mut self, deleted: &[String]) {
         let session = &*self;
         let candidates: BTreeSet<&Path> = deleted

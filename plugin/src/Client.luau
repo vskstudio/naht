@@ -153,4 +153,27 @@ function Client.postChanges(self: Client, changes: { Protocol.Change })
 	end
 end
 
+function Client.postInventory(self: Client, changes: { Protocol.Change }, sessionId: string): boolean
+	local response = request(self, {
+		Url = "/inventory?session=" .. sessionId,
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/msgpack" },
+		Body = Protocol.encodeChanges(changes),
+	})
+	if response.StatusCode == 409 then
+		error(Client.SESSION_CHANGED)
+	end
+	if response.StatusCode == 404 then
+		return false
+	end
+	if not response.Success then
+		error({
+			status = response.StatusCode,
+			message = "naht: /inventory returned " .. tostring(response.StatusCode),
+			refused = refusedPaths(self, response.Body),
+		})
+	end
+	return true
+end
+
 return Client

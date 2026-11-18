@@ -156,6 +156,7 @@ function Connection.start(self)
 	self.running = true
 	self.session += 1
 	local session = self.session
+	self.inventorySession = nil
 	self:_attachStudio()
 	task.spawn(function()
 		self:_run(session)
@@ -233,6 +234,7 @@ function Connection._run(self, session: number)
 					self:_serveBlobs(epoch, info.session_id)
 				end)
 			end
+			self:_postInventory(info.session_id)
 			self:_serve(session, info.session_id)
 		end)
 		if not self:_isCurrent(session) then

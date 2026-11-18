@@ -42,6 +42,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use crate::session::Session;
 
 mod guard;
+mod inventory;
 mod listen;
 
 use guard::{Gate, PostGate, guard, limit_post_bodies};
@@ -155,6 +156,7 @@ pub fn router(state: Arc<AppState>, port: u16) -> Router {
         .route("/info", get(info).layer(read_deadline.clone()))
         .route("/patches", get(patches).layer(read_deadline.clone()))
         .route("/changes", post(changes))
+        .route("/inventory", post(inventory::inventory))
         .route(
             "/blobs",
             get(blobs).layer(read_deadline.clone()).post(post_blobs),

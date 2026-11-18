@@ -11,10 +11,13 @@ mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core)
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec for the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Terrain.luau` | Read/write terrain voxels (`ReadVoxels`/`WriteVoxels`) as an opaque binary blob |
-| `src/Connection.luau` | Handshake, long-poll + apply, edit push, reconnect with backoff |
+| `src/Connection.luau` | Handshake, long-poll + apply, reconnect with backoff, posts the inventory on attach |
+| `src/TerrainSync.luau` | Terrain push and the `/blobs` channel, used only when `terrain_sync` is on |
+| `src/Placement.luau` | Maps DataModel scripts to file paths, queues renames, moves and removals, builds the inventory |
+| `src/PushQueue.luau` | Batches queued edits into `POST /changes`, retries after a failure and drops the paths the daemon refuses |
 | `src/Plugin.server.luau` | Entry: toolbar toggle and a status widget |
 
 ## Install
@@ -184,3 +187,6 @@ Setup: `naht init demo`, `naht serve` in the project, install the plugin, enable
 7. **Rename in Studio.** Rename a synced `ModuleScript`, then rename it again.
    - *Expected:* after each rename the old file is gone from disk and the new file holds the same source. Only
      one file exists for the script at any time, and a folder rename moves every script under it.
+   - *Expected when refused:* a rename onto a path another script already holds, or onto a Windows device name such as `CON`, is refused with a warning that names the path. The file on disk is not overwritten, and the script keeps the file it had.
+8. **Rename while the plugin is stopped.** Stop the plugin (turn Naht Sync off, or close Studio), rename a synced `ModuleScript` in the place, then turn the plugin on again.
+   - *Expected:* on attach the plugin posts its listing, and the daemon removes the old file and writes the new one with the same source. Against a daemon that predates `/inventory`, the widget shows a warning to update naht, and the old file stays until naht is updated.

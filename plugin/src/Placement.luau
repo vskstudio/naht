@@ -234,6 +234,39 @@ function Placement._adoptPlacement(self)
 	end
 end
 
+function Placement._inventory(self)
+	local changes = {}
+	local seen: { [string]: boolean } = {}
+	for _, descendant in self.root:GetDescendants() do
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			local path = self:_pathOf(descendant)
+			if path ~= nil and not seen[path] then
+				seen[path] = true
+				table.insert(changes, self.protocol.upsert(path, descendant.ClassName, (descendant :: any).Source))
+			end
+		end
+	end
+	return changes
+end
+
+function Placement._postInventory(self, sessionId: string)
+	if self.inventorySession == sessionId then
+		return
+	end
+	local changes = self:_inventory()
+	if #changes == 0 then
+		self.inventorySession = sessionId
+		self:_clearWarning("inventory")
+		return
+	end
+	if not self.client:postInventory(changes, sessionId) then
+		self:_setWarning("inventory", "naht: this daemon predates renames made while the plugin was stopped, update naht to apply them")
+		return
+	end
+	self.inventorySession = sessionId
+	self:_clearWarning("inventory")
+end
+
 function Placement._removeScript(self, script: Instance)
 	local from = self.placed[script] or self:_pathOf(script)
 	if from == nil then

@@ -230,6 +230,31 @@ local function scenario(root, port, log)
 	stopDaemon(second)
 end
 
+local function renamedWhileStopped(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeFile(root .. "/" .. RENAME_FROM, "return 6")
+
+	local first = startDaemon(root, port, log)
+	local info = first.client:info()
+	local initial = first.client:patches(0, info.session_id)
+	ackAll(first.client, info.session_id, initial)
+	stopDaemon(first)
+
+	local second = startDaemon(root, port, log)
+	local restarted = second.client:info()
+	second.client:postInventory({ Protocol.upsert(RENAME_TO, "ModuleScript", "return 6") }, restarted.session_id)
+	check("an inventory removes the file renamed while the plugin was stopped", not fs.isFile(root .. "/" .. RENAME_FROM))
+	check(
+		"an inventory writes the renamed file under its new path",
+		fs.isFile(root .. "/" .. RENAME_TO) and fs.readFile(root .. "/" .. RENAME_TO) == "return 6"
+	)
+	stopDaemon(second)
+end
+
 local function main()
 	local root = WORK .. "/demo"
 	local log = WORK .. "/naht.log"
@@ -239,6 +264,11 @@ local function main()
 	local ok, err = pcall(scenario, root, port, log)
 	if not ok then
 		check("the daemon scenario ran to completion", false, tostring(err))
+	end
+	local renamedLog = WORK .. "/renamed.log"
+	local renamedOk, renamedErr = pcall(renamedWhileStopped, WORK .. "/renamed", math.random(20000, 60000), renamedLog)
+	if not renamedOk then
+		check("the rename-while-stopped scenario ran to completion", false, tostring(renamedErr))
 	end
 	for _, daemon in daemons do
 		pcall(stopDaemon, daemon)

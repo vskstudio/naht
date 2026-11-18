@@ -130,7 +130,7 @@ instances only the hash is stored (no merge base).
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
 - **Endpoints:** `GET /info` (handshake), `GET /patches` (long-poll, held
-  open until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the
+  open until a change or timeout), `POST /changes` (Studio → FS), `POST /inventory` (the plugin's full script listing, once per session on attach), `GET /blobs` + `POST /blobs` (the
   binary terrain channel: a separate long-poll/push pair, kept apart from the text patch channel
   because blobs are synced opaquely with no diff/merge), `POST /ack` (the plugin confirms, by queue
   sequence, which patches it applied; an acked patch leaves the queue), `GET /heartbeat` (liveness ping), `GET /activity` (read-only live sync feed:
@@ -140,6 +140,7 @@ instances only the hash is stored (no merge base).
   the session id from `GET /info`. Without it the daemon answers `400`. With another session's id (the daemon
   restarted since the plugin read it) it answers `409`, the plugin re-handshakes, and the request changes nothing.
   An ack from a previous session settles no patch.
+- **Inventory (protocol 3, additive):** `POST /inventory?session=<id>` takes the same `{changes: [...]}` body as `/changes`, holding the plugin's full listing of its scripts. The plugin posts it once per session, on attach. The daemon deletes each mirrored script the listing does not name and writes each listed script it lacks or holds with other content, so a rename made while the plugin was stopped leaves no old file. A `Delete` in the body is refused (`400`, naming the path), a path with a queued or unacked patch is left to the ack path, an empty listing changes nothing, and another session's id is answered `409`. The route is additive: no protocol-version bump, and a daemon that predates it answers `404`, which the plugin reports as a warning.
 - **Trust boundary:** one middleware gates every route before any handler runs, and answers `403`
   when the request carries an `Origin` header, when its `Host` is not exactly one of `127.0.0.1:<port>`,
   `localhost:<port>` or `[::1]:<port>` (this stops a web page or a DNS-rebinding host from reading or
@@ -254,7 +255,6 @@ not a v1 blocker.
 - **The place guard is a safety check (open).** `servePlaceId` stops a session bound to the wrong place
   from syncing, but the place id is a value the client sends, so it is not a credential.
 - **The daemon e2e job is not a required check (open).** The `daemon e2e (naht serve + plugin client)` job in `.github/workflows/ci.yml` drives the plugin client against a real `naht serve`, but it is not in the required status checks of ruleset 27350364, so a pull request can merge while it fails. Follow-up, not implemented: add that job to the ruleset's required checks.
-- **A rename made while the plugin is stopped may leave the old file (open).** The plugin knows the path the daemon holds for each instance only while it runs. A fresh plugin process has no such record, so a rename made while Studio's plugin is not running can leave the old file behind. Follow-up, not implemented: persist the instance-to-path map with the plugin's sync state, or match instances by GUID when the plugin attaches.
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.
