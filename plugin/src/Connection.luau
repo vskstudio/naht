@@ -87,6 +87,7 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		terrainInFlight = false,
 		terrainBaseline = nil,
 		terrainSync = false,
+		terrainVoxelLimit = deps.terrainBlob.MAX_VOXELS,
 		terrainTicket = 0,
 		cursor = 0,
 		blobCursor = 0,
@@ -211,6 +212,7 @@ function Connection._run(self, session: number)
 			end
 			self.projectName = info.project_name
 			self.terrainSync = info.terrain_sync == true
+			self.terrainVoxelLimit = if info.limits then info.limits.terrain_voxels else self.terrainBlob.MAX_VOXELS
 			self.conflicts = {}
 			for _, path in info.conflicted or {} do
 				self.conflicts[path] = true

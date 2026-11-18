@@ -3194,6 +3194,54 @@ suite("the connection takes live terrain sync from the daemon's handshake", func
 		connection:stop()
 end)
 
+local function connectWithReportedLimits(terrain: any, limits: any?, onState: (string, string?) -> ()): number
+	local tree, root = studioWorld(true)
+	local blobPosts = 0
+	local client = {
+		info = function(_)
+			return { project_name = "demo", session_id = "s-1", conflicted = {}, terrain_sync = true, limits = limits }
+		end,
+		patches = function(_, _cursor)
+			error("stop")
+		end,
+		blobs = function(_, _cursor)
+			error("stop")
+		end,
+		postBlobs = function(_, _batch)
+			blobPosts += 1
+		end,
+		postChanges = noop,
+		postInventory = function() return true end,
+		postAck = noop,
+	}
+	local connection = Connection.new(client, root, onState, deps(terrain, tree))
+	connection.running = true
+	connection.session = 1
+	task.spawn(function()
+		connection:_run(1)
+	end)
+	task.wait(0.5)
+	connection:stop()
+	return blobPosts
+end
+
+suite("a terrain over the cap the daemon reports is not posted and warns with the build hint", function()
+		local log, onState = stateLog()
+		local posts = connectWithReportedLimits(memoryTerrain(1), { terrain_voxels = 32 }, onState)
+		check("a 64-voxel terrain is not posted under a reported cap of 32", posts == 0, tostring(posts) .. " posts")
+		check("the refused terrain warns with the build hint", warningsOf(log)[1] == TOO_LARGE, table.concat(warningsOf(log), " | "))
+end)
+
+suite("a terrain within the cap the daemon reports is posted", function()
+		local posts = connectWithReportedLimits(memoryTerrain(1), { terrain_voxels = 64 }, noop)
+		check("a 64-voxel terrain is posted under a reported cap of 64", posts == 1, tostring(posts) .. " posts")
+end)
+
+suite("a daemon that reports no limits keeps the built-in terrain cap", function()
+		local posts = connectWithReportedLimits(memoryTerrain(1), nil, noop)
+		check("a 64-voxel terrain is posted when no cap is reported", posts == 1, tostring(posts) .. " posts")
+end)
+
 suite("a terrain blob for another path is skipped with a Warning and never written over the terrain", function()
 		local terrain = memoryTerrain(1)
 		local tree, root = studioWorld(true)

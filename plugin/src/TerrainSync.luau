@@ -132,7 +132,7 @@ end
 function TerrainSync._sendTerrain(self, epoch: number): boolean
 	local region = self:_terrainRegion()
 	local size = region.Size
-	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainBlob.MAX_VOXELS then
+	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainVoxelLimit then
 		return false
 	end
 	while self.terrainInFlight do

@@ -7,6 +7,7 @@ export type ServerInfo = {
 	session_id: string,
 	serve_place_id: number?,
 	conflicted: { string }?,
+	limits: { terrain_voxels: number }?,
 }
 
 export type Patch = {

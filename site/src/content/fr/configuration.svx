@@ -61,6 +61,31 @@ d'un jeu dans un autre. Définis-le sur tout projet destiné à être publié.
 
 </Callout>
 
+## `[limits]`
+
+Plafonds appliqués par le démon. Chaque clé est facultative et prend la valeur par défaut indiquée ci-dessous. `naht serve` refuse au démarrage une valeur nulle, ou supérieure à son plafond, avec une erreur qui nomme la clé. Ce contrôle a lieu avant la prise du verrou d'instance, donc une configuration refusée ne laisse rien verrouillé. Comme chaque clé de `naht.toml`, une valeur du projet remplace celle de `~/.naht/config.toml`.
+
+```toml
+[limits]
+terrain_voxels = 1048576        # voxels qu'une poussée de terrain en direct peut contenir
+inventory_body_bytes = 67108864 # taille maximale d'un corps POST /inventory, en octets
+mass_delete_warn = 25           # suppressions dans une réconciliation qui déclenchent un avertissement
+connections = 64                # connexions que le démon sert en même temps
+```
+
+| Clé | Type | Défaut | Plafond | Rôle |
+|---|---|---|---|---|
+| `terrain_voxels` | entier | `1048576` | `8388608` | Nombre maximal de voxels qu'une poussée de terrain en direct peut contenir. Le plugin lit cette valeur auprès du démon et applique donc le même plafond. Une poussée plus grande est refusée avec `413`, et le plugin demande alors de lancer `naht build`. Un blob dont l'en-tête est illisible est refusé avec `400`. |
+| `inventory_body_bytes` | entier | `67108864` (64 MiB) | `134217728` (128 MiB) | Taille maximale d'un corps `POST /inventory`, en octets. Un corps plus grand reçoit `413`. Les autres routes gardent la limite de 64 MiB. |
+| `mass_delete_warn` | entier | `25` | `100000` | Une réconciliation qui supprime au moins ce nombre de fichiers journalise un avertissement, pour que vous puissiez vérifier que le changement était voulu. |
+| `connections` | entier | `64` | `1024` | Connexions que la boucle d'acceptation sert en même temps. Une connexion au-delà du plafond attend qu'une place se libère. |
+
+<Callout type="important">
+
+Le plafond de `terrain_voxels` garde le pire blob de terrain, un en-tête de 40 octets plus 6 octets par voxel, autour de 48 MiB, sous le corps de 64 MiB que acceptent les autres routes. Relever `inventory_body_bytes` permet à deux gros corps `/inventory` de tenir en mémoire en même temps : ne le relevez que si un projet en a besoin.
+
+</Callout>
+
 ## `[assets]`
 
 Upload d'assets via Open Cloud. Désactivé par défaut, donc le comportement inchangé est de synchroniser

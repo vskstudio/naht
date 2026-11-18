@@ -59,6 +59,31 @@ that ships.
 
 </Callout>
 
+## `[limits]`
+
+Caps the daemon enforces. Each key is optional and defaults to the value below. `naht serve` refuses a value of zero, or one above its ceiling, at startup, with an error that names the key. It does so before it takes the instance lock, so a refused configuration leaves nothing locked. Like every key in `naht.toml`, a project value overrides the one in `~/.naht/config.toml`.
+
+```toml
+[limits]
+terrain_voxels = 1048576        # voxels one live terrain push may carry
+inventory_body_bytes = 67108864 # largest POST /inventory body, in bytes
+mass_delete_warn = 25           # deletions in one reconcile that trigger a warning
+connections = 64                # connections the daemon serves at once
+```
+
+| Key | Type | Default | Ceiling | Purpose |
+|---|---|---|---|---|
+| `terrain_voxels` | integer | `1048576` | `8388608` | Most voxels one live terrain push may carry. The plugin reads this value from the daemon, so it enforces the same cap. A larger push is refused with `413`, and the plugin then asks you to run `naht build`. A blob whose header cannot be read is refused with `400`. |
+| `inventory_body_bytes` | integer | `67108864` (64 MiB) | `134217728` (128 MiB) | Largest `POST /inventory` body, in bytes. A larger body gets `413`. Every other route keeps the 64 MiB limit. |
+| `mass_delete_warn` | integer | `25` | `100000` | A reconcile that deletes at least this many files logs a warning, so you can check the change was intended. |
+| `connections` | integer | `64` | `1024` | Connections the accept loop serves at once. A connection past the cap waits until a slot frees. |
+
+<Callout type="important">
+
+The ceiling of `terrain_voxels` keeps the worst-case terrain blob, a 40-byte header plus 6 bytes per voxel, at about 48 MiB, under the 64 MiB body the other routes accept. Raising `inventory_body_bytes` lets two large `/inventory` bodies sit in memory at once, so raise it only when a project needs it.
+
+</Callout>
+
 ## `[assets]`
 
 Open Cloud asset upload. Disabled by default, so the unchanged behavior is to sync asset-id strings as
