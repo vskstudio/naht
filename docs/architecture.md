@@ -162,6 +162,7 @@ instances only the hash is stored (no merge base).
 - **Header timeout and keep-alive:** the ten-second header timeout also closes an idle keep-alive
   connection after ten seconds. Clients must not depend on connection reuse: `Client.luau` makes no
   assumption about it, and a request that finds its connection closed is retried by the connection loop.
+- **Connection cap:** the accept loop of `naht serve` holds at most 64 connections at once, the same number as the in-flight limit. A slot is taken before a connection is accepted and freed when the connection ends, so a connection past the cap is not accepted: it waits in the kernel's listen backlog, which holds no process memory, and is served once a slot frees (`a_connection_past_the_cap_waits_until_a_slot_frees_then_is_served`). An idle keep-alive connection is closed by the header timeout, so it frees its slot within ten seconds of going idle. The plugin needs a handful of connections for its long-polls and posts, far below 64.
 - **Protocol version 2:** the `x-naht-client` and `x-naht-place-id` headers are required on every request
   and came with version 2. A plugin built for version 1 sends no client header, so every route answers it
   `403`, and that plugin does not recognise the token: it keeps showing `Reconnecting` with the 403 reason
@@ -255,9 +256,4 @@ not a v1 blocker.
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.
-- **The accept loop has no connection cap (open).** Connections are accepted without a count. The listener
-  binds only to loopback, and each route is bounded by its own limits (the two body slots, the
-  concurrency limit of 64 and the post wait), but a flood of idle connections is not capped. Known
-  follow-up, not implemented: cap accepted connections at the listener, for example with a semaphore
-  around the accept loop in `serve`.
 - **Refusal text is not escaped (open).** `server.rs:489-493` answers a `VfsError` with its `Display` as `text/plain`, and that text carries the client's path unescaped. This predates this branch and is not changed here. Follow-up, not implemented: answer with a JSON body, or escape the path with `{:?}` before it reaches the response.
