@@ -2722,6 +2722,66 @@ suite("a reparent the daemon refuses leaves the old file in place", function()
 		connection:stop()
 end)
 
+suite("an edit made after a refused rename does not send the old file's Delete", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden.luau") then
+				error({ status = 400, message = "refused", refused = { ".Hidden.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = ".Hidden"
+		tree.setSource(script, "return 'edited'")
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(1)
+		check(
+			"an edit after a refused rename never sends the old file's Delete",
+			not anyChange(posts, "Delete", "Old.luau"),
+			tostring(#attempts) .. " attempts"
+		)
+		check(
+			"an edit after a refused rename restores the old path as the placed path",
+			connection.placed[script] == "Old.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("a Windows device name is warned once and yields no path", function()
+		local names = { "CON", "con", "nul.Extra", "LPT1", "COM\u{b2}", "CLOCK$" }
+		for _, name in names do
+			local tree, root = studioWorld(true)
+			local warnings: { string } = {}
+			local settings = deps(extentsTerrainWith(extentsRegion), tree)
+			settings.warn = function(message: string)
+				table.insert(warnings, message)
+			end
+			local connection = Connection.new({}, root, noop, settings)
+			local script = place(tree, "ModuleScript", name, root)
+			local first = connection:_pathOf(script)
+			local second = connection:_pathOf(script)
+			check(
+				"the device-named script " .. name .. " has no path",
+				first == nil and second == nil,
+				tostring(first)
+			)
+			check(
+				"the device-named script " .. name .. " is warned once",
+				#warnings == 1,
+				tostring(#warnings) .. " warnings"
+			)
+		end
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local console = place(tree, "ModuleScript", "CONSOLE", root)
+		check(
+			"a name that only starts with a device name keeps its path",
+			connection:_pathOf(console) == "CONSOLE.luau",
+			tostring(connection:_pathOf(console))
+		)
+end)
+
 suite("moving a script out of the root deletes its file", function()
 		local client, posts, attempts = recordingClient()
 		local connection, tree, root = renameWorld(client)

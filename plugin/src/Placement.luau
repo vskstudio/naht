@@ -34,10 +34,28 @@ local function endsWithScriptSuffix(name: string): boolean
 	return false
 end
 
+local WINDOWS_DEVICE_NAMES: { [string]: boolean } = {}
+for _, name in { "CON", "CONIN$", "CONOUT$", "PRN", "AUX", "NUL", "CLOCK$", "COM\u{b9}", "COM\u{b2}", "COM\u{b3}", "LPT\u{b9}", "LPT\u{b2}", "LPT\u{b3}" } do
+	WINDOWS_DEVICE_NAMES[name] = true
+end
+for digit = 0, 9 do
+	WINDOWS_DEVICE_NAMES["COM" .. digit] = true
+	WINDOWS_DEVICE_NAMES["LPT" .. digit] = true
+end
+
+local function isWindowsDeviceName(name: string): boolean
+	local stem = string.match(name, "^[^.]*") or name
+	local trimmed = (string.gsub(stem, " +$", ""))
+	return WINDOWS_DEVICE_NAMES[string.upper(trimmed)] == true
+end
+
 function Placement._unsafeReason(_self, instance: Instance, segments: { string }): string?
 	for _, segment in segments do
 		if not isSafeName(segment) then
 			return "a name contains '/', '\\', ':', '< > \" | ? *' or a control byte, or is empty, '.' or '..'"
+		end
+		if isWindowsDeviceName(segment) then
+			return "a name is a Windows device name such as CON or LPT1"
 		end
 	end
 	if instance.ClassName == "ModuleScript" and endsWithScriptSuffix(instance.Name) then
@@ -118,7 +136,7 @@ function Placement._pushInstance(self, instance: Instance, path: string)
 	end
 	self.lastApplied[path] = nil
 	self.placed[instance] = path
-	self.pendingPush[path] = self.protocol.upsert(path, instance.ClassName, source)
+	self:_queue(path, self.protocol.upsert(path, instance.ClassName, source), self.groupOf[self.pendingPush[path]])
 	self:_schedulePush()
 end
 
