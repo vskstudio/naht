@@ -331,3 +331,39 @@ fn a_case_only_folder_rename_onto_another_folder_is_refused() {
     ));
     assert_eq!(root_names(&session), ["Utils", "utils"]);
 }
+
+#[test]
+fn an_inventory_does_not_pair_a_script_with_an_unacked_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_with_synced_scripts(root.path(), &[("Old.luau", "return 1")]);
+    fs::write(root.path().join("Old.luau"), "return 2").unwrap();
+    session.rescan().unwrap();
+
+    session
+        .apply_inventory(&[inventory_entry("New.luau", "ModuleScript", "return 1")])
+        .unwrap();
+
+    assert_eq!(root_names(&session), ["Old.luau"]);
+    assert_eq!(
+        fs::read_to_string(root.path().join("Old.luau")).unwrap(),
+        "return 2"
+    );
+}
+
+#[test]
+fn an_inventory_does_not_overwrite_a_listed_script_with_an_unacked_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_with_synced_scripts(root.path(), &[("Old.luau", "return 1")]);
+    fs::write(root.path().join("New.luau"), "return 2").unwrap();
+    session.rescan().unwrap();
+
+    session
+        .apply_inventory(&[inventory_entry("New.luau", "ModuleScript", "return 1")])
+        .unwrap();
+
+    assert_eq!(root_names(&session), ["New.luau", "Old.luau"]);
+    assert_eq!(
+        fs::read_to_string(root.path().join("New.luau")).unwrap(),
+        "return 2"
+    );
+}
