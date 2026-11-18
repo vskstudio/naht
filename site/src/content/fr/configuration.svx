@@ -102,7 +102,7 @@ Archivable = false
 | Clé | Type | Rôle |
 |---|---|---|
 | `instance` | string | Le chemin de l'instance dans le DataModel. |
-| `path` | string? | Le chemin du système de fichiers auquel elle se mappe. Il doit être relatif à la racine du projet et y rester, liens symboliques compris : un `..` n'importe où dans le chemin, les chemins absolus et les liens qui sortent du projet sont refusés. `naht serve` refuse toute la config au démarrage quand un de ses chemins est refusé. Un `./` en tête est accepté. |
+| `path` | string? | Le chemin du système de fichiers auquel elle se mappe. Il doit être relatif à la racine du projet et y rester : un `..` n'importe où dans le chemin, un chemin absolu ou un préfixe de lecteur sont refusés. `naht serve` refuse toute la config au démarrage dès qu'un de ses chemins est refusé ; seul `naht build` vérifie en plus que les liens symboliques du chemin restent dans le projet. Un `./` en tête est accepté, de même qu'un chemin réduit à `.` (la racine du projet). |
 | `class` | string? | Le nom de classe Roblox, quand il n'est pas impliqué par la convention. |
 | `properties` | table | Les propriétés non par défaut de ce nœud. |
 

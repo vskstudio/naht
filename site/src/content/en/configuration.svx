@@ -99,7 +99,7 @@ Archivable = false
 | Key | Type | Purpose |
 |---|---|---|
 | `instance` | string | The instance's path in the DataModel. |
-| `path` | string? | The filesystem path it maps to. Must be relative to the project root and stay inside it, symlinks included: a `..` anywhere in the path, absolute paths and links that leave the project are refused. `naht serve` refuses the whole config at startup when one of its paths is refused. A leading `./` is accepted. |
+| `path` | string? | The filesystem path it maps to. Must be relative to the project root and stay inside it: a `..` anywhere in the path, an absolute path or a drive prefix is refused. `naht serve` refuses the whole config at startup when one of its paths is refused; only `naht build` also checks that the symbolic links on the path stay inside the project. A leading `./`, or a path of only `.` (the project root), is accepted. |
 | `class` | string? | The Roblox class name, when not implied by convention. |
 | `properties` | table | Non-default properties for this node. |
 
