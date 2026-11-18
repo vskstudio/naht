@@ -8,6 +8,7 @@
 //! Non-default properties travel inline as [`crate::frontmatter`]; non-source files (a README, say)
 //! are not Roblox instances and are skipped, not lost.
 
+use crate::vfs::is_forbidden_name_character;
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
@@ -247,7 +248,7 @@ fn init_file_name(class: &str) -> &'static str {
 }
 
 fn checked_name(name: &str) -> Result<&str, MapError> {
-    if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\', '\0', ':']) {
+    if name.is_empty() || name.starts_with('.') || name.chars().any(is_forbidden_name_character) {
         return Err(MapError::UnsafeName(name.to_owned()));
     }
     Ok(name)
@@ -263,7 +264,7 @@ fn file_name(path: &Path) -> Result<String, MapError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::MemoryVfs;
+    use crate::vfs::{MemoryVfs, validate_project_path};
 
     fn fixture() -> MemoryVfs {
         MemoryVfs::new()
@@ -402,6 +403,39 @@ mod tests {
             assert!(
                 write_tree(&mut vfs, Path::new("proj"), &snapshot).is_err(),
                 "{class} named {name:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn write_tree_refuses_each_name_the_project_path_rule_refuses_and_keeps_ordinary_ones() {
+        let forbidden = ('\0'..='\u{1f}').chain("<>\"|?*".chars());
+        for character in forbidden {
+            let name = format!("a{character}b");
+            let mut vfs = MemoryVfs::new();
+            let snapshot = Snapshot::new("Folder", &name);
+            assert!(
+                matches!(
+                    write_tree(&mut vfs, Path::new("proj"), &snapshot),
+                    Err(MapError::UnsafeName(_))
+                ),
+                "{name:?} must be refused"
+            );
+            assert!(
+                validate_project_path(&format!("Dir/{name}/Leaf.luau")).is_err(),
+                "the project path rule must refuse {name:?} too"
+            );
+        }
+        for name in ["a-b_c.d", "Dé jà", "Name (2)"] {
+            let mut vfs = MemoryVfs::new();
+            let snapshot = Snapshot::new("Folder", name);
+            assert!(
+                write_tree(&mut vfs, Path::new("proj"), &snapshot).is_ok(),
+                "{name:?}"
+            );
+            assert_eq!(
+                validate_project_path(&format!("Dir/{name}/Leaf.luau")),
+                Ok(())
             );
         }
     }

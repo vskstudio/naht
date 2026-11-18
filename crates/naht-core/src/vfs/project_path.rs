@@ -31,7 +31,7 @@ pub fn validate_project_path(path: &str) -> Result<(), ProjectPathError> {
         if component.contains(':') {
             return Err(ProjectPathError::DrivePrefix);
         }
-        if component.chars().any(is_forbidden_character) {
+        if component.chars().any(is_forbidden_name_character) {
             return Err(ProjectPathError::ForbiddenCharacter);
         }
         if is_windows_device_name(component) {
@@ -87,8 +87,15 @@ fn is_windows_device_name(component: &str) -> bool {
         .any(|name| stem.eq_ignore_ascii_case(name))
 }
 
-fn is_forbidden_character(character: char) -> bool {
-    matches!(character, '<' | '>' | '"' | '|' | '?' | '*') || character <= '\u{1f}'
+/// Whether `character` may not appear in a Studio name that becomes a file name.
+///
+/// The path separators, the drive colon, the characters Windows forbids in file names and every
+/// control byte, NUL included, are refused on every host.
+pub fn is_forbidden_name_character(character: char) -> bool {
+    matches!(
+        character,
+        '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*'
+    ) || character <= '\u{1f}'
 }
 
 /// Validate a path sent to `/changes`: a project-relative, visible file the mapper turns into a script.

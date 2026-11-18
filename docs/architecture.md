@@ -260,5 +260,4 @@ not a v1 blocker.
   concurrency limit of 64 and the post wait), but a flood of idle connections is not capped. Known
   follow-up, not implemented: cap accepted connections at the listener, for example with a semaphore
   around the accept loop in `serve`.
-- **Studio names that Windows forbids are not refused on pull (open).** `checked_name` in `mapper.rs` refuses a name containing `/`, `\`, `:` or NUL, or starting with a dot, but not `< > " | ? *` or a control byte from 0x01 to 0x1F. A pull can therefore write a file that Windows cannot create, while `validate_project_path` refuses those characters on the push side on every host. Follow-up, not implemented: apply the same character rule in `checked_name`, so a name Windows forbids is skipped on every host the same way.
 - **Refusal text is not escaped (open).** `server.rs:489-493` answers a `VfsError` with its `Display` as `text/plain`, and that text carries the client's path unescaped. This predates this branch and is not changed here. Follow-up, not implemented: answer with a JSON body, or escape the path with `{:?}` before it reaches the response.
