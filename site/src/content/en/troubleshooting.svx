@@ -39,7 +39,6 @@ Studio reports place id `0` until a place is published, and that id is refused t
   project, then attach the right place: it binds the project.
 - Want the project pinned to one place instead? Set `[serve] place_id` in `naht.toml`. It governs, and the recorded
   binding is left alone.
-- A project bound to `0` by an earlier version of Naht needs one `naht unbind` as well.
 
 Do not delete `.naht/state.db` to reset the binding: it also holds the bases, the recorded conflicts and the asset
 cache.

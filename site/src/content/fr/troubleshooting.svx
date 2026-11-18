@@ -40,7 +40,6 @@ projet rattaché.
   le projet, puis connecte la bonne place : elle rattache le projet.
 - Tu veux épingler le projet à une seule place ? Définis `[serve] place_id` dans `naht.toml`. Il prime, et le
   rattachement enregistré est laissé tel quel.
-- Un projet rattaché à `0` par une version précédente de Naht a aussi besoin d'un seul `naht unbind`.
 
 Ne supprime pas `.naht/state.db` pour réinitialiser le rattachement : il contient aussi les bases, les conflits
 enregistrés et le cache des assets.

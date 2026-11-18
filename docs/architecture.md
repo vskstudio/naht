@@ -279,8 +279,7 @@ not a v1 blocker.
 - **Place 0 is never bound.** Studio reports place id `0` until a place is published, and every unpublished place
   reports it, so the daemon cannot tell them apart and never records it. An unbound project accepts a request for
   place `0` without binding, so an unpublished place can attach before it is published; a bound project refuses it
-  with `403`. `[serve] place_id = 0` is a config error. A project bound to `0` by an earlier version needs one
-  `naht unbind` before it can attach a published place.
+  with `403`. `[serve] place_id = 0` is a config error.
 - **A live rename from an unsaved Studio session is reverted on disk (open).** A rename synced live from a session
   that is never saved looks, at the next attach, like a rename made while the plugin was stopped, so the inventory
   pairs it and moves the file back to its old name. The content is preserved. This follows from the pairing rule in
