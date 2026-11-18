@@ -40,6 +40,8 @@ The one file that syncs live is `Terrain.terrain` at the project root, the only 
 `naht serve` ignores every other `.terrain` file in the project: a copy such as `src/Map.terrain` is neither
 pushed to Studio nor overwritten by the terrain.
 
+One name is not ignored: a root file that differs from `Terrain.terrain` only by letter case, such as `terrain.terrain`, stops terrain sync altogether. `naht serve` leaves both copies alone and logs a warning. Rename that file to `Terrain.terrain`, or remove it when `Terrain.terrain` is already there, before terrain syncs again.
+
 To clear a frozen terrain, keep one side with `naht resolve --keep disk|studio` (see [Conflicts](#/docs/conflicts)).
 <Callout type="note">
 

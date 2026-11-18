@@ -40,6 +40,8 @@ Le seul fichier synchronisé en direct est `Terrain.terrain` à la racine du pro
 `naht serve` ignore tous les autres fichiers `.terrain` du projet : une copie comme `src/Map.terrain` n'est ni
 poussée vers Studio ni écrasée par le terrain.
 
+Une exception : un fichier à la racine dont le nom ne diffère de `Terrain.terrain` que par la casse, comme `terrain.terrain`, arrête entièrement la synchronisation du terrain. `naht serve` laisse les deux copies intactes et écrit un avertissement dans le journal. Renomme ce fichier en `Terrain.terrain`, ou supprime-le si `Terrain.terrain` existe déjà, avant que le terrain ne se synchronise de nouveau.
+
 Pour libérer un terrain gelé, garde un côté avec `naht resolve --keep disk|studio` (voir [Conflits](#/docs/conflicts)).
 <Callout type="note">
 
