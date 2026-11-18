@@ -1,12 +1,14 @@
 use std::fs;
+use std::io;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use naht_core::state::StateStore;
 use tower::ServiceExt;
+use tracing::subscriber::set_default;
 
 use super::{CLIENT_HEADER, PLACE_ID_HEADER};
 use crate::server::{AppState, router};
@@ -73,6 +75,54 @@ async fn an_unpublished_place_does_not_bind_the_project() {
     assert_eq!(info(&state, Some("0")).await.0, StatusCode::OK);
     assert_eq!(info(&state, Some("11")).await.0, StatusCode::OK);
     assert_eq!(info(&state, Some("22")).await.0, StatusCode::FORBIDDEN);
+}
+
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for LogBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogBuffer {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn an_unpublished_place_is_logged_once_per_session() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    let _default = set_default(subscriber);
+    let app = router(Arc::clone(&state), PORT);
+
+    for _ in 0..3 {
+        let response = app.clone().oneshot(info_request(Some("0"))).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    assert_eq!(
+        logs.text().matches("names an unpublished place").count(),
+        1,
+        "{}",
+        logs.text()
+    );
 }
 
 #[tokio::test]
