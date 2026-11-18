@@ -64,8 +64,8 @@ relance aussitôt : le fichier résolu part vers Studio sans autre action.
 Un conflit binaire n'a aucun marqueur à retirer, donc `naht resolve` doit savoir quel côté garder :
 
 ```sh
-naht resolve --keep disk src/Map.terrain    # le fichier sur disque gagne : ses octets partent vers Studio
-naht resolve --keep studio src/Map.terrain  # la copie Studio gagne : ses octets remplacent le fichier
+naht resolve --keep disk Terrain.terrain    # le fichier sur disque gagne : ses octets partent vers Studio
+naht resolve --keep studio Terrain.terrain  # la copie Studio gagne : ses octets remplacent le fichier
 ```
 
 `--keep disk` libère le gel, et la sync suivante pousse les octets du disque vers Studio. Il est refusé
