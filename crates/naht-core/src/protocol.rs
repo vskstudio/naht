@@ -45,6 +45,9 @@ pub struct ServerInfo {
     /// The paths frozen as conflicted, so a plugin that reconnects after a restart can show them.
     #[serde(default)]
     pub conflicted: Vec<String>,
+    /// Whether the daemon synchronizes terrain blobs live, as `[serve] terrain_sync` says.
+    #[serde(default)]
+    pub terrain_sync: bool,
 }
 
 /// The long-poll response from `GET /patches`: every queued patch past the client's cursor, plus the
@@ -254,6 +257,7 @@ mod tests {
             daemon_id: "d-1".to_owned(),
             serve_place_id: Some(123),
             conflicted: vec!["Frozen.luau".to_owned()],
+            terrain_sync: true,
         };
         let bytes = to_msgpack(&info).unwrap();
         assert_eq!(from_msgpack::<ServerInfo>(&bytes).unwrap(), info);
@@ -388,6 +392,7 @@ mod tests {
             daemon_id: "d-1".to_owned(),
             serve_place_id: Some(123),
             conflicted: Vec::new(),
+            terrain_sync: false,
         };
         assert_eq!(hex(&to_msgpack(&info).unwrap()), pinned_hex("server_info"));
     }

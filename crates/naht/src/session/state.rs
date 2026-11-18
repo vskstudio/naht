@@ -70,6 +70,7 @@ impl Session {
             daemon_id: self.daemon_id.clone(),
             serve_place_id: self.serve_place_id,
             conflicted: Vec::new(),
+            terrain_sync: self.terrain_sync,
         }
     }
 
@@ -217,6 +218,29 @@ mod tests {
             vec!["Frozen.luau".to_owned()]
         );
         assert_eq!(session.info().conflicted, Vec::<String>::new());
+    }
+
+    #[test]
+    fn info_reports_whether_terrain_sync_is_enabled() {
+        let root = tempfile::tempdir().unwrap();
+        let enabled = Session::new(
+            root.path(),
+            StateStore::open_in_memory().unwrap(),
+            "demo",
+            None,
+            true,
+        )
+        .unwrap();
+        let disabled = Session::new(
+            root.path(),
+            StateStore::open_in_memory().unwrap(),
+            "demo",
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(enabled.info().terrain_sync);
+        assert!(!disabled.info().terrain_sync);
     }
 
     #[test]

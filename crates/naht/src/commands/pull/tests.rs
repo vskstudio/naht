@@ -18,6 +18,7 @@ fn info(project: &str, place: Option<u64>, daemon_id: &str) -> ServerInfo {
         daemon_id: daemon_id.to_owned(),
         serve_place_id: place,
         conflicted: Vec::new(),
+        terrain_sync: false,
     }
 }
 

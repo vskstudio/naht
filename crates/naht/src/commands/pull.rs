@@ -153,6 +153,8 @@ struct Answer {
     serve_place_id: Option<u64>,
     #[serde(default)]
     conflicted: Vec<String>,
+    #[serde(default)]
+    terrain_sync: bool,
 }
 
 impl Answer {
@@ -165,6 +167,7 @@ impl Answer {
             daemon_id: self.daemon_id?,
             serve_place_id: self.serve_place_id,
             conflicted: self.conflicted,
+            terrain_sync: self.terrain_sync,
         })
     }
 }
