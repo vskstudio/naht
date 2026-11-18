@@ -68,7 +68,7 @@ impl From<&CommandError> for Exit {
                 | ReconcileError::TerrainNameCase { .. }
                 | ReconcileError::TerrainNameCaseBeside { .. },
             ) => Self::DataError,
-            CommandError::RenderConfig(_) => Self::Software,
+            CommandError::RenderConfig(_) | CommandError::RescanInterrupted(_) => Self::Software,
             CommandError::Reconcile(ReconcileError::State(_) | ReconcileError::Vfs(_))
             | CommandError::CreateDir { .. }
             | CommandError::Write { .. }

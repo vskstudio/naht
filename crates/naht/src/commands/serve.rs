@@ -74,7 +74,6 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
             .filter_map(|node| node.path.as_deref())
             .map(PathBuf::from),
     )?;
-    session.rescan()?;
     let daemon_id = session.daemon_id().to_owned();
     let state = AppState::new(session, LONG_POLL, loaded.token);
     state
@@ -82,6 +81,11 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         .spawn(shutdown::cancel_on_signal(state.shutdown().clone()));
 
     let watcher = watcher::spawn(&root, Arc::clone(&state))?;
+    state
+        .with_session(Session::rescan)
+        .await
+        .map_err(CommandError::RescanInterrupted)?
+        .map_err(CommandError::Session)?;
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let listener = TcpListener::bind(addr)

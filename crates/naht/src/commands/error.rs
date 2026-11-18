@@ -12,6 +12,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use thiserror::Error;
+use tokio::task::JoinError;
 use toml::ser;
 
 /// Why a CLI or daemon command failed, one variant per failure a caller may tell apart. The
@@ -122,6 +123,9 @@ pub enum CommandError {
     /// The sync session could not be opened from the persisted state.
     #[error(transparent)]
     Session(#[from] SessionError),
+    /// The startup rescan of the project's files was interrupted before it finished.
+    #[error("the startup rescan of the project was interrupted")]
+    RescanInterrupted(#[source] JoinError),
     /// The layered configuration is invalid.
     #[error(transparent)]
     Config(#[from] ConfigError),
