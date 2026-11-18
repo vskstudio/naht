@@ -2,7 +2,7 @@ use super::Session;
 use super::transaction::Journaled;
 use super::{PROJECT_ROOT, SessionError};
 use naht_core::binary::{self};
-use naht_core::reconciler::{self};
+use naht_core::reconciler::{self, Direction, PatchKind};
 use naht_core::state::InstanceRecord;
 use naht_core::walk::Scan;
 use std::collections::BTreeMap;
@@ -56,6 +56,12 @@ impl Session {
             &self.studio,
             &scan.unseen(),
         )?;
+        let removed: Vec<String> = patches
+            .iter()
+            .filter(|patch| patch.direction == Direction::ToFs && patch.kind == PatchKind::Delete)
+            .map(|patch| patch.path.clone())
+            .collect();
+        self.remove_emptied_dirs(&removed);
         self.absorb(patches, pre_base)
     }
 
@@ -76,3 +82,6 @@ impl Session {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
