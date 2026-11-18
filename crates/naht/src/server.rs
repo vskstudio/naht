@@ -22,6 +22,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use cursor::{CursorQuery, SessionQuery};
+use naht_core::binary::BlobInstance;
 use naht_core::protocol::{
     self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, ServerInfo,
 };
@@ -367,8 +368,8 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
 }
 
 fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usize, Rejection> {
+    refuse_other_blobs(&batch.changes)?;
     for change in &batch.changes {
-        validate_blob_path(&change.path)?;
         session.validate_path(&change.path)?;
     }
     refuse_directories(
@@ -378,6 +379,19 @@ fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usi
     let count = batch.changes.len();
     session.apply_blob_changes(batch.changes)?;
     Ok(count)
+}
+
+fn refuse_other_blobs(changes: &[BlobInstance]) -> Result<(), Rejection> {
+    let refused: Vec<String> = changes
+        .iter()
+        .filter(|change| validate_blob_path(&change.path).is_err())
+        .map(|change| change.path.clone())
+        .collect();
+    if refused.is_empty() {
+        Ok(())
+    } else {
+        Err(Rejection::RefusedPaths(refused))
+    }
 }
 
 async fn ack(

@@ -192,6 +192,20 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn serve_refuses_a_tree_path_naming_a_windows_device_or_a_forbidden_character() {
+        for path in ["src/NUL", "CON/src", "src/lpt9.txt", "src/a<b", "src\\lib"] {
+            assert!(
+                matches!(
+                    checked_tree_paths(&config_with_tree_path(path)),
+                    Err(CommandError::TreePathNotPortable { .. })
+                ),
+                "serve accepted the tree path `{path}`"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_dot_tree_path_is_accepted_and_serve_reaches_the_bind() {
         for path in [".", "./"] {

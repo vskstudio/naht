@@ -74,15 +74,14 @@ fn an_edit_made_while_the_daemon_was_down_becomes_a_studio_update() {
 fn a_restart_leaves_an_unchanged_terrain_blob_alone() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    fs::create_dir_all(root.join("src")).unwrap();
-    let blob = root.join("src").join("Map.terrain");
+    let blob = root.join("Terrain.terrain");
     fs::write(&blob, [1_u8, 2, 3]).unwrap();
 
     let mut before = open(root, true);
     before.rescan().unwrap();
     before
         .apply_blob_changes(vec![BlobInstance::new(
-            "src/Map.terrain",
+            "Terrain.terrain",
             "Terrain",
             vec![1_u8, 2, 3],
         )])
@@ -104,15 +103,14 @@ fn a_restart_leaves_an_unchanged_terrain_blob_alone() {
 fn a_terrain_blob_deleted_while_the_daemon_was_down_is_not_resurrected() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    fs::create_dir_all(root.join("src")).unwrap();
-    let blob = root.join("src").join("Map.terrain");
+    let blob = root.join("Terrain.terrain");
     fs::write(&blob, [1_u8, 2, 3]).unwrap();
 
     let mut before = open(root, true);
     before.rescan().unwrap();
     before
         .apply_blob_changes(vec![BlobInstance::new(
-            "src/Map.terrain",
+            "Terrain.terrain",
             "Terrain",
             vec![1_u8, 2, 3],
         )])
@@ -124,7 +122,7 @@ fn a_terrain_blob_deleted_while_the_daemon_was_down_is_not_resurrected() {
     after.rescan().unwrap();
     after
         .apply_blob_changes(vec![BlobInstance::new(
-            "src/Map.terrain",
+            "Terrain.terrain",
             "Terrain",
             vec![1_u8, 2, 3],
         )])
@@ -141,15 +139,14 @@ fn a_terrain_blob_deleted_while_the_daemon_was_down_is_not_resurrected() {
 fn a_blob_recreated_after_its_base_was_orphaned_is_created_in_studio() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    fs::create_dir_all(root.join("src")).unwrap();
-    let blob = root.join("src").join("Map.terrain");
+    let blob = root.join("Terrain.terrain");
     fs::write(&blob, [1_u8, 2, 3]).unwrap();
 
     let mut synced = open(root, true);
     synced.rescan().unwrap();
     synced
         .apply_blob_changes(vec![BlobInstance::new(
-            "src/Map.terrain",
+            "Terrain.terrain",
             "Terrain",
             vec![1_u8, 2, 3],
         )])

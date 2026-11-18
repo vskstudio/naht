@@ -9,11 +9,13 @@
 mod model;
 mod persist;
 mod scan;
+#[cfg(test)]
+mod scan_tests;
 mod sync;
 #[cfg(test)]
 mod tests;
 
-pub use model::{BLOB_EXTENSION, BlobInstance, BlobPatch, TERRAIN_CLASS};
+pub use model::{BlobInstance, BlobPatch, TERRAIN_CLASS};
 pub use persist::{Keep, resolve};
 pub use scan::scan_blobs;
 pub use sync::reconcile_blobs;

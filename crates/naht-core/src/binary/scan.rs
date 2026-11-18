@@ -1,64 +1,72 @@
 use std::path::Path;
 
+use crate::protocol::TERRAIN_PATH;
 use crate::reconciler::ReconcileError;
 use crate::vfs::{EntryKind, Vfs};
-use crate::walk::{self, Scan};
+use crate::walk::Scan;
 
-use super::model::{BLOB_EXTENSION, BlobInstance, TERRAIN_CLASS};
+use super::model::{BlobInstance, TERRAIN_CLASS};
 
-/// Collect every binary blob file (`*.terrain`) under `dir` into a flat, path-keyed map.
+/// Collect the synced terrain blob, `Terrain.terrain` directly under `dir`, into a path-keyed map.
 ///
-/// This is the binary counterpart of [`crate::reconciler::scan_text`], consumed by the blob
-/// reconciler. Non-blob files are skipped, not lost; the text scan picks them up instead. Dot entries
-/// and dependency directories are not walked, and a blob that cannot be read is recorded in
-/// [`Scan::skipped`] while the rest still scans.
+/// Studio holds one terrain, so the blob channel syncs that single file and ignores every other
+/// `*.terrain` file in the project. Non-blob files are left to the text scan. A blob that cannot be
+/// read is recorded in [`Scan::skipped`]. A file whose name differs from `Terrain.terrain` only by
+/// case is recorded there under `Terrain.terrain`, so neither copy is reconciled.
 ///
 /// # Errors
 ///
 /// Returns an error only when `dir` itself cannot be listed.
 pub fn scan_blobs(vfs: &impl Vfs, dir: &Path) -> Result<Scan<BlobInstance>, ReconcileError> {
+    let terrain = dir.join(TERRAIN_PATH);
+    let entries = vfs.list(dir)?;
+    let synced_name_taken = entries.iter().any(|entry| entry.path == terrain);
     let mut scan = Scan::default();
-    scan_blobs_into(vfs, dir, &mut scan)?;
+    for entry in entries {
+        if entry.kind != EntryKind::File {
+            continue;
+        }
+        if entry.path == terrain {
+            collect_blob(vfs, &entry.path, &mut scan);
+        } else if let Some(found) = case_variant_of_terrain(&entry.path) {
+            scan.skip(
+                terrain.clone(),
+                case_variant_error(found, synced_name_taken),
+            );
+        }
+    }
     Ok(scan)
 }
 
-fn scan_blobs_into(
-    vfs: &impl Vfs,
-    dir: &Path,
-    scan: &mut Scan<BlobInstance>,
-) -> Result<(), ReconcileError> {
-    for entry in vfs.list(dir)? {
-        if walk::is_ignored_entry(&entry.path) {
-            continue;
+fn case_variant_error(found: String, synced_name_taken: bool) -> ReconcileError {
+    if synced_name_taken {
+        ReconcileError::TerrainNameCaseBeside {
+            found,
+            expected: TERRAIN_PATH,
         }
-        let outcome = match entry.kind {
-            EntryKind::Dir => scan_blobs_into(vfs, &entry.path, scan),
-            EntryKind::File => collect_blob(vfs, &entry.path, scan),
-        };
-        if let Err(error) = outcome {
-            scan.skip(entry.path, error);
+    } else {
+        ReconcileError::TerrainNameCase {
+            found,
+            expected: TERRAIN_PATH,
         }
     }
-    Ok(())
 }
 
-fn collect_blob(
-    vfs: &impl Vfs,
-    path: &Path,
-    scan: &mut Scan<BlobInstance>,
-) -> Result<(), ReconcileError> {
-    let is_blob = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext == BLOB_EXTENSION);
-    if !is_blob {
-        return Ok(());
-    }
+fn case_variant_of_terrain(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    name.eq_ignore_ascii_case(TERRAIN_PATH)
+        .then(|| name.to_owned())
+}
+
+fn collect_blob(vfs: &impl Vfs, path: &Path, scan: &mut Scan<BlobInstance>) {
     let key = path.to_string_lossy().into_owned();
-    let content = vfs.read(path)?;
-    scan.instances
-        .insert(key.clone(), BlobInstance::new(key, TERRAIN_CLASS, content));
-    Ok(())
+    match vfs.read(path) {
+        Ok(content) => {
+            scan.instances
+                .insert(key.clone(), BlobInstance::new(key, TERRAIN_CLASS, content));
+        }
+        Err(error) => scan.skip(path.to_path_buf(), error.into()),
+    }
 }
 
 #[cfg(test)]
@@ -82,30 +90,30 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_dangling_blob_symlink_is_skipped_and_reported_while_the_rest_scan() {
+    fn a_dangling_terrain_symlink_is_skipped_and_reported() {
         use std::os::unix::fs::symlink;
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "Terrain.terrain", &[1, 2, 3]);
-        symlink(dir.path().join("missing"), dir.path().join("Gone.terrain")).unwrap();
+        symlink(
+            dir.path().join("missing"),
+            dir.path().join("Terrain.terrain"),
+        )
+        .unwrap();
 
         let scan = scan_blobs(&DiskVfs::new(), dir.path()).unwrap();
 
-        assert_eq!(scan.instances.len(), 1);
-        assert!(
-            scan.instances
-                .contains_key(&key(dir.path(), "Terrain.terrain"))
-        );
+        assert!(scan.instances.is_empty());
         assert_eq!(scan.skipped.len(), 1);
-        assert_eq!(scan.skipped[0].path, dir.path().join("Gone.terrain"));
+        assert_eq!(scan.skipped[0].path, dir.path().join("Terrain.terrain"));
     }
 
     #[test]
-    fn dot_entries_and_dependency_directories_are_not_walked() {
+    fn terrain_files_outside_the_root_are_not_collected() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "Terrain.terrain", &[1]);
-        write(dir.path(), ".git/objects/blob.terrain", &[2]);
-        write(dir.path(), "node_modules/pkg/cache.terrain", &[3]);
-        write(dir.path(), "target/debug/out.terrain", &[4]);
+        write(dir.path(), "src/Terrain.terrain", &[2]);
+        write(dir.path(), "src/Map.terrain", &[3]);
+        write(dir.path(), ".git/Terrain.terrain", &[4]);
+        write(dir.path(), "target/Terrain.terrain", &[5]);
 
         let scan = scan_blobs(&DiskVfs::new(), dir.path()).unwrap();
 

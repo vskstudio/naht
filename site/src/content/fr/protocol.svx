@@ -50,12 +50,15 @@ qui correspondent à un script Studio. Si un changement du lot est refusé, le l
 du lot n'est écrit. Un lot dont tous les changements sont acceptés reçoit `200` avec un corps vide, et un chemin
 qui passe par un lien symbolique est refusé. Un corps mal formé reçoit `400`. Si les changements valides ne peuvent pas être appliqués, le lot reçoit
 `500` et le miroir Studio du daemon est restauré dans l'état qu'il avait avant le lot. `POST /blobs` n'accepte
-que des fichiers `.terrain` visibles, et le reste reçoit `400` sans rien écrire.
+que `Terrain.terrain` à la racine du projet. Un lot qui nomme un autre chemin est refusé en entier : le daemon
+répond `400` avec un corps JSON `{"refused_paths": [...]}` qui nomme chacun de ces chemins, et rien n'est écrit.
 
 Au plus deux requêtes POST lisent et traitent un corps à la fois, et une troisième attend un slot sans limite de
 temps propre. Chaque corps est plafonné à 64 MiB et reçoit `413` lorsqu'il est plus grand. Le délai de 15
 secondes ne couvre que la lecture du corps, qui reçoit `408` lorsqu'elle se bloque, et un corps qui se termine
 trop tôt ou qui est mal formé reçoit `400`. Une tête de requête qui reste bloquée pendant dix secondes est coupée.
+Le daemon sert au plus 64 connexions à la fois : une connexion au-delà attend, non encore acceptée, qu'une des
+autres se ferme. Une connexion qui n'envoie rien, ou qui commence par le préambule HTTP/2, est coupée dans les dix secondes et libère donc son slot. Un processus local qui se reconnecte en boucle peut toujours prendre ces slots.
 
 ## Le handshake (`GET /info`)
 

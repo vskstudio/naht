@@ -26,6 +26,9 @@ pub const PLACE_ID_HEADER: &str = "x-naht-place-id";
 /// Token opening the 403 body for a request without the client header, sent by daemons that know it.
 pub const OUTDATED_PLUGIN_TOKEN: &str = "outdated-plugin";
 
+/// The one project file the blob channel syncs: the Studio terrain, at the project root.
+pub const TERRAIN_PATH: &str = "Terrain.terrain";
+
 /// The handshake payload returned by `GET /info`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerInfo {

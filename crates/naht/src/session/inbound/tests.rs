@@ -149,7 +149,7 @@ fn blob(path: &str) -> BlobInstance {
 #[test]
 fn a_failed_blob_batch_leaves_no_blob_on_disk_or_in_the_mirror() {
     let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("Blocker"), "a file").unwrap();
+    fs::create_dir(root.path().join("Terrain.terrain")).unwrap();
     let mut session = Session::new(
         root.path(),
         StateStore::open_in_memory().unwrap(),
@@ -159,25 +159,55 @@ fn a_failed_blob_batch_leaves_no_blob_on_disk_or_in_the_mirror() {
     )
     .unwrap();
 
-    let outcome =
-        session.apply_blob_changes(vec![blob("A_Good.terrain"), blob("Blocker/B_Bad.terrain")]);
+    let outcome = session.apply_blob_changes(vec![blob("Terrain.terrain")]);
 
     assert!(outcome.is_err());
-    assert!(!root.path().join("A_Good.terrain").exists());
+    assert!(root.path().join("Terrain.terrain").is_dir());
     assert!(
         session
             .studio_blobs
             .as_ref()
-            .is_none_or(|blobs| !blobs.contains_key("A_Good.terrain"))
+            .is_none_or(|blobs| !blobs.contains_key("Terrain.terrain"))
     );
     session.rescan().unwrap();
-    assert!(!root.path().join("A_Good.terrain").exists());
+    assert!(!root.path().join("Terrain.terrain").is_file());
+}
+
+#[test]
+fn a_second_terrain_file_is_neither_queued_nor_written_over_the_terrain() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("Terrain.terrain"), [1_u8]).unwrap();
+    fs::create_dir(root.path().join("src")).unwrap();
+    fs::write(root.path().join("src/Map.terrain"), [9_u8]).unwrap();
+    let mut session = Session::new(
+        root.path(),
+        StateStore::open_in_memory().unwrap(),
+        "demo",
+        None,
+        true,
+    )
+    .unwrap();
+
+    session
+        .apply_blob_changes(vec![BlobInstance::new(
+            "Terrain.terrain",
+            TERRAIN_CLASS,
+            vec![1_u8],
+        )])
+        .unwrap();
+    let (_, patches) = session.take_blob_patches(0);
+
+    assert_eq!(patches.len(), 0);
+    assert_eq!(
+        fs::read(root.path().join("Terrain.terrain")).unwrap(),
+        [1_u8]
+    );
 }
 
 #[test]
 fn a_failed_batch_leaves_the_activity_log_and_patch_queue_unchanged() {
     let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("Blocker"), "a file").unwrap();
+    fs::create_dir(root.path().join("Terrain.terrain")).unwrap();
     fs::write(root.path().join("Other.luau"), "from disk").unwrap();
     let mut session = Session::new(
         root.path(),
@@ -188,8 +218,8 @@ fn a_failed_batch_leaves_the_activity_log_and_patch_queue_unchanged() {
     )
     .unwrap();
     session.studio_blobs = Some(BTreeMap::from([(
-        "Blocker/B_Bad.terrain".to_owned(),
-        blob("Blocker/B_Bad.terrain"),
+        "Terrain.terrain".to_owned(),
+        blob("Terrain.terrain"),
     )]));
     let before = session.activity(0);
     let queued_before = session.take_patches(0).1.len();

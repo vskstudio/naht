@@ -2,7 +2,7 @@ use super::Session;
 use super::transaction::Journaled;
 use super::{PROJECT_ROOT, SessionError};
 use naht_core::binary::{self};
-use naht_core::reconciler::{self};
+use naht_core::reconciler::{self, Direction, PatchKind};
 use naht_core::state::InstanceRecord;
 use naht_core::vfs::Vfs;
 use naht_core::walk::Scan;
@@ -14,8 +14,8 @@ fn warn_skipped<T>(scan: &Scan<T>) {
         tracing::warn!(
             target: "naht::session",
             path = ?skipped.path,
-            error = ?skipped.error,
-            "skipped a file that could not be read"
+            error = %skipped.error,
+            "skipped a file the sync cannot use"
         );
     }
 }
@@ -57,6 +57,12 @@ impl<V: Vfs> Session<V> {
             &self.studio,
             &scan.unseen(),
         )?;
+        let removed: Vec<String> = patches
+            .iter()
+            .filter(|patch| patch.direction == Direction::ToFs && patch.kind == PatchKind::Delete)
+            .map(|patch| patch.path.clone())
+            .collect();
+        self.remove_emptied_dirs(&removed);
         self.absorb(patches, pre_base)
     }
 
@@ -77,3 +83,6 @@ impl<V: Vfs> Session<V> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -117,20 +117,25 @@ fn source_paths_reject_files_that_map_to_no_instance() {
 }
 
 #[test]
-fn blob_paths_accept_only_terrain_blobs() {
+fn blob_paths_accept_only_the_synced_terrain_file() {
     assert_eq!(validate_blob_path("Terrain.terrain"), Ok(()));
-    assert_eq!(validate_blob_path("world/Map.terrain"), Ok(()));
-    for path in ["naht.toml", "x.luau", "x.txt", "x"] {
+    for path in [
+        "world/Map.terrain",
+        "terrain.terrain",
+        "Terrain.terrain.bak",
+        "src/Terrain.terrain",
+        ".naht/state.terrain",
+        "naht.toml",
+        "x.luau",
+        "x.txt",
+        "x",
+    ] {
         assert_eq!(
             validate_blob_path(path),
             Err(ProjectPathError::Unmapped),
             "{path}"
         );
     }
-    assert_eq!(
-        validate_blob_path(".naht/state.terrain"),
-        Err(ProjectPathError::Hidden)
-    );
 }
 
 #[test]
@@ -156,10 +161,6 @@ fn windows_device_names_are_rejected_on_every_platform() {
             "{path}"
         );
     }
-    assert_eq!(
-        validate_blob_path("NUL.terrain"),
-        Err(ProjectPathError::ReservedName)
-    );
 }
 
 #[test]
