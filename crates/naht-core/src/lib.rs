@@ -13,6 +13,7 @@ pub mod binary;
 pub mod build;
 pub mod frontmatter;
 pub mod hash;
+pub mod inventory;
 pub mod limits;
 pub mod mapper;
 pub mod merge;

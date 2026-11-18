@@ -30,6 +30,8 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 const PROJECT_ID_KEY: &str = "project_id";
 
+const PLACE_ID_KEY: &str = "place_id";
+
 /// Errors from the state store.
 #[derive(Debug, thiserror::Error)]
 pub enum StateError {
@@ -147,6 +149,37 @@ impl StateStore {
                 |row| row.get(0),
             )
             .optional()?)
+    }
+
+    /// Record the Studio place this project is bound to, overwriting any prior value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the place id cannot be written.
+    pub fn set_place_id(&self, place_id: u64) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (PLACE_ID_KEY, place_id.to_string()),
+        )?;
+        Ok(())
+    }
+
+    /// The Studio place this project is bound to, if one was recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the place id cannot be read.
+    pub fn place_id(&self) -> Result<Option<u64>, StateError> {
+        let stored: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [PLACE_ID_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(stored.and_then(|value| value.parse().ok()))
     }
 
     /// Insert or replace the base for one instance.
@@ -415,6 +448,14 @@ mod tests {
         store.upsert(&text_record("g")).unwrap();
         store.remove("g").unwrap();
         assert_eq!(store.get("g").unwrap(), None);
+    }
+
+    #[test]
+    fn place_id_round_trips() {
+        let store = StateStore::open_in_memory().unwrap();
+        assert_eq!(store.place_id().unwrap(), None);
+        store.set_place_id(123_456).unwrap();
+        assert_eq!(store.place_id().unwrap(), Some(123_456));
     }
 
     #[test]
