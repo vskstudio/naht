@@ -116,7 +116,28 @@ function Placement._queue(self, path: string, change: any, group: any?)
 	end
 end
 
+function Placement._heldByOther(self, script: Instance, path: string): boolean
+	for _, descendant in self.root:GetDescendants() do
+		if descendant ~= script and CLASS_SUFFIX[descendant.ClassName] ~= nil and self:_pathOf(descendant) == path then
+			return true
+		end
+	end
+	return false
+end
+
+function Placement._refuseHeld(self, path: string, message: string)
+	local key = "held:" .. path
+	if not self.skippedPaths[key] then
+		self.skippedPaths[key] = true
+		self.warn(message)
+	end
+end
+
 function Placement._queueMove(self, script: Instance, from: string, to: string)
+	if self:_heldByOther(script, to) then
+		self:_refuseHeld(to, string.format("Naht: not moving %q to %q, another script already holds that path", from, to))
+		return
+	end
 	local pendingGroup = self.groupOf[self.pendingPush[from]]
 	if pendingGroup ~= nil and pendingGroup.to == from and pendingGroup.script == script then
 		self.pendingPush[from] = nil
@@ -141,6 +162,10 @@ function Placement._pushInstance(self, instance: Instance, path: string)
 		return
 	end
 	if self.applying then
+		return
+	end
+	if self.placed[instance] ~= path and self:_heldByOther(instance, path) then
+		self:_refuseHeld(path, string.format("Naht: not syncing %q, another script already holds that path", path))
 		return
 	end
 	self.lastApplied[path] = nil

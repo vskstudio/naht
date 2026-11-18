@@ -2782,6 +2782,47 @@ suite("a Windows device name is warned once and yields no path", function()
 		)
 end)
 
+suite("a rename onto a path another script holds is refused, warned once, and overwrites nothing", function()
+		local client, posts, attempts = recordingClient()
+		local tree, root = studioWorld(true)
+		local warnings: { string } = {}
+		local settings = deps(extentsTerrainWith(extentsRegion), tree)
+		settings.warn = function(message: string)
+			table.insert(warnings, message)
+		end
+		local connection = Connection.new(client, root, noop, settings)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection:_attachStudio()
+		local foo = place(tree, "ModuleScript", "Foo", root)
+		tree.setSource(foo, "return 'foo'")
+		local bar = place(tree, "ModuleScript", "Bar", root)
+		tree.setSource(bar, "return 'bar'")
+		task.wait(0.6)
+		local before = #posts
+		foo.Name = "Bar"
+		tree.setSource(foo, "return 'edited'")
+		task.wait(0.6)
+		local later = table.move(posts, before + 1, #posts, 1, {})
+		check(
+			"a rename onto a held path never upserts over the other script's file",
+			not anyChange(later, "Upsert", "Bar.luau") and not anyChange(later, "Delete", "Foo.luau"),
+			tostring(#later) .. " later batches"
+		)
+		check(
+			"a refused rename keeps the old path as the placed path",
+			connection.placed[foo] == "Foo.luau",
+			tostring(connection.placed[foo])
+		)
+		check(
+			"a refused rename onto a held path warns exactly once",
+			#warnings == 1,
+			tostring(#warnings) .. " warnings"
+		)
+		connection:stop()
+end)
+
 suite("a second rename before the post keeps the first rename's Delete in the refused group", function()
 		local client, posts, attempts = recordingClient(function(changes)
 			if hasChange(changes, "Upsert", ".C.luau") then
