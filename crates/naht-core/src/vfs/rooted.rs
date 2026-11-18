@@ -102,6 +102,12 @@ impl<V: Vfs> Vfs for RootedVfs<V> {
         self.inner.remove(&self.checked_absolute(path)?)
     }
 
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<(), VfsError> {
+        let from = self.checked_absolute(from)?;
+        let to = self.checked_absolute(to)?;
+        self.inner.rename(&from, &to)
+    }
+
     fn exists(&self, path: &Path) -> bool {
         self.checked_absolute(path)
             .is_ok_and(|absolute| self.inner.exists(&absolute))

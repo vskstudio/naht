@@ -4,6 +4,7 @@ use super::{PROJECT_ROOT, SessionError};
 use naht_core::binary::{self};
 use naht_core::reconciler::{self};
 use naht_core::state::InstanceRecord;
+use naht_core::vfs::Vfs;
 use naht_core::walk::Scan;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,7 +20,7 @@ fn warn_skipped<T>(scan: &Scan<T>) {
     }
 }
 
-impl Session {
+impl<V: Vfs> Session<V> {
     /// Re-read the filesystem and reconcile it against the Studio mirror and persisted base. Used on
     /// a filesystem event and on reconnect (`GET /info`), the latter is the re-diff that replaces a
     /// blind re-push.

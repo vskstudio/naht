@@ -23,7 +23,7 @@ use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::SyncEvent;
 use naht_core::reconciler::{Patch, ReconcileError, TextInstance};
 use naht_core::state::{StateError, StateStore};
-use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
+use naht_core::vfs::{DiskVfs, RootedVfs, Vfs, VfsError};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -61,8 +61,8 @@ const ACTIVITY_CAP: usize = 256;
 
 /// One running sync session.
 #[derive(Debug)]
-pub struct Session {
-    vfs: RootedVfs<DiskVfs>,
+pub struct Session<V: Vfs = DiskVfs> {
+    vfs: RootedVfs<V>,
     store: StateStore,
     /// The last-known Studio side, keyed by project-relative path. Advances on ack, never on send.
     studio: BTreeMap<String, TextInstance>,

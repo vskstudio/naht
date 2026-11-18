@@ -4,13 +4,14 @@ use super::{ACTIVITY_CAP, SessionError};
 use naht_core::binary::BlobPatch;
 use naht_core::protocol::{EventKind, Outcome, SequencedPatch, SyncActivity, SyncEvent};
 use naht_core::reconciler::{self, Direction, Patch, TextInstance};
+use naht_core::vfs::Vfs;
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 mod tests;
 
-impl Session {
+impl<V: Vfs> Session<V> {
     /// The activity snapshot for `GET /activity`: the live pending count (unacked text patches) plus
     /// every retained event past `since` (strictly newer), oldest-first. Seqs are 1-based, so the
     /// default `since = 0` returns everything retained while a caller's cursor never re-delivers the

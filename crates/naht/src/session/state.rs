@@ -31,7 +31,24 @@ impl Session {
                 "could not remove stale temp files"
             );
         }
-        let vfs = RootedVfs::new(root, DiskVfs::new());
+        Self::assemble(
+            RootedVfs::new(root, DiskVfs::new()),
+            store,
+            project_name,
+            serve_place_id,
+            terrain_sync,
+        )
+    }
+}
+
+impl<V: Vfs> Session<V> {
+    pub(super) fn assemble(
+        vfs: RootedVfs<V>,
+        store: StateStore,
+        project_name: impl Into<String>,
+        serve_place_id: Option<u64>,
+        terrain_sync: bool,
+    ) -> Result<Self, SessionError> {
         let studio = reconciler::studio_at_base(&store)?;
         Ok(Self {
             vfs,

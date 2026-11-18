@@ -112,6 +112,12 @@ pub trait Vfs {
     ///
     /// Returns [`VfsError`] when the path cannot be removed.
     fn remove(&mut self, path: &Path) -> Result<(), VfsError>;
+    /// Moves the file at `from` to `to`, replacing a file already at `to`; fails when `from` is not a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VfsError`] when the file cannot be moved.
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<(), VfsError>;
     /// Reports whether a file or a directory is present at `path`; a path that cannot be checked, or that the project boundary refuses, counts as absent.
     fn exists(&self, path: &Path) -> bool;
     /// Reports whether the entry at `path` is a file or a directory; fails when nothing is at `path`.

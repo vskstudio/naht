@@ -23,7 +23,7 @@ fn remove_emptied_dirs_in<V: Vfs>(vfs: &mut V, journal: &mut Option<Journal>, di
     }
 }
 
-impl Session {
+impl<V: Vfs> Session<V> {
     /// Apply a batch of Studio-side edits to the mirror, then reconcile against the current
     /// filesystem. Filesystem writes (and conflict markers) are performed by the reconciler.
     ///

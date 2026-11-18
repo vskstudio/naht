@@ -132,6 +132,22 @@ impl Vfs for MemoryVfs {
         Err(VfsError::NotFound(path.to_path_buf()))
     }
 
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<(), VfsError> {
+        if self.dirs.contains(to) {
+            return Err(VfsError::NotAFile(to.to_path_buf()));
+        }
+        let Some(contents) = self.files.remove(from) else {
+            return Err(if self.dirs.contains(from) {
+                VfsError::NotAFile(from.to_path_buf())
+            } else {
+                VfsError::NotFound(from.to_path_buf())
+            });
+        };
+        self.ensure_parents(to);
+        self.files.insert(to.to_path_buf(), contents);
+        Ok(())
+    }
+
     fn exists(&self, path: &Path) -> bool {
         self.files.contains_key(path) || self.dirs.contains(path)
     }

@@ -30,6 +30,10 @@ pub(super) enum BlobsJournal {
 pub(super) enum DiskChange {
     Dir(PathBuf),
     RemovedDir(PathBuf),
+    Renamed {
+        from: PathBuf,
+        to: PathBuf,
+    },
     File {
         path: PathBuf,
         previous: Option<Vec<u8>>,
@@ -49,12 +53,12 @@ pub(super) enum Outbound {
     Unacked(String, Option<Patch>),
 }
 
-pub(super) struct Transaction<'a> {
-    session: &'a mut Session,
+pub(super) struct Transaction<'a, V: Vfs> {
+    session: &'a mut Session<V>,
 }
 
-impl<'a> Transaction<'a> {
-    pub(super) fn begin(session: &'a mut Session) -> Result<Self, SessionError> {
+impl<'a, V: Vfs> Transaction<'a, V> {
+    pub(super) fn begin(session: &'a mut Session<V>) -> Result<Self, SessionError> {
         let base = base_records(&session.store)?;
         session.journal = Some(Journal {
             base,
@@ -72,21 +76,21 @@ impl<'a> Transaction<'a> {
     }
 }
 
-impl Deref for Transaction<'_> {
-    type Target = Session;
+impl<V: Vfs> Deref for Transaction<'_, V> {
+    type Target = Session<V>;
 
-    fn deref(&self) -> &Session {
+    fn deref(&self) -> &Session<V> {
         self.session
     }
 }
 
-impl DerefMut for Transaction<'_> {
-    fn deref_mut(&mut self) -> &mut Session {
+impl<V: Vfs> DerefMut for Transaction<'_, V> {
+    fn deref_mut(&mut self) -> &mut Session<V> {
         self.session
     }
 }
 
-impl Drop for Transaction<'_> {
+impl<V: Vfs> Drop for Transaction<'_, V> {
     fn drop(&mut self) {
         if let Some(journal) = self.session.journal.take() {
             rollback(self.session, journal);
@@ -94,7 +98,7 @@ impl Drop for Transaction<'_> {
     }
 }
 
-fn rollback(session: &mut Session, journal: Journal) {
+fn rollback<V: Vfs>(session: &mut Session<V>, journal: Journal) {
     restore_disk(&mut session.vfs, journal.disk);
     restore_base(&session.store, &journal.base);
     restore_mirror(&mut session.studio, journal.studio);
@@ -124,6 +128,7 @@ fn restore_disk(vfs: &mut impl Vfs, changes: Vec<DiskChange>) {
             } => remove_if_present(vfs, &path),
             DiskChange::Dir(path) => remove_if_empty_dir(vfs, &path),
             DiskChange::RemovedDir(path) => vfs.create_dir(&path),
+            DiskChange::Renamed { from, to } => vfs.rename(&to, &from),
         };
         if let Err(error) = outcome {
             tracing::error!(
@@ -278,6 +283,15 @@ impl<V: Vfs> Vfs for Journaled<'_, V> {
                 previous: Some(previous),
             });
         }
+        Ok(())
+    }
+
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<(), VfsError> {
+        self.inner.rename(from, to)?;
+        self.push(DiskChange::Renamed {
+            from: from.to_path_buf(),
+            to: to.to_path_buf(),
+        });
         Ok(())
     }
 

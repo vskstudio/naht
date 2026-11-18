@@ -233,6 +233,10 @@ impl Vfs for RefusesDirRemoval {
         self.inner.remove(path)
     }
 
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<(), VfsError> {
+        self.inner.rename(from, to)
+    }
+
     fn exists(&self, path: &Path) -> bool {
         self.inner.exists(path)
     }
