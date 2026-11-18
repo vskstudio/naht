@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::token::TEST_TOKEN;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use naht_core::state::StateStore;
@@ -15,7 +16,7 @@ const TEST_PORT: u16 = 34872;
 fn test_state() -> Arc<AppState> {
     let store = StateStore::open_in_memory().unwrap();
     let session = Session::new(PathBuf::from("."), store, "demo", None, false).unwrap();
-    AppState::new(session, Duration::from_secs(1))
+    AppState::new(session, Duration::from_secs(1), Token::for_tests())
 }
 
 fn fresh_state(post_wait: Duration) -> (tempfile::TempDir, Arc<AppState>) {
@@ -28,13 +29,19 @@ fn fresh_state(post_wait: Duration) -> (tempfile::TempDir, Arc<AppState>) {
         false,
     )
     .unwrap();
-    let state = AppState::with_post_wait(session, Duration::from_secs(1), post_wait);
+    let state = AppState::with_post_wait(
+        session,
+        Duration::from_secs(1),
+        post_wait,
+        Token::for_tests(),
+    );
     (root, state)
 }
 
 fn change_request(body: Body) -> Request<Body> {
     Request::post("/changes")
         .header(guard::CLIENT_HEADER, "plugin")
+        .header(guard::TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
         .body(body)
         .unwrap()
@@ -61,6 +68,7 @@ async fn post_blobs_status(len: usize) -> StatusCode {
     let body = Body::from(vec![0xc1_u8; len]);
     let request = Request::post("/blobs")
         .header(guard::CLIENT_HEADER, "plugin")
+        .header(guard::TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
         .body(body)
         .unwrap();
@@ -104,7 +112,7 @@ async fn a_blob_batch_naming_a_path_that_is_now_a_directory_is_refused_400_namin
         true,
     )
     .unwrap();
-    let state = AppState::new(session, Duration::from_secs(1));
+    let state = AppState::new(session, Duration::from_secs(1), Token::for_tests());
     let batch = protocol::to_msgpack(&BlobChangeBatch {
         changes: vec![BlobInstance::new(
             "Land.terrain",
@@ -115,6 +123,7 @@ async fn a_blob_batch_naming_a_path_that_is_now_a_directory_is_refused_400_namin
     .unwrap();
     let request = Request::post("/blobs")
         .header(guard::CLIENT_HEADER, "plugin")
+        .header(guard::TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
         .body(Body::from(batch))
         .unwrap();
@@ -175,6 +184,7 @@ fn nested_map(depth: usize) -> Vec<u8> {
 async fn deep_body_status(path: &str) -> StatusCode {
     let request = Request::post(path)
         .header(guard::CLIENT_HEADER, "plugin")
+        .header(guard::TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
         .body(Body::from(nested_map(100_000)))
         .unwrap();
@@ -359,12 +369,16 @@ fn terrain_with_a_queued_blob() -> (tempfile::TempDir, Arc<AppState>) {
     fs::write(root.path().join("Terrain.terrain"), [4_u8, 5, 6]).unwrap();
     session.rescan().unwrap();
     session.rescan().unwrap();
-    (root, AppState::new(session, Duration::from_secs(1)))
+    (
+        root,
+        AppState::new(session, Duration::from_secs(1), Token::for_tests()),
+    )
 }
 
 async fn get_status_and_body(state: &Arc<AppState>, uri: &str) -> (StatusCode, Bytes) {
     let request = Request::get(uri)
         .header(guard::CLIENT_HEADER, "plugin")
+        .header(guard::TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
         .body(Body::empty())
         .unwrap();
@@ -407,6 +421,7 @@ async fn post_ack_status(state: &Arc<AppState>, uri: &str, seqs: Vec<u64>) -> St
     let body = protocol::to_msgpack(&Ack { seqs }).unwrap();
     let request = Request::post(uri)
         .header(guard::CLIENT_HEADER, "plugin")
+        .header(guard::TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{TEST_PORT}"))
         .body(Body::from(body))
         .unwrap();

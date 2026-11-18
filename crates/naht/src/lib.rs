@@ -17,5 +17,6 @@ pub mod server;
 pub mod session;
 /// Graceful shutdown on signals and on request.
 pub mod shutdown;
+pub mod token;
 pub mod uploader;
 pub mod watcher;

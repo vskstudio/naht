@@ -15,13 +15,16 @@ use rmp_serde::encode;
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
 /// it so an incompatible plugin/daemon pair fails loudly instead of misreading each other.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Request header every client sends to identify itself as the Studio plugin or the local CLI.
 pub const CLIENT_HEADER: &str = "x-naht-client";
 
 /// Request header carrying the Roblox place id the client is connected to.
 pub const PLACE_ID_HEADER: &str = "x-naht-place-id";
+
+/// Request header carrying the project's token, required on every route except `GET /info`.
+pub const TOKEN_HEADER: &str = "x-naht-token";
 
 /// Token opening the 403 body for a request without the client header, sent by daemons that know it.
 pub const OUTDATED_PLUGIN_TOKEN: &str = "outdated-plugin";
@@ -38,6 +41,14 @@ pub struct ServerInfo {
     pub server_version: String,
     /// The project's name, shown in the plugin's connection UI.
     pub project_name: String,
+    /// A stable id for the project, kept in the state store across daemon runs. The plugin keys its
+    /// saved token by it, so a token is found again after a restart and a moved project folder.
+    #[serde(default)]
+    pub project_id: String,
+    /// Whether every route except `GET /info` needs the `x-naht-token` header. Always `true` from
+    /// protocol version 4 on.
+    #[serde(default)]
+    pub token_required: bool,
     /// A per-run session id; a change in it tells the plugin the daemon restarted.
     pub session_id: String,
     /// A random id per daemon run, which `.naht/daemon.port` records to identify this daemon.
@@ -267,6 +278,8 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             server_version: "0.1.0".to_owned(),
             project_name: "demo".to_owned(),
+            project_id: "p-1".to_owned(),
+            token_required: true,
             session_id: "s-1".to_owned(),
             daemon_id: "d-1".to_owned(),
             serve_place_id: Some(123),
@@ -403,6 +416,8 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             server_version: "0.1.0".to_owned(),
             project_name: "demo".to_owned(),
+            project_id: "p-1".to_owned(),
+            token_required: true,
             session_id: "abc".to_owned(),
             daemon_id: "d-1".to_owned(),
             serve_place_id: Some(123),

@@ -9,6 +9,7 @@ use std::time::Duration;
 use naht::server;
 use naht::server::AppState;
 use naht::session::Session;
+use naht::token::Token;
 use naht::watcher;
 use naht_core::reconciler::PatchKind;
 use naht_core::state::StateStore;
@@ -22,7 +23,7 @@ async fn a_new_file_becomes_a_queued_patch() {
     let root = dir.path().to_path_buf();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     let session = Session::new(root.clone(), store, "demo", None, true).unwrap();
-    let state = AppState::new(session, Duration::from_secs(1));
+    let state = AppState::new(session, Duration::from_secs(1), Token::generate().unwrap());
 
     let _watcher = watcher::spawn(&root, Arc::clone(&state)).unwrap();
 

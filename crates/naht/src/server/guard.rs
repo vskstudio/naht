@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
@@ -13,11 +14,15 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use super::{AppState, BODY_LIMIT, INVENTORY_ROUTE};
+use super::{AppState, BODY_LIMIT, INFO_ROUTE, INVENTORY_ROUTE};
 use crate::session::SessionError;
 
 pub(super) const CLIENT_HEADER: HeaderName = HeaderName::from_static(protocol::CLIENT_HEADER);
+pub(super) const TOKEN_HEADER: HeaderName = HeaderName::from_static(protocol::TOKEN_HEADER);
 const PLACE_ID_HEADER: HeaderName = HeaderName::from_static(protocol::PLACE_ID_HEADER);
+
+const TOKEN_REQUIRED: &str = "token required";
+const TOKEN_REJECTED: &str = "token rejected";
 
 pub(super) const POST_BODY_SLOTS: usize = 2;
 
@@ -50,6 +55,38 @@ impl PostGate {
     }
 }
 
+#[derive(Debug)]
+enum Refusal {
+    Forbidden(String),
+    Unauthorized(&'static str),
+}
+
+impl Refusal {
+    fn forbidden(reason: &str) -> Self {
+        Self::Forbidden(reason.to_owned())
+    }
+
+    fn reason(&self) -> &str {
+        match self {
+            Self::Forbidden(reason) => reason,
+            Self::Unauthorized(reason) => reason,
+        }
+    }
+}
+
+impl IntoResponse for Refusal {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Forbidden(reason) => (StatusCode::FORBIDDEN, reason).into_response(),
+            Self::Unauthorized(reason) => (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": reason })),
+            )
+                .into_response(),
+        }
+    }
+}
+
 pub(super) struct Gate {
     hosts: [String; 3],
     serve_place_id: Option<u64>,
@@ -69,23 +106,26 @@ impl Gate {
         }
     }
 
-    async fn admit(&self, method: &Method, headers: &HeaderMap) -> Result<(), String> {
+    async fn admit(&self, method: &Method, path: &str, headers: &HeaderMap) -> Result<(), Refusal> {
         if headers.contains_key(header::ORIGIN) {
-            return Err("cross-origin requests are not allowed".to_owned());
+            return Err(Refusal::forbidden("cross-origin requests are not allowed"));
         }
         if !self.host_is_allowed(headers) {
-            return Err("host is not allowed".to_owned());
+            return Err(Refusal::forbidden("host is not allowed"));
         }
         if headers.get(CLIENT_HEADER).is_none_or(HeaderValue::is_empty) {
-            return Err(format!(
+            return Err(Refusal::Forbidden(format!(
                 "{}: missing {} header",
                 protocol::OUTDATED_PLUGIN_TOKEN,
                 protocol::CLIENT_HEADER
-            ));
+            )));
+        }
+        if path != INFO_ROUTE {
+            self.check_token(headers)?;
         }
         match self.serve_place_id {
             Some(expected) if !place_id_matches(headers, expected) => {
-                Err("place id mismatch".to_owned())
+                Err(Refusal::forbidden("place id mismatch"))
             }
             Some(_) => Ok(()),
             None => {
@@ -93,10 +133,18 @@ impl Gate {
                     && !headers.contains_key(PLACE_ID_HEADER)
                     && let Some(bound) = self.state.bound_place.get()
                 {
-                    return Err(unplaced_write_refused(*bound));
+                    return Err(Refusal::Forbidden(unplaced_write_refused(*bound)));
                 }
-                self.bind_place(headers).await
+                self.bind_place(headers).await.map_err(Refusal::Forbidden)
             }
+        }
+    }
+
+    fn check_token(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+        match headers.get(TOKEN_HEADER) {
+            None => Err(Refusal::Unauthorized(TOKEN_REQUIRED)),
+            Some(presented) if self.state.token().matches(presented.as_bytes()) => Ok(()),
+            Some(_) => Err(Refusal::Unauthorized(TOKEN_REJECTED)),
         }
     }
 
@@ -160,11 +208,14 @@ fn unplaced_write_refused(bound: u64) -> String {
 }
 
 pub(super) async fn guard(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> Response {
-    match gate.admit(request.method(), request.headers()).await {
+    match gate
+        .admit(request.method(), request.uri().path(), request.headers())
+        .await
+    {
         Ok(()) => next.run(request).await,
-        Err(reason) => {
-            tracing::warn!(target: "naht::server", reason = reason.as_str(), "request refused");
-            (StatusCode::FORBIDDEN, reason).into_response()
+        Err(refusal) => {
+            tracing::warn!(target: "naht::server", reason = refusal.reason(), "request refused");
+            refusal.into_response()
         }
     }
 }

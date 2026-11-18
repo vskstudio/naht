@@ -49,7 +49,9 @@ impl From<&CommandError> for Exit {
     fn from(command: &CommandError) -> Self {
         match command {
             CommandError::ProjectExists { .. } | CommandError::Create { .. } => Self::CannotCreate,
-            CommandError::Read { .. } | CommandError::ProjectDir { .. } => Self::NoInput,
+            CommandError::Read { .. }
+            | CommandError::ProjectDir { .. }
+            | CommandError::NoToken { .. } => Self::NoInput,
             CommandError::Tree { .. }
             | CommandError::RojoParse { .. }
             | CommandError::TreePathOutsideRoot { .. }
@@ -74,6 +76,7 @@ impl From<&CommandError> for Exit {
             | CommandError::State(_)
             | CommandError::Session(_)
             | CommandError::Serve(_)
+            | CommandError::Token(_)
             | CommandError::Output(_)
             | CommandError::Lock { .. } => Self::IoError,
             CommandError::Config(_) | CommandError::Uploader(_) => Self::Config,

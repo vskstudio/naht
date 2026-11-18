@@ -8,9 +8,10 @@ use axum::http::{Request, StatusCode, header};
 use naht_core::state::StateStore;
 use tower::ServiceExt;
 
-use super::{CLIENT_HEADER, PLACE_ID_HEADER};
+use super::{CLIENT_HEADER, PLACE_ID_HEADER, TOKEN_HEADER};
 use crate::server::{AppState, router};
 use crate::session::Session;
+use crate::token::{TEST_TOKEN, Token};
 
 const PORT: u16 = 34873;
 
@@ -18,12 +19,13 @@ fn bound_state(root: &Path) -> Arc<AppState> {
     fs::create_dir_all(root.join(".naht")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     let session = Session::new(root, store, "demo", None, false).unwrap();
-    AppState::new(session, Duration::from_secs(1))
+    AppState::new(session, Duration::from_secs(1), Token::for_tests())
 }
 
 fn info_request(place: Option<&str>) -> Request<Body> {
     let request = Request::get("/info")
         .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{PORT}"));
     let request = match place {
         Some(place) => request.header(PLACE_ID_HEADER, place),
@@ -101,6 +103,7 @@ async fn a_malformed_place_header_is_refused() {
 fn write_request(place: Option<&str>) -> Request<Body> {
     let request = Request::post("/changes")
         .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{PORT}"));
     let request = match place {
         Some(place) => request.header(PLACE_ID_HEADER, place),

@@ -1,5 +1,5 @@
 use super::Session;
-use super::{SessionError, new_daemon_id, new_session_id};
+use super::{SessionError, new_session_id, random_id};
 use crate::config::Limits;
 use crate::project_path::stays_inside_project;
 use naht_core::protocol::{PROTOCOL_VERSION, ReportedLimits, ServerInfo};
@@ -52,6 +52,7 @@ impl<V: Vfs> Session<V> {
     ) -> Result<Self, SessionError> {
         let studio = reconciler::studio_at_base(&store)?;
         let recorded_place = store.place_id()?;
+        let project_id = stored_project_id(&store)?;
         Ok(Self {
             vfs,
             store,
@@ -68,7 +69,8 @@ impl<V: Vfs> Session<V> {
             source_roots: BTreeSet::new(),
             project_name: project_name.into(),
             id: new_session_id(),
-            daemon_id: new_daemon_id()?,
+            daemon_id: random_id()?,
+            project_id,
             serve_place_id,
             recorded_place,
             terrain_sync,
@@ -97,6 +99,8 @@ impl<V: Vfs> Session<V> {
             protocol_version: PROTOCOL_VERSION,
             server_version: naht_core::version().to_owned(),
             project_name: self.project_name.clone(),
+            project_id: self.project_id.clone(),
+            token_required: true,
             session_id: self.id.clone(),
             daemon_id: self.daemon_id.clone(),
             serve_place_id: self.serve_place_id,
@@ -245,6 +249,15 @@ fn source_root_key(path: &Path) -> Option<String> {
             .collect::<Vec<_>>()
             .join("/")
     })
+}
+
+fn stored_project_id(store: &StateStore) -> Result<String, SessionError> {
+    if let Some(project_id) = store.project_id()? {
+        return Ok(project_id);
+    }
+    let project_id = random_id()?;
+    store.set_project_id(&project_id)?;
+    Ok(project_id)
 }
 
 #[cfg(test)]

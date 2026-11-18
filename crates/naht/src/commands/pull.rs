@@ -150,6 +150,10 @@ struct Answer {
     protocol_version: u32,
     server_version: String,
     project_name: String,
+    #[serde(default)]
+    project_id: String,
+    #[serde(default)]
+    token_required: bool,
     session_id: String,
     daemon_id: Option<String>,
     serve_place_id: Option<u64>,
@@ -167,6 +171,8 @@ impl Answer {
             protocol_version: self.protocol_version,
             server_version: self.server_version,
             project_name: self.project_name,
+            project_id: self.project_id,
+            token_required: self.token_required,
             session_id: self.session_id,
             daemon_id: self.daemon_id?,
             serve_place_id: self.serve_place_id,

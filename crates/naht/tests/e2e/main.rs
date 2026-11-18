@@ -9,7 +9,8 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use naht::session::Session;
-use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, Pong, SequencedPatch};
+use naht::token;
+use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, Pong, SequencedPatch, TOKEN_HEADER};
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 use naht_core::state::StateStore;
 use reqwest::Client;
@@ -54,6 +55,7 @@ struct Daemon {
     quick: Client,
     base: String,
     session: String,
+    token: String,
 }
 
 impl Daemon {
@@ -83,10 +85,29 @@ impl Daemon {
             quick: Client::builder().timeout(PENDING_WINDOW).build().unwrap(),
             base: format!("http://{}:{port}", Ipv4Addr::LOCALHOST),
             session: String::new(),
+            token: String::new(),
         };
+        daemon.token = daemon.wait_token(root).await?;
         let session = daemon.wait_ready().await?;
         daemon.session = session;
         Some(daemon)
+    }
+
+    async fn wait_token(&mut self, root: &Path) -> Option<String> {
+        let started = Instant::now();
+        loop {
+            if self.child.try_wait().unwrap().is_some() {
+                return None;
+            }
+            if let Ok(token) = token::read(root) {
+                return Some(token.as_str().to_owned());
+            }
+            assert!(
+                started.elapsed() < READY_DEADLINE,
+                "naht serve did not write its token within {READY_DEADLINE:?}"
+            );
+            sleep(POLL_INTERVAL).await;
+        }
     }
 
     async fn wait_ready(&mut self) -> Option<String> {
@@ -95,7 +116,7 @@ impl Daemon {
             if self.child.try_wait().unwrap().is_some() {
                 return None;
             }
-            if let Ok(resp) = wire::heartbeat(&self.client, &self.base).await
+            if let Ok(resp) = wire::heartbeat(&self.client, &self.base, &self.token).await
                 && resp.status().is_success()
             {
                 let pong: Pong = wire::decode(resp).await;
@@ -119,6 +140,7 @@ impl Daemon {
             .quick
             .get(format!("{}/patches", self.base))
             .header(CLIENT_HEADER, "plugin")
+            .header(TOKEN_HEADER, self.token.as_str())
             .query(&[("cursor", "0"), ("session", self.session.as_str())])
             .send()
             .await
@@ -130,7 +152,7 @@ impl Daemon {
     }
 
     async fn ack(&self, seqs: Vec<u64>) {
-        let status = wire::ack(&self.client, &self.base, &self.session, seqs).await;
+        let status = wire::ack(&self.client, &self.base, &self.session, seqs, &self.token).await;
         assert!(status.is_success(), "POST /ack: {status}");
     }
 }

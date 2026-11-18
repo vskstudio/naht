@@ -14,6 +14,8 @@ fn info(project: &str, place: Option<u64>, daemon_id: &str) -> ServerInfo {
         protocol_version: PROTOCOL_VERSION,
         server_version: "test".to_owned(),
         project_name: project.to_owned(),
+        project_id: "p-1".to_owned(),
+        token_required: true,
         session_id: "test".to_owned(),
         daemon_id: daemon_id.to_owned(),
         serve_place_id: place,

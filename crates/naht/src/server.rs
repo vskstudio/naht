@@ -12,6 +12,7 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::token::Token;
 use axum::Router;
 use axum::body::Bytes;
 use axum::error_handling::HandleErrorLayer;
@@ -60,6 +61,8 @@ const INVENTORY_ROUTE: &str = "/inventory";
 
 const MAX_IN_FLIGHT: usize = 64;
 
+const INFO_ROUTE: &str = "/info";
+
 const TIMEOUT_SLACK: Duration = Duration::from_secs(10);
 
 const POST_WAIT: Duration = Duration::from_secs(10);
@@ -78,6 +81,7 @@ pub struct AppState {
     long_poll: Duration,
     post_wait: Duration,
     limits: Limits,
+    token: Token,
     shutdown: CancellationToken,
     tasks: TaskTracker,
 }
@@ -88,13 +92,19 @@ impl AppState {
         self.blobs_ready.notify_waiters();
     }
 
-    /// Wrap a session, parking long-polls for at most `long_poll` before they return empty.
-    pub fn new(session: Session, long_poll: Duration) -> Arc<Self> {
-        Self::with_post_wait(session, long_poll, POST_WAIT)
+    /// Wrap a session, parking long-polls for at most `long_poll` before they return empty. Every
+    /// route except `GET /info` requires `token` in the `x-naht-token` header.
+    pub fn new(session: Session, long_poll: Duration, token: Token) -> Arc<Self> {
+        Self::with_post_wait(session, long_poll, POST_WAIT, token)
     }
 
     /// Like [`AppState::new`], but a mutating `POST` waits at most `post_wait` for a slot or the lock.
-    pub fn with_post_wait(session: Session, long_poll: Duration, post_wait: Duration) -> Arc<Self> {
+    pub fn with_post_wait(
+        session: Session,
+        long_poll: Duration,
+        post_wait: Duration,
+        token: Token,
+    ) -> Arc<Self> {
         let serve_place_id = session.serve_place_id();
         let limits = session.limits();
         let bound_place = session
@@ -109,9 +119,15 @@ impl AppState {
             long_poll,
             post_wait,
             limits,
+            token,
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
         })
+    }
+
+    /// The token every request but `GET /info` must present.
+    pub fn token(&self) -> &Token {
+        &self.token
     }
 
     /// The token that stops the server and every tracked task once cancelled.
@@ -170,7 +186,7 @@ pub fn router(state: Arc<AppState>, port: u16) -> Router {
             state.long_poll.saturating_add(TIMEOUT_SLACK),
         ));
     Router::new()
-        .route("/info", get(info).layer(read_deadline.clone()))
+        .route(INFO_ROUTE, get(info).layer(read_deadline.clone()))
         .route("/patches", get(patches).layer(read_deadline.clone()))
         .route("/changes", post(changes))
         .route(INVENTORY_ROUTE, post(inventory::inventory))

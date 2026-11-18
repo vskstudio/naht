@@ -1,5 +1,6 @@
 use crate::config::ConfigError;
 use crate::session::SessionError;
+use crate::token::TokenError;
 use crate::uploader::UploaderError;
 use crate::watcher::WatchError;
 use naht_core::build::BuildError;
@@ -133,6 +134,15 @@ pub enum CommandError {
     /// The filesystem watcher could not start.
     #[error(transparent)]
     Watch(#[from] WatchError),
+    /// The project's token file could not be read or created.
+    #[error(transparent)]
+    Token(#[from] TokenError),
+    /// `naht token` found no token file, because `naht serve` has not run for this project.
+    #[error("no token at `{}`: run `naht serve` once to create it", path.display())]
+    NoToken {
+        /// The token file that is missing.
+        path: PathBuf,
+    },
     /// A running daemon could not be reached on its port.
     #[error("cannot reach the daemon at `{url}` (is `naht serve` running?)")]
     DaemonUnreachable {

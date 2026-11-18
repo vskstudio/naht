@@ -11,7 +11,7 @@ use tokio::net;
 use tokio::task;
 use tokio::time;
 
-use super::support::{CLIENT_HEADER, Harness};
+use super::support::{CLIENT_HEADER, Harness, TOKEN_HEADER};
 
 fn terrain_blob(nx: i32, ny: i32, nz: i32) -> BlobInstance {
     let mut content = Vec::new();
@@ -52,8 +52,9 @@ async fn a_stalled_request_head_is_dropped_by_the_server() {
 async fn stalled_post_bodies_do_not_hold_the_body_slots_forever() {
     let harness = Harness::start_configured(None, true, PRODUCTION_LIKE_LONG_POLL).await;
     let addr = harness.base.trim_start_matches("http://").to_owned();
+    let token = harness.token();
     let stalled_head = format!(
-        "POST /changes HTTP/1.1\r\nHost: {addr}\r\n{CLIENT_HEADER}: plugin\r\nContent-Length: 100000\r\n\r\n"
+        "POST /changes HTTP/1.1\r\nHost: {addr}\r\n{CLIENT_HEADER}: plugin\r\n{TOKEN_HEADER}: {token}\r\nContent-Length: 100000\r\n\r\n"
     );
 
     let mut stalled = Vec::new();
@@ -95,8 +96,9 @@ async fn first_line(stream: &mut net::TcpStream) -> io::Result<String> {
 async fn a_body_over_64_mib_is_refused_with_413() {
     let harness = Harness::start(None).await;
     let addr = harness.base.trim_start_matches("http://");
+    let token = harness.token();
     let request = format!(
-        "POST /changes HTTP/1.1\r\nHost: {addr}\r\n{CLIENT_HEADER}: plugin\r\nExpect: 100-continue\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "POST /changes HTTP/1.1\r\nHost: {addr}\r\n{CLIENT_HEADER}: plugin\r\n{TOKEN_HEADER}: {token}\r\nExpect: 100-continue\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         BODY_LIMIT + 1
     );
 
@@ -109,8 +111,9 @@ async fn a_body_over_64_mib_is_refused_with_413() {
 async fn a_truncated_post_body_is_refused_with_400() {
     let harness = Harness::start(None).await;
     let addr = harness.base.trim_start_matches("http://").to_owned();
+    let token = harness.token();
     let truncated = format!(
-        "POST /changes HTTP/1.1\r\nHost: {addr}\r\n{CLIENT_HEADER}: plugin\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nshort"
+        "POST /changes HTTP/1.1\r\nHost: {addr}\r\n{CLIENT_HEADER}: plugin\r\n{TOKEN_HEADER}: {token}\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nshort"
     );
 
     let mut stream = net::TcpStream::connect(&addr).await.unwrap();

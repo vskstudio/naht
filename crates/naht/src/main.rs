@@ -2,7 +2,7 @@
 //!
 //! This binary parses arguments and dispatches to [`naht::commands`]; all sync decisions live in
 //! [`naht_core`] and the daemon modules. Commands: `init` (`--from-rojo` to convert a Rojo project),
-//! `serve`, `pull`, `build`, `status`, `resolve`.
+//! `serve`, `token`, `pull`, `build`, `status`, `resolve`.
 //!
 //! | Exit code | Meaning |
 //! |---|---|
@@ -81,6 +81,12 @@ enum Command {
         /// Override the configured/default port.
         #[arg(long)]
         port: Option<u16>,
+    },
+    /// Print the project's token, which the Studio plugin asks for once.
+    Token {
+        /// The project directory; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
     /// Ask a running daemon to re-sync now.
     Pull {
@@ -163,6 +169,9 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
             let config = Config::load(&path)?;
             let port = config.resolve_port(port)?;
             commands::serve(config, &path, port, out).await?;
+        }
+        Command::Token { path } => {
+            commands::print_token(&path, out)?;
         }
         Command::Pull { path } => {
             let config = Config::load(&path)?;
