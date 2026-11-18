@@ -194,6 +194,25 @@ mod tests {
     use tokio::time;
 
     #[tokio::test]
+    async fn a_dot_tree_path_is_accepted_and_serve_reaches_the_bind() {
+        for path in [".", "./"] {
+            let root = tempfile::tempdir().unwrap();
+            let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = taken.local_addr().unwrap().port();
+            let mut out = Output::new(Vec::new(), Vec::new());
+            let outcome = time::timeout(
+                Duration::from_secs(10),
+                serve(config_with_tree_path(path), root.path(), port, &mut out),
+            )
+            .await;
+            assert!(
+                matches!(outcome, Ok(Err(CommandError::Bind { .. }))),
+                "serve refused the tree path `{path}`: {outcome:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_taken_port_fails_instead_of_hanging() {
         let root = tempfile::tempdir().unwrap();
         let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();

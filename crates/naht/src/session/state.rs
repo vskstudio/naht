@@ -1,5 +1,6 @@
 use super::Session;
 use super::{SessionError, new_daemon_id, new_session_id};
+use crate::project_path::stays_inside_project;
 use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
 use naht_core::reconciler;
 use naht_core::state::{InstanceRecord, StateStore};
@@ -168,15 +169,18 @@ impl Session {
 }
 
 fn source_root_key(path: &Path) -> Option<String> {
-    let mut parts = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(name) => parts.push(name.to_string_lossy().to_lowercase()),
-            Component::CurDir => {}
-            Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("/"))
+    stays_inside_project(path).then(|| {
+        path.components()
+            .filter_map(|component| match component {
+                Component::Normal(name) => Some(name.to_string_lossy().to_lowercase()),
+                Component::Prefix(_)
+                | Component::RootDir
+                | Component::CurDir
+                | Component::ParentDir => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    })
 }
 
 #[cfg(test)]
@@ -269,6 +273,21 @@ mod tests {
 
         assert!(refused.is_err());
         assert!(session.may_remove_init_folder(Path::new("packages/Shared")));
+    }
+
+    #[test]
+    fn a_source_root_made_only_of_dots_is_the_project_root_and_protects_no_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::open_in_memory().unwrap();
+        let mut session = Session::new(root.path(), store, "demo", None, false).unwrap();
+
+        session
+            .protect_source_roots([PathBuf::from("."), PathBuf::from("./")])
+            .unwrap();
+
+        assert!(session.may_remove_init_folder(Path::new("src")));
+        assert!(!session.may_remove_init_folder(Path::new("")));
+        assert!(!session.may_remove_emptied_dir(Path::new("")));
     }
 
     #[test]
