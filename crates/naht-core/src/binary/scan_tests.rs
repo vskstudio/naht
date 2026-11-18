@@ -49,7 +49,10 @@ fn a_stray_terrain_file_beside_the_synced_name_is_never_told_to_rename_over_it()
     )
     .unwrap();
 
-    assert!(patches.is_empty(), "a both-names pair was synced: {patches:?}");
+    assert!(
+        patches.is_empty(),
+        "a both-names pair was synced: {patches:?}"
+    );
     assert_eq!(vfs.read(Path::new("Terrain.terrain")).unwrap(), vec![1]);
     assert_eq!(vfs.read(Path::new("terrain.terrain")).unwrap(), vec![5]);
     assert!(

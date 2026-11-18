@@ -29,7 +29,10 @@ pub fn scan_blobs(vfs: &impl Vfs, dir: &Path) -> Result<Scan<BlobInstance>, Reco
         if entry.path == terrain {
             collect_blob(vfs, &entry.path, &mut scan);
         } else if let Some(found) = case_variant_of_terrain(&entry.path) {
-            scan.skip(terrain.clone(), case_variant_error(found, synced_name_taken));
+            scan.skip(
+                terrain.clone(),
+                case_variant_error(found, synced_name_taken),
+            );
         }
     }
     Ok(scan)
