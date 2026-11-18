@@ -100,7 +100,7 @@ Ensuite, il demande au daemon enregistré dans `.naht/daemon.port` de re-synchro
 ```sh
 naht resolve src/Hello.luau
 naht resolve src/Hello.luau --project ../demo   # scope to another project dir
-naht resolve src/Map.terrain --keep studio      # garde la copie Studio d'un binaire gelé
+naht resolve Terrain.terrain --keep studio      # garde la copie Studio d'un binaire gelé
 ```
 
 | Flag | Rôle |

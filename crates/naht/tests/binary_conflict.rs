@@ -11,12 +11,11 @@ use naht_core::binary::{BlobInstance, Keep};
 use naht_core::reconciler::Direction;
 use naht_core::state::StateStore;
 
-const BLOB: &str = "src/Map.terrain";
+const BLOB: &str = "Terrain.terrain";
 const DISK: [u8; 3] = [4, 5, 6];
 const STUDIO: [u8; 3] = [7, 8, 9];
 
 fn open(root: &Path) -> Session {
-    fs::create_dir_all(root.join("src")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     Session::new(root, store, "demo", None, true).unwrap()
 }
@@ -26,7 +25,6 @@ fn terrain(content: &[u8]) -> Vec<BlobInstance> {
 }
 
 fn frozen(root: &Path) -> Session {
-    fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join(BLOB), [1_u8, 2, 3]).unwrap();
     let mut session = open(root);
     session.apply_blob_changes(terrain(&[1, 2, 3])).unwrap();

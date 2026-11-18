@@ -49,13 +49,15 @@ JSON body `{"refused_paths": [...]}` listing every refused path in batch order, 
 written. A batch with every change accepted is answered `200` with an empty body, and a path through a symlink
 is refused. A malformed body is `400`. If the valid
 changes cannot be applied, the batch is answered `500` and the daemon's Studio mirror is restored to its state
-before the batch. `POST /blobs` accepts only visible `.terrain` files, and anything else is `400` and writes
-nothing.
+before the batch. `POST /blobs` accepts only `Terrain.terrain` at the project root. A batch naming any other path
+is refused whole: the daemon answers `400` with a JSON body `{"refused_paths": [...]}` naming each one, and
+nothing is written.
 
 At most two POST requests read and handle a body at once, and a third waits for a slot with no time limit of
 its own. Each body is capped at 64 MiB and answered `413` when larger. The 15-second timer covers only the read
 of the body, which is answered `408` when it stalls, and a body that ends early or is malformed is answered
-`400`. A request head that stalls for ten seconds is dropped.
+`400`. A request head that stalls for ten seconds is dropped. The daemon serves at most 64 connections at once: a
+connection past that waits, not yet accepted, until one of them closes. A connection that sends nothing, or that opens with an HTTP/2 preface, is closed within ten seconds and frees its slot. A local process that keeps reconnecting can still take the slots.
 
 ## The handshake (`GET /info`)
 

@@ -53,6 +53,7 @@ impl From<&CommandError> for Exit {
             CommandError::Tree { .. }
             | CommandError::RojoParse { .. }
             | CommandError::TreePathOutsideRoot { .. }
+            | CommandError::TreePathNotPortable { .. }
             | CommandError::Build(_)
             | CommandError::ReleaseMismatch { .. }
             | CommandError::Reconcile(
@@ -61,7 +62,9 @@ impl From<&CommandError> for Exit {
                 | ReconcileError::MarkersRemain(_)
                 | ReconcileError::MissingOnDisk(_)
                 | ReconcileError::KeepRequired(_)
-                | ReconcileError::KeepNotBinary(_),
+                | ReconcileError::KeepNotBinary(_)
+                | ReconcileError::TerrainNameCase { .. }
+                | ReconcileError::TerrainNameCaseBeside { .. },
             ) => Self::DataError,
             CommandError::RenderConfig(_) => Self::Software,
             CommandError::Reconcile(ReconcileError::State(_) | ReconcileError::Vfs(_))

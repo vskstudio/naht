@@ -103,7 +103,7 @@ Once cleared, it asks the daemon recorded in `.naht/daemon.port` to re-sync, and
 ```sh
 naht resolve src/Hello.luau
 naht resolve src/Hello.luau --project ../demo   # scope to another project dir
-naht resolve src/Map.terrain --keep studio      # keep the Studio copy of a frozen binary
+naht resolve Terrain.terrain --keep studio      # keep the Studio copy of a frozen binary
 ```
 
 | Flag | Purpose |

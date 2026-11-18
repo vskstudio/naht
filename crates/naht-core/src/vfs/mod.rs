@@ -17,8 +17,8 @@ mod tests;
 pub use disk::{DiskVfs, remove_stale_temp_files};
 pub use memory::MemoryVfs;
 pub use project_path::{
-    ProjectPathError, validate_blob_path, validate_directory_path, validate_project_path,
-    validate_source_path,
+    ProjectPathError, is_forbidden_name_character, is_windows_device_name, validate_blob_path,
+    validate_directory_path, validate_project_path, validate_source_path,
 };
 pub use rooted::RootedVfs;
 

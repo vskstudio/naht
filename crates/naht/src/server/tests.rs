@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
-use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
+use naht_core::binary::TERRAIN_CLASS;
 use naht_core::state::StateStore;
 use tokio::io::{DuplexStream, duplex};
 use tokio_util::io::ReaderStream;
@@ -342,7 +342,6 @@ async fn a_batch_still_waiting_when_the_client_leaves_is_drained_before_shutdown
 
 fn terrain_with_a_queued_blob() -> (tempfile::TempDir, Arc<AppState>) {
     let root = tempfile::tempdir().unwrap();
-    fs::create_dir_all(root.path().join("src")).unwrap();
     let mut session = Session::new(
         root.path(),
         StateStore::open_in_memory().unwrap(),
@@ -353,12 +352,12 @@ fn terrain_with_a_queued_blob() -> (tempfile::TempDir, Arc<AppState>) {
     .unwrap();
     session
         .apply_blob_changes(vec![BlobInstance::new(
-            "src/Map.terrain",
+            "Terrain.terrain",
             TERRAIN_CLASS,
             vec![1_u8, 2, 3],
         )])
         .unwrap();
-    fs::write(root.path().join("src").join("Map.terrain"), [4_u8, 5, 6]).unwrap();
+    fs::write(root.path().join("Terrain.terrain"), [4_u8, 5, 6]).unwrap();
     session.rescan().unwrap();
     session.rescan().unwrap();
     (root, AppState::new(session, Duration::from_secs(1)))

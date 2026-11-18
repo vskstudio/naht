@@ -61,8 +61,8 @@ resumes for that path automatically.
 A binary conflict has no markers to delete, so `naht resolve` needs the side to keep:
 
 ```sh
-naht resolve --keep disk src/Map.terrain    # the disk file wins: its bytes go to Studio
-naht resolve --keep studio src/Map.terrain  # the Studio copy wins: its bytes replace the file
+naht resolve --keep disk Terrain.terrain    # the disk file wins: its bytes go to Studio
+naht resolve --keep studio Terrain.terrain  # the Studio copy wins: its bytes replace the file
 ```
 
 `--keep disk` clears the freeze, and the next sync pushes the disk bytes to Studio. It is refused when

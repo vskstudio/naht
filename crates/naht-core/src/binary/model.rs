@@ -6,14 +6,7 @@ mod bytes {
     pub(super) use serde_bytes::{deserialize, serialize};
 }
 
-/// The filesystem extension a binary blob lives behind.
-///
-/// A `*.terrain` file is the opaque voxel blob the daemon syncs (architecture §9). The convention
-/// mirrors the script-suffix conventions in the mapper, kept here because only the binary path
-/// consumes it.
-pub const BLOB_EXTENSION: &str = "terrain";
-
-/// The Roblox class a `*.terrain` blob maps to.
+/// The Roblox class of the synced terrain blob, `Terrain.terrain` (architecture §9).
 pub const TERRAIN_CLASS: &str = "Terrain";
 
 /// One binary instance on a side of the sync, keyed by its filesystem path.

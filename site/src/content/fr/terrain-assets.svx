@@ -18,7 +18,7 @@ d'abandonner en silence, et traiter les cas binaires aussi proprement que l'API 
 | Cas | Statut | Approche |
 |---|---|---|
 | **`MeshId` / images** | upload (opt-in, `naht build` seulement) | La chaîne asset-id se synchronise comme n'importe quelle propriété. Avec `[assets]` activé, seul `naht build` uploade un fichier mesh/image *local* une fois via Open Cloud, le met en cache par hash de contenu et réécrit sa propriété en `rbxassetid://…`. `sync` et `serve` n'uploadent jamais. Désactivé par défaut. |
-| **Terrain** | synchronisable (opt-in) | Lu/écrit via `ReadVoxels`/`WriteVoxels` et synchronisé comme un blob voxel binaire opaque (comparé par hash, last-writer-wins ; un changement des deux côtés **gèle**). Piloté par le canal `/blobs` quand `[serve] terrain_sync` est activé. |
+| **Terrain** | synchronisable (opt-in) | Lu/écrit via `ReadVoxels`/`WriteVoxels` et synchronisé comme un blob voxel binaire opaque (comparé par hash, last-writer-wins ; un changement des deux côtés **gèle**). Piloté par le canal `/blobs` quand `[serve] terrain_sync` est activé, pour `Terrain.terrain` à la racine du projet seulement. |
 | **CSG / Unions** | aller-retour binaire | La géométrie binaire générée par le moteur ne peut pas être reconstruite depuis du texte, mais fait l'aller-retour dans les fichiers modèle `rbxm` (opaque, au niveau fichier). |
 | **`HttpEnabled` & propriétés verrouillées par sécurité** | blocage dur | Non réglables par scripts/plugins par conception. Naht avertit et renvoie vers les Game Settings ; propose un repli par fichier de place. |
 
@@ -35,6 +35,12 @@ le daemon pilote un **canal blob séparé** (`GET`/`POST /blobs`, voir [Protocol
 Le terrain est lu/écrit via `ReadVoxels`/`WriteVoxels` et synchronisé comme un seul blob opaque, comparé par hash et
 last-writer-wins. Si les **deux** côtés ont changé le terrain depuis la base, Naht le **gèle** plutôt que de
 deviner. Le même principe « ne jamais écraser » que pour les [conflits](#/docs/conflicts) de texte, appliqué au binaire.
+
+Le seul fichier synchronisé en direct est `Terrain.terrain` à la racine du projet, le seul terrain que Studio détient.
+`naht serve` ignore tous les autres fichiers `.terrain` du projet : une copie comme `src/Map.terrain` n'est ni
+poussée vers Studio ni écrasée par le terrain.
+
+Une exception : un fichier à la racine dont le nom ne diffère de `Terrain.terrain` que par la casse, comme `terrain.terrain`, arrête entièrement la synchronisation du terrain. `naht serve` laisse les deux copies intactes et écrit un avertissement dans le journal. Renomme ce fichier en `Terrain.terrain`, ou supprime-le si `Terrain.terrain` existe déjà, avant que le terrain ne se synchronise de nouveau.
 
 Pour libérer un terrain gelé, garde un côté avec `naht resolve --keep disk|studio` (voir [Conflits](#/docs/conflicts)).
 <Callout type="note">

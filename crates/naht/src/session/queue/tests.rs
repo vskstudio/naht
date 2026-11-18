@@ -67,16 +67,15 @@ fn terrain_session_in(root: &Path) -> Session {
 #[test]
 fn a_blob_patch_leaves_the_queue_once_the_plugin_moves_its_cursor_past_it() {
     let root = tempfile::tempdir().unwrap();
-    fs::create_dir_all(root.path().join("src")).unwrap();
     let mut session = terrain_session_in(root.path());
     session
         .apply_blob_changes(vec![BlobInstance::new(
-            "src/Map.terrain",
+            "Terrain.terrain",
             "Terrain",
             vec![1_u8, 2, 3],
         )])
         .unwrap();
-    let blob = root.path().join("src").join("Map.terrain");
+    let blob = root.path().join("Terrain.terrain");
     fs::write(&blob, [4_u8, 5, 6]).unwrap();
     session.rescan().unwrap();
     session.rescan().unwrap();
