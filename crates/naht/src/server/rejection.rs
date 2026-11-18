@@ -55,14 +55,26 @@ impl IntoResponse for Rejection {
             return (status, "internal server error").into_response();
         }
         if let Self::RefusedPaths(refused_paths) = &self {
-            let body = serde_json::json!({ "refused_paths": refused_paths });
-            return (
+            return json_response(
                 status,
-                [(header::CONTENT_TYPE, "application/json")],
-                body.to_string(),
-            )
-                .into_response();
+                &serde_json::json!({ "refused_paths": refused_paths }),
+            );
+        }
+        if let Self::InvalidPath(error) = &self {
+            return json_response(status, &serde_json::json!({ "error": error.to_string() }));
         }
         (status, self.to_string()).into_response()
     }
 }
+
+fn json_response(status: StatusCode, body: &serde_json::Value) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod tests;
