@@ -73,3 +73,13 @@ fn a_pull_keeps_a_configured_source_root_when_its_last_file_is_deleted() {
     assert!(!root.path().join(FILE).exists());
     assert!(root.path().join("Outer/Inner").is_dir());
 }
+
+#[test]
+fn a_folder_the_user_empties_on_disk_is_kept_by_a_rescan() {
+    let (root, mut session) = synced_project(&[]);
+    fs::remove_file(root.path().join(FILE)).unwrap();
+
+    session.rescan().unwrap();
+
+    assert!(root.path().join("Outer/Inner").is_dir());
+}
