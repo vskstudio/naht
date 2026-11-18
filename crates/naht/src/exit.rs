@@ -63,7 +63,8 @@ impl From<&CommandError> for Exit {
                 | ReconcileError::MissingOnDisk(_)
                 | ReconcileError::KeepRequired(_)
                 | ReconcileError::KeepNotBinary(_)
-                | ReconcileError::TerrainNameCase { .. },
+                | ReconcileError::TerrainNameCase { .. }
+                | ReconcileError::TerrainNameCaseBeside { .. },
             ) => Self::DataError,
             CommandError::RenderConfig(_) => Self::Software,
             CommandError::Reconcile(ReconcileError::State(_) | ReconcileError::Vfs(_))

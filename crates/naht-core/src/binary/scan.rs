@@ -19,24 +19,34 @@ use super::model::{BlobInstance, TERRAIN_CLASS};
 /// Returns an error only when `dir` itself cannot be listed.
 pub fn scan_blobs(vfs: &impl Vfs, dir: &Path) -> Result<Scan<BlobInstance>, ReconcileError> {
     let terrain = dir.join(TERRAIN_PATH);
+    let entries = vfs.list(dir)?;
+    let synced_name_taken = entries.iter().any(|entry| entry.path == terrain);
     let mut scan = Scan::default();
-    for entry in vfs.list(dir)? {
+    for entry in entries {
         if entry.kind != EntryKind::File {
             continue;
         }
         if entry.path == terrain {
             collect_blob(vfs, &entry.path, &mut scan);
         } else if let Some(found) = case_variant_of_terrain(&entry.path) {
-            scan.skip(
-                terrain.clone(),
-                ReconcileError::TerrainNameCase {
-                    found,
-                    expected: TERRAIN_PATH,
-                },
-            );
+            scan.skip(terrain.clone(), case_variant_error(found, synced_name_taken));
         }
     }
     Ok(scan)
+}
+
+fn case_variant_error(found: String, synced_name_taken: bool) -> ReconcileError {
+    if synced_name_taken {
+        ReconcileError::TerrainNameCaseBeside {
+            found,
+            expected: TERRAIN_PATH,
+        }
+    } else {
+        ReconcileError::TerrainNameCase {
+            found,
+            expected: TERRAIN_PATH,
+        }
+    }
 }
 
 fn case_variant_of_terrain(path: &Path) -> Option<String> {
