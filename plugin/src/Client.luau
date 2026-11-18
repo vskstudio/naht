@@ -153,12 +153,12 @@ function Client.postChanges(self: Client, changes: { Protocol.Change })
 	end
 end
 
-function Client.postInventory(self: Client, changes: { Protocol.Change }, sessionId: string): boolean
+function Client.postInventory(self: Client, scripts: { Protocol.InventoryEntry }, sessionId: string): boolean
 	local response = request(self, {
 		Url = "/inventory?session=" .. sessionId,
 		Method = "POST",
 		Headers = { ["Content-Type"] = "application/msgpack" },
-		Body = Protocol.encodeChanges(changes),
+		Body = Protocol.encodeInventory(scripts),
 	})
 	if response.StatusCode == 409 then
 		error(Client.SESSION_CHANGED)

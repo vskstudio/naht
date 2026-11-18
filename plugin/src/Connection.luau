@@ -246,7 +246,7 @@ function Connection._run(self, session: number)
 				break
 			end
 			self.epoch += 1
-			self.onState("Reconnecting", tostring(err))
+			self.onState("Reconnecting", failureMessage(err))
 			if Client.isSessionChanged(tostring(err)) then
 				self.backoff = BACKOFF_START
 			end

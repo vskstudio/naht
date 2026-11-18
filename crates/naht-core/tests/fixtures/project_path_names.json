@@ -1,5 +1,5 @@
 {
   "refused": ["Config: v2", "a:b", ":", ".", "..", "", "\\", "a//b", "a\u0000b", "a<b", "a>b", "a\"b", "a|b", "a?b", "a*b", "a\u0001b", "a\u001fb"],
-  "accepted": ["Config v2", "v2.0", "a-b_c", ".x", "..x"],
-  "pluginOnlyRefused": ["a\\b"]
+  "accepted": ["Config v2", "v2.0", "a-b_c"],
+  "pluginOnlyRefused": ["a\\b", ".x", "..x"]
 }

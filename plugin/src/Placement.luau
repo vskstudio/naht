@@ -1,6 +1,7 @@
 --!strict
 
 local Support = require(if script ~= nil then script.Parent.Support else "./Support")
+local Fingerprint = require(if script ~= nil then script.Parent.Fingerprint else "./Fingerprint")
 
 local Placement = {}
 
@@ -14,7 +15,7 @@ local UNSAFE_NAMES = { [""] = true, ["."] = true, [".."] = true }
 local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
 
 local function isSafeName(name: string): boolean
-	if UNSAFE_NAMES[name] then
+	if UNSAFE_NAMES[name] or string.sub(name, 1, 1) == "." then
 		return false
 	end
 	for _, character in UNSAFE_NAME_CHARACTERS do
@@ -52,7 +53,7 @@ end
 function Placement._unsafeReason(_self, instance: Instance, segments: { string }): string?
 	for _, segment in segments do
 		if not isSafeName(segment) then
-			return "a name contains '/', '\\', ':', '< > \" | ? *' or a control byte, or is empty, '.' or '..'"
+			return "a name contains '/', '\\', ':', '< > \" | ? *' or a control byte, starts with '.', or is empty, '.' or '..'"
 		end
 		if isWindowsDeviceName(segment) then
 			return "a name is a Windows device name such as CON or LPT1"
@@ -116,9 +117,27 @@ function Placement._queue(self, path: string, change: any, group: any?)
 	end
 end
 
-function Placement._heldByOther(self, script: Instance, path: string): boolean
+function Placement._indexHolders(self): { [string]: { Instance } }
+	local holders: { [string]: { Instance } } = {}
 	for _, descendant in self.root:GetDescendants() do
-		if descendant ~= script and CLASS_SUFFIX[descendant.ClassName] ~= nil and self:_pathOf(descendant) == path then
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			local path = self:_pathOf(descendant)
+			if path ~= nil then
+				local list = holders[path]
+				if list == nil then
+					list = {}
+					holders[path] = list
+				end
+				table.insert(list, descendant)
+			end
+		end
+	end
+	return holders
+end
+
+function Placement._heldByOther(self, script: Instance, path: string): boolean
+	for _, holder in (self.holders or self:_indexHolders())[path] or {} do
+		if holder ~= script then
 			return true
 		end
 	end
@@ -197,6 +216,7 @@ function Placement._relocate(self, script: Instance)
 end
 
 function Placement._relocateSubtree(self, instance: Instance)
+	self.holders = self:_indexHolders()
 	if CLASS_SUFFIX[instance.ClassName] ~= nil then
 		self:_relocate(instance)
 	end
@@ -205,9 +225,11 @@ function Placement._relocateSubtree(self, instance: Instance)
 			self:_relocate(descendant)
 		end
 	end
+	self.holders = nil
 end
 
 function Placement._reconcilePlacement(self)
+	self.holders = self:_indexHolders()
 	for _, descendant in self.root:GetDescendants() do
 		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
 			local from = self.placed[descendant]
@@ -221,6 +243,7 @@ function Placement._reconcilePlacement(self)
 			end
 		end
 	end
+	self.holders = nil
 end
 
 function Placement._adoptPlacement(self)
@@ -234,32 +257,63 @@ function Placement._adoptPlacement(self)
 	end
 end
 
+local function isUnder(root: Instance, instance: Instance): boolean
+	local current: Instance? = instance
+	while current ~= nil do
+		if current == root then
+			return true
+		end
+		current = current.Parent
+	end
+	return false
+end
+
 function Placement._inventory(self)
-	local changes = {}
-	local seen: { [string]: boolean } = {}
-	for _, descendant in self.root:GetDescendants() do
-		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
-			local path = self:_pathOf(descendant)
-			if path ~= nil and not seen[path] then
-				seen[path] = true
-				table.insert(changes, self.protocol.upsert(path, descendant.ClassName, (descendant :: any).Source))
-			end
+	local placedScripts = {}
+	local claims: { [string]: number } = {}
+	for script, path in self.placed do
+		if CLASS_SUFFIX[script.ClassName] ~= nil and isUnder(self.root, script) then
+			claims[path] = (claims[path] or 0) + 1
+			table.insert(placedScripts, { script = script, path = path })
 		end
 	end
-	return changes
+	local scripts = {}
+	for _, entry in placedScripts do
+		if claims[entry.path] == 1 then
+			table.insert(scripts, {
+				path = entry.path,
+				class = entry.script.ClassName,
+				hash = Fingerprint.source((entry.script :: any).Source),
+			})
+		end
+	end
+	return scripts
 end
 
 function Placement._postInventory(self, sessionId: string)
 	if self.inventorySession == sessionId then
 		return
 	end
-	local changes = self:_inventory()
-	if #changes == 0 then
+	local scripts = self:_inventory()
+	if #scripts == 0 then
 		self.inventorySession = sessionId
 		self:_clearWarning("inventory")
 		return
 	end
-	if not self.client:postInventory(changes, sessionId) then
+	local ok, posted = pcall(self.client.postInventory, self.client, scripts, sessionId)
+	if not ok then
+		if Support.isTransientFailure(posted) then
+			error(posted, 0)
+		end
+		self.inventorySession = sessionId
+		self:_setWarning(
+			"inventory",
+			"naht: the daemon refused the inventory, renames made while the plugin was stopped were not applied: "
+				.. Support.failureMessage(posted)
+		)
+		return
+	end
+	if not posted then
 		self:_setWarning("inventory", "naht: this daemon predates renames made while the plugin was stopped, update naht to apply them")
 		return
 	end
