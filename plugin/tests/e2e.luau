@@ -20,6 +20,9 @@ local KEEP_FILE = "src/Keep.luau"
 local HIDDEN_FILE = "src/.Hidden.luau"
 local OTHER_FILE = "src/Other.luau"
 local REFUSED_FILE = "src/Refused.luau"
+local CHILDLESS_DIR = "src/Dir"
+local CHILDLESS_INIT = "src/Dir/init.luau"
+local CHILDLESS_FLAT = "src/Dir.luau"
 local OTHER_PLACE_ID = 999
 local READY_ATTEMPTS = 300
 local STOP_ATTEMPTS = 300
@@ -369,6 +372,27 @@ local function otherPlaceRefused(root, port, log)
 	stopDaemon(other)
 end
 
+local function childlessInitKept(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeDir(root .. "/" .. CHILDLESS_DIR)
+	fs.writeFile(root .. "/" .. CHILDLESS_INIT, "return 'dir'")
+
+	local daemon = startDaemon(root, port, log)
+	local info = daemon.client:info()
+	local accepted, err = pcall(daemon.client.postInventory, daemon.client, { entryOf(CHILDLESS_INIT, "return 'dir'") }, info.session_id)
+	check("the daemon accepts an inventory that lists a childless init folder under its init path", accepted, tostring(err))
+	check(
+		"the childless init file stays where the plugin wrote it",
+		fs.isFile(root .. "/" .. CHILDLESS_INIT) and fs.readFile(root .. "/" .. CHILDLESS_INIT) == "return 'dir'"
+	)
+	check("no flat sibling is created for the childless init folder", not fs.isFile(root .. "/" .. CHILDLESS_FLAT))
+	stopDaemon(daemon)
+end
+
 local function tokenRefused(root, port, log)
 	local init = process.exec(BIN, { "init", root })
 	if not init.ok then
@@ -434,6 +458,7 @@ local function main()
 		{ name = "hidden", run = hiddenNameRefused },
 		{ name = "other-place", run = otherPlaceRefused },
 		{ name = "token", run = tokenRefused },
+		{ name = "childless-init", run = childlessInitKept },
 	}
 	for _, scenarioEntry in extra do
 		local scenarioOk, scenarioErr = pcall(scenarioEntry.run, WORK .. "/" .. scenarioEntry.name, math.random(20000, 60000), WORK .. "/" .. scenarioEntry.name .. ".log")

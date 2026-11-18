@@ -5612,19 +5612,47 @@ suite("a 413 on /inventory warns once, and a second post in the same session is 
 	connection:stop()
 end)
 
-suite("a lone Dir/init.luau is listed under its Studio name, which the daemon maps to the held init path", function()
+suite("a lone Dir/init.luau is listed under the path the plugin wrote it to", function()
 	local client, posts = inventoryClient()
 	local tree, root = studioWorld(true)
 	local connection = attachedConnection(client, tree, root)
 	local applier = Apply.create(tree, connection:_echo())
 	connection.applying = true
-	applier:apply({ kind = "Create", direction = "ToStudio", path = "Dir/init.luau", class = "ModuleScript", content = "return 'dir'" })
+	connection:_applyPatch(applier, { kind = "Create", direction = "ToStudio", path = "Dir/init.luau", class = "ModuleScript", content = "return 'dir'" })
 	connection.applying = false
 	connection:_adoptPlacement()
 	connection:_postInventory("s1")
 	local listed: { string } = if posts[1] ~= nil then pathsOf(posts[1]) else {}
-	check("the inventory names the Studio path Dir.luau", table.find(listed, "Dir.luau") ~= nil, table.concat(listed, ","))
+	check("the inventory names the written path Dir/init.luau", table.find(listed, "Dir/init.luau") ~= nil, table.concat(listed, ","))
+	check("the inventory does not name the flat Dir.luau", table.find(listed, "Dir.luau") == nil, table.concat(listed, ","))
 	connection:stop()
+end)
+
+suite("a source edit to a childless Dir/init.luau upserts Dir/init.luau, not Dir.luau", function()
+	local client = inventoryClient()
+	local tree, root = studioWorld(true)
+	local connection = attachedConnection(client, tree, root)
+	local applier = Apply.create(tree, connection:_echo())
+	connection.applying = true
+	connection:_applyPatch(applier, { kind = "Create", direction = "ToStudio", path = "Dir/init.luau", class = "ModuleScript", content = "return 'dir'" })
+	connection.applying = false
+	local node = findByClass(root, "Dir", "ModuleScript")
+	tree.setSource(node, "return 'edited'")
+	connection:_onSourceChanged(node)
+	check("the source edit is queued under Dir/init.luau", connection.pendingPush["Dir/init.luau"] ~= nil)
+	check("the source edit is not queued under Dir.luau", connection.pendingPush["Dir.luau"] == nil)
+	connection:stop()
+end)
+
+suite("applying a patch returns the path it wrote and the node, and a delete returns nothing", function()
+	local tree, root, applier = freshApplier()
+	local written, node = applier:apply({ path = "Dir/init.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+	check("an init patch returns the init path it wrote", written == "Dir/init.luau", tostring(written))
+	check("an init patch returns the node it wrote", node ~= nil and node.Name == "Dir" and node.Parent == root)
+	local flatWritten = applier:apply({ path = "Flat.luau", class = "ModuleScript", kind = "Create", content = "return 2" })
+	check("a flat patch returns the flat path it wrote", flatWritten == "Flat.luau", tostring(flatWritten))
+	local deletedWritten, deletedNode = applier:apply({ path = "Flat.luau", class = "ModuleScript", kind = "Delete" })
+	check("a delete returns no path and no node", deletedWritten == nil and deletedNode == nil)
 end)
 
 suite("a rename followed by a removal in one window sends only Deletes", function()

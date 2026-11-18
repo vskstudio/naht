@@ -219,6 +219,19 @@ function Connection._echo(self)
 	}
 end
 
+function Connection._applyPatch(self, applier: any, patch: any): (boolean, any)
+	local ok, written, node = pcall(function()
+		return applier:apply(patch)
+	end)
+	if not ok then
+		return false, written
+	end
+	if written ~= nil then
+		self:_recordApplied(written, node)
+	end
+	return true, nil
+end
+
 function Connection._run(self, session: number)
 	while self:_isCurrent(session) do
 		self.onState("Connecting", nil)
@@ -298,9 +311,7 @@ function Connection._serve(self, session: number, sessionId: string)
 			if not self:_isCurrent(session) then
 				break
 			end
-			local ok, err = pcall(function()
-				applier:apply(patch)
-			end)
+			local ok, err = self:_applyPatch(applier, patch)
 			local source = "patch:" .. patch.path
 			if ok then
 				if not table.find(self.pendingAcks, patch.seq) then
