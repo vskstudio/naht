@@ -5831,6 +5831,106 @@ suite("a daemon without the inventory route sets an inventory Warning", function
 	connection:stop()
 end)
 
+suite("an inventory refused for a missing token asks for the token and is posted once it is submitted", function()
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local renamed = place(tree, "ModuleScript", "Renamed", root)
+	renamed.Source = "return 1"
+	local posts: { any } = {}
+	local tokenGiven = false
+	local connection: any = nil
+	connection = Connection.new({
+		info = function(_, _placeId)
+			return { project_name = "demo", session_id = "s1", terrain_sync = false, conflicted = {} }
+		end,
+		patches = function(_, _cursor)
+			connection:stop()
+			return { cursor = 0, patches = {} }
+		end,
+		postInventory = function(_, scripts, _sessionId)
+			if not tokenGiven then
+				error({ status = 401, message = Client.TOKEN_REQUIRED, tokenRefused = true })
+			end
+			table.insert(posts, scripts)
+			return true
+		end,
+		setToken = function(_, _token)
+			tokenGiven = true
+		end,
+		postAck = noop,
+	}, root, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	connection:start()
+
+	check("a 401 on /inventory asks for the token", lastStateOf(log) == "TokenRequired", lastStateOf(log))
+	local inventoryWarnings = 0
+	for _, entry in log do
+		if entry.state == "Warning" and string.find(entry.detail or "", "inventory", 1, true) ~= nil then
+			inventoryWarnings += 1
+		end
+	end
+	check("a 401 on /inventory raises no inventory Warning", inventoryWarnings == 0, tostring(inventoryWarnings))
+	check("no inventory is posted before the token is given", #posts == 0, tostring(#posts))
+
+	connection:submitToken("typed-token")
+	check("the typed token is handed to the client", tokenGiven)
+	check("the inventory is posted again once the token is submitted", #posts == 1, tostring(#posts))
+	check(
+		"the re-posted inventory lists the renamed script",
+		#posts == 1 and entryAt(posts[1], "Renamed.luau") ~= nil,
+		if #posts == 1 then table.concat(pathsOf(posts[1]), ",") else "no post"
+	)
+end)
+
+suite("a daemon that switches project reloads the stored token for the new project id", function()
+	local saved: { [string]: string } = { ["p-1"] = "token-one", ["p-2"] = "token-two" }
+	local store = {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, token: string)
+			saved[projectId] = token
+		end,
+	}
+	local serving = fromHex(GOLDEN.server_info)
+	local http = fakeHttp(function(options)
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			return reply(200, serving)
+		end
+		local presented = options.Headers["x-naht-token"]
+		if presented == "token-two" then
+			return reply(200, fromHex(GOLDEN.patch_batch))
+		end
+		if presented == nil then
+			return reply(401, '{"error": "token required"}')
+		end
+		return reply(401, '{"error": "token rejected"}')
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
+	client:info()
+	check("the first project takes its stored token", client.token == "token-one", tostring(client.token))
+
+	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
+	client:info()
+	check("the client now reports the second project", client.projectId == "p-2", tostring(client.projectId))
+	check("a daemon switch takes the token stored for the new project", client.token == "token-two", tostring(client.token))
+	local okSwitched = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check("a gated request to the switched daemon is accepted without a prompt", okSwitched)
+
+	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d33")))
+	client:info()
+	check("a project with no stored token leaves the token empty", client.token == nil, tostring(client.token))
+	local okUnstored, errUnstored = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check(
+		"a project with no stored token is prompted for the token",
+		not okUnstored and Support.isTokenRefusal(errUnstored) and errUnstored.message == Client.TOKEN_REQUIRED,
+		tostring(errUnstored)
+	)
+end)
+
 if failures > 0 then
 	error(string.format("%d harness check(s) failed", failures))
 end

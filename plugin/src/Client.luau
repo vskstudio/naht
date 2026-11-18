@@ -97,8 +97,9 @@ function Client.info(self: Client): any
 		error("naht: /info returned " .. tostring(response.StatusCode))
 	end
 	local info = Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
+	local switched = self.projectId ~= info.project_id
 	self.projectId = info.project_id
-	if self.token == nil and self.store ~= nil then
+	if self.store ~= nil and (self.token == nil or switched) then
 		self.token = self.store.load(info.project_id)
 	end
 	return info
