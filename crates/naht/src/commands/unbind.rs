@@ -1,18 +1,25 @@
 use std::path::Path;
 
 use super::CommandError;
-use super::files::open_store;
+use super::files::{canonical, open_store, state_db_path};
 use super::serve::take_instance_lock;
 
 /// Forget the Studio place this project is bound to, returning the place it was bound to, if any.
 ///
+/// A directory with no state database is not a project that ever ran, so nothing is created there.
+///
 /// # Errors
 ///
-/// Returns [`CommandError::AlreadyRunning`] while a daemon holds the instance lock, or a state
-/// error when the binding cannot be read or cleared.
+/// Returns [`CommandError::ProjectDir`] when the directory is missing,
+/// [`CommandError::AlreadyRunning`] while a daemon holds the instance lock, or a state error when
+/// the binding cannot be read or cleared.
 pub fn unbind(root: &Path) -> Result<Option<u64>, CommandError> {
-    let _instance = take_instance_lock(root)?;
-    let store = open_store(root)?;
+    let root = canonical(root)?;
+    if !state_db_path(&root).exists() {
+        return Ok(None);
+    }
+    let _instance = take_instance_lock(&root)?;
+    let store = open_store(&root)?;
     let bound = store.place_id()?;
     store.clear_place_id()?;
     Ok(bound)
@@ -20,6 +27,8 @@ pub fn unbind(root: &Path) -> Result<Option<u64>, CommandError> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -41,11 +50,35 @@ mod tests {
     #[test]
     fn unbind_refuses_while_a_daemon_holds_the_lock() {
         let root = tempfile::tempdir().unwrap();
+        open_store(root.path()).unwrap();
         let _daemon = take_instance_lock(root.path()).unwrap();
 
         assert!(matches!(
             unbind(root.path()),
             Err(CommandError::AlreadyRunning { .. })
         ));
+    }
+
+    #[test]
+    fn unbind_fails_on_a_missing_directory_as_serve_does() {
+        let parent = tempfile::tempdir().unwrap();
+        let missing = parent.path().join("nosuchdir");
+
+        assert!(matches!(
+            unbind(&missing),
+            Err(CommandError::ProjectDir { .. })
+        ));
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn unbind_creates_nothing_in_a_directory_without_state() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir(&src).unwrap();
+
+        assert_eq!(unbind(&src).unwrap(), None);
+        assert!(!src.join(".naht").exists());
+        assert!(!root.path().join(".naht").exists());
     }
 }
