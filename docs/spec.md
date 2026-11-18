@@ -40,7 +40,31 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   cursor (1-based seqs, strictly-greater filter: a consumer never re-sees its last event, and
   `buffer_start_seq` signals an eviction gap). Additive: no existing message shape changed. The
   protocol version was `1` when this shipped, `2` in v0.4.0 after the client headers became mandatory,
-  and is `3` now (see the protocol page). The Neublox adapter that consumes it lives outside this repo.
+  and is `4` in v0.5.0 (see the protocol page). The Neublox adapter that consumes it lives outside this repo.
+
+## Shipped: v0.5.0 (merged)
+
+- **Per project token** (#77): `naht serve` creates `.naht/token` (owner only on Unix, tightened to
+  `0600` if it is looser) and every route except the `GET /info` handshake requires it in
+  `x-naht-token`, so another local process can no longer read patches or post changes. `naht token`
+  prints it; the plugin asks for it once per project and keeps it in its settings. Protocol version 4:
+  the plugin and the daemon must be updated together.
+- **Configurable limits** (#77): a `[limits]` section in `naht.toml` sets the terrain size cap, the
+  inventory body limit, the mass deletion warning threshold and the connection cap, with today's values
+  as defaults; absurd values stop `naht serve` with a clear message. The plugin reads the limits from
+  the handshake. `naht serve` re-diffs the disk once at startup, so an edit made while no daemon ran
+  reaches Studio on the next attach.
+- **Studio renames, moves and live terrain** (#76): renames and reparents in Studio are written to disk,
+  and live terrain edits sync. On attach the plugin posts its placed script inventory, which only ever
+  applies detected renames and never deletes or overwrites a file.
+- **Place binding** (#76): a project binds to the first published place that attaches, and another place
+  is refused with a 403. Unpublished places never bind. `[serve] place_id` pins the place, and
+  `naht unbind` clears the binding without touching the rest of the state. A project shared between two
+  places is now refused.
+- **Daemon follow ups** (#75): a connection cap, emptied folders after resolve and pull, one portable
+  name rule for `[[tree]]` paths, and JSON refusals.
+- **Sync queue** (#74): acks by sequence, cursors kept across reconnects, and binary conflicts can be
+  resolved.
 
 ## Shipped: v0.4.0 (merged)
 
