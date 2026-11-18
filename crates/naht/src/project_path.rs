@@ -10,7 +10,7 @@ pub(crate) fn stays_inside_project(path: &Path) -> bool {
 }
 
 pub(crate) fn has_portable_tree_path(path: &str) -> bool {
-    !path.contains('\\') && path.split(['/', '\\']).all(is_portable_name)
+    !path.contains('\\') && path.split('/').all(is_portable_name)
 }
 
 fn is_portable_name(name: &str) -> bool {
