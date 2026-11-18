@@ -133,7 +133,7 @@ impl Gate {
                 Err(Refusal::forbidden("place id mismatch"))
             }
             Some(_) => Ok(()),
-            None if !authenticated => Ok(()),
+            None if !authenticated => self.refuse_other_bound_place(headers),
             None => {
                 if method == Method::POST
                     && !headers.contains_key(PLACE_ID_HEADER)
@@ -151,6 +151,22 @@ impl Gate {
             None => Err(Refusal::Unauthorized(TOKEN_REQUIRED)),
             Some(presented) if self.state.token().matches(presented.as_bytes()) => Ok(()),
             Some(_) => Err(Refusal::Unauthorized(TOKEN_REJECTED)),
+        }
+    }
+
+    fn refuse_other_bound_place(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+        let Some(bound) = self.state.bound_place.get() else {
+            return Ok(());
+        };
+        let Some(place_id) = requested_place_id(headers).map_err(Refusal::Forbidden)? else {
+            return Ok(());
+        };
+        if place_id == protocol::UNPUBLISHED_PLACE_ID {
+            Err(Refusal::Forbidden(unpublished_place_refused(*bound)))
+        } else if place_id == *bound {
+            Ok(())
+        } else {
+            Err(Refusal::Forbidden(place_bound_elsewhere(*bound, place_id)))
         }
     }
 

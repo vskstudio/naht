@@ -73,6 +73,17 @@ async fn a_tokenless_info_binds_no_place() {
 }
 
 #[tokio::test]
+async fn a_tokenless_info_from_another_place_is_refused_once_bound_and_binds_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+    assert_eq!(info(&state, Some("11")).await.0, StatusCode::OK);
+
+    assert_eq!(tokenless_info(&state, "22").await, StatusCode::FORBIDDEN);
+    assert_eq!(tokenless_info(&state, "11").await, StatusCode::OK);
+    assert_eq!(state.bound_place.get(), Some(&11));
+}
+
+#[tokio::test]
 async fn an_unconfigured_project_accepts_the_place_it_was_bound_to() {
     let root = tempfile::tempdir().unwrap();
     let state = bound_state(root.path());
