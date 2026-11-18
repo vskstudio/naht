@@ -1,7 +1,5 @@
 use std::fs;
-use std::io;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
 use naht_core::binary::BlobInstance;
 use naht_core::reconciler::{Direction, Patch, PatchKind};
@@ -9,6 +7,7 @@ use naht_core::state::StateStore;
 use tracing::subscriber::with_default;
 
 use crate::session::Session;
+use crate::test_logs::LogBuffer;
 
 fn session_in(root: &Path) -> Session {
     Session::new(
@@ -122,23 +121,9 @@ fn a_delivered_unacked_patch_is_redelivered_to_a_restarted_plugin() {
     assert_eq!(replay[0].patch.path, "A.luau");
 }
 
-#[derive(Clone, Default)]
-struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for CapturedLogs {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[test]
 fn a_duplicate_patch_is_not_logged_as_emitted_twice() {
-    let logs = CapturedLogs::default();
+    let logs = LogBuffer::default();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
         .with_writer({
@@ -161,7 +146,7 @@ fn a_duplicate_patch_is_not_logged_as_emitted_twice() {
         session.enqueue(patch);
     });
 
-    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    let text = logs.text();
     assert_eq!(text.matches("patch emitted").count(), 1);
     assert_eq!(session.queue.len(), 1);
 }
