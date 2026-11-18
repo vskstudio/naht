@@ -108,6 +108,9 @@ function PushQueue._flushPush(self, session: number)
 		if not owns or not self:_isCurrent(session) then
 			return
 		end
+		if not ok and self:_refuseToken(err) then
+			return
+		end
 		if ok then
 			self.pushBackoff = PUSH_RETRY
 			self.pushServerErrors = 0
@@ -211,6 +214,9 @@ function PushQueue._postEach(self, session: number, remaining: { [string]: any }
 	for _, unit in self:_units(remaining) do
 		local ok, err, owns = self:_postChanges(unit)
 		if not owns or not self:_isCurrent(session) then
+			return false
+		end
+		if not ok and self:_refuseToken(err) then
 			return false
 		end
 		if ok then

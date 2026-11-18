@@ -16,6 +16,7 @@ local Protocol = require("../src/Protocol").new(MessagePack)
 local Client = require("../src/Client")
 local Fingerprint = require("../src/Fingerprint")
 local Connection = require("../src/Connection")
+local Support = require("../src/Support")
 local fs = require("@lune/fs")
 local serde = require("@lune/serde")
 
@@ -78,11 +79,11 @@ local function noop() end
 
 suite("the server_info golden decodes to the expected fields and a matching version is accepted", function()
 	local info = MessagePack.decode(fromHex(GOLDEN.server_info))
-	check("server_info protocol_version", info.protocol_version == 3)
+	check("server_info protocol_version", info.protocol_version == 4)
 	check("server_info project_name", info.project_name == "demo")
 	check("server_info serve_place_id", info.serve_place_id == 123)
 	check("server_info daemon_id", info.daemon_id == "d-1")
-	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 3)
+	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 4)
 	check(
 		"mismatched protocol version is rejected",
 		not pcall(Protocol.assertCompatible, {
@@ -2128,7 +2129,7 @@ suite("a connect with a frozen path reports it as a Conflict and never Connected
 		connection = Connection.new(
 			{
 				info = function(_, _placeId)
-					return { protocol_version = 3, project_name = "demo", conflicted = { "Frozen.luau" } }
+					return { protocol_version = 4, project_name = "demo", conflicted = { "Frozen.luau" } }
 				end,
 				patches = function(_, _cursor)
 					connection:stop()
@@ -4779,6 +4780,176 @@ suite("an ack names its session and a 409 on /ack reports a changed session", fu
 	)
 end)
 
+suite("the client loads the saved token by the project id from /info and sends it on gated requests", function()
+	local saved: { [string]: string } = { ["p-1"] = "stored-token" }
+	local store = {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, token: string)
+			saved[projectId] = token
+		end,
+	}
+	local http = fakeHttp(function(options)
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			return reply(200, fromHex(GOLDEN.server_info))
+		end
+		return reply(200, fromHex(GOLDEN.patch_batch))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", 123, http, store)
+	client:info()
+	check("the client takes the saved token for the project id /info reports", client.token == "stored-token")
+	client:patches(0, "s1")
+	local sent = http.calls[#http.calls].Headers["x-naht-token"]
+	check("a gated request carries the saved token", sent == "stored-token", tostring(sent))
+	client:setToken("typed-token")
+	check("setToken saves the token under the project id", saved["p-1"] == "typed-token")
+end)
+
+suite("a 401 from the daemon is a token refusal that says whether the token was missing or wrong", function()
+	local missing = Client.new(
+		"http://127.0.0.1:34872",
+		123,
+		fakeHttp(function()
+			return reply(401, '{"error": "token required"}')
+		end)
+	)
+	local okMissing, errMissing = pcall(function()
+		missing:patches(0, "s1")
+	end)
+	check("a 401 without a token is a token refusal", not okMissing and Support.isTokenRefusal(errMissing))
+	check("a missing token asks for the token", not okMissing and errMissing.message == Client.TOKEN_REQUIRED)
+	local wrong = Client.new(
+		"http://127.0.0.1:34872",
+		123,
+		fakeHttp(function()
+			return reply(401, '{"error": "token rejected"}')
+		end)
+	)
+	local okWrong, errWrong = pcall(function()
+		wrong:patches(0, "s1")
+	end)
+	check("a 401 for a wrong token says the daemon rejected it", not okWrong and errWrong.message == Client.TOKEN_REJECTED)
+	check("a 401 is never classed as a transient failure", not Support.isTransientFailure(errWrong))
+end)
+
+suite("a token refusal on a poll stops the connection at TokenRequired without polling again", function()
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				if infos > 1 then
+					connection.running = false
+				end
+				return { project_name = "demo", session_id = "s1" }
+			end,
+			patches = function(_, _cursor)
+				error({ status = 401, message = Client.TOKEN_REQUIRED, tokenRefused = true })
+			end,
+		},
+		root,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_run(1)
+	local last = log[#log]
+	check("a token refusal on a poll reports TokenRequired", lastStateOf(log) == "TokenRequired", lastStateOf(log))
+	check("a token refusal shows the message to enter the token", last ~= nil and last.detail == Client.TOKEN_REQUIRED)
+	check("a token refusal does not reconnect silently", infos == 1, "info calls " .. tostring(infos))
+	check("a token refusal stops the connection", connection.running == false)
+end)
+
+suite("submitting a token restarts the connection with that token", function()
+	local _log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local stored: { string } = {}
+	local polls = 0
+	local runningAtInfo = false
+	local connection: any = nil
+	local client = {
+		setToken = function(_, token: string)
+			table.insert(stored, token)
+		end,
+		info = function(_, _placeId)
+			runningAtInfo = connection.running
+			return { project_name = "demo", session_id = "s1" }
+		end,
+		patches = function(_, _cursor)
+			polls += 1
+			connection:stop()
+			return { cursor = 0, patches = {} }
+		end,
+	}
+	connection = Connection.new(client, root, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	connection:submitToken("typed-token")
+	check("submitToken hands the token to the client", stored[1] == "typed-token")
+	check("submitToken starts the connection", runningAtInfo, tostring(runningAtInfo))
+	check("the restarted connection polls the daemon", polls == 1, "polls " .. tostring(polls))
+end)
+
+suite("a token refusal on a terrain push stops the push instead of retrying it", function()
+	local posts = 0
+	local connection: any = nil
+	connection = fakeConnection({
+		postBlobs = function(_, _changes)
+			posts += 1
+			if posts >= 2 then
+				connection.running = false
+			end
+			error({ status = 401, message = Client.TOKEN_REJECTED, tokenRefused = true })
+		end,
+	}, extentsTerrainWith(extentsRegion))
+	connection:_pushTerrain(1)
+	check("a token refusal on a terrain push is not retried", posts == 1, "posts " .. tostring(posts))
+	check("a token refusal on a terrain push stops the connection", connection.running == false)
+end)
+
+suite("a token refusal on a blob poll stops the blob loop instead of backing off", function()
+	local polls = 0
+	local connection: any = nil
+	connection = fakeConnection({
+		blobs = function(_, _cursor, _sessionId)
+			polls += 1
+			if polls >= 2 then
+				connection.running = false
+			end
+			error({ status = 401, message = Client.TOKEN_REQUIRED, tokenRefused = true })
+		end,
+	}, extentsTerrainWith(extentsRegion))
+	connection:_serveBlobs(1, "s1")
+	check("a token refusal on a blob poll is not polled again", polls == 1, "polls " .. tostring(polls))
+	check("a token refusal on a blob poll stops the connection", connection.running == false)
+end)
+
+suite("a token refusal on an ack keeps the ack queued and stops the connection", function()
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(
+		{
+			postAck = function(_, _seqs, _sessionId)
+				error({ status = 401, message = Client.TOKEN_REJECTED, tokenRefused = true })
+			end,
+		},
+		root,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	local kept = connection:_ack(1, { 7 }, "s1")
+	check("a token refusal on an ack keeps it queued", kept[1] == 7)
+	check("a token refusal on an ack stops the connection", connection.running == false)
+	check("a token refusal on an ack reports TokenRequired", lastStateOf(log) == "TokenRequired", lastStateOf(log))
+end)
+
 suite("the client sends the headers on every request and reports an outdated plugin", function()
 	local function answerEverything(options)
 		if string.find(options.Url, "/info", 1, true) then
@@ -4956,7 +5127,7 @@ suite("an incompatible protocol version is terminal and names the side to update
 	connection:stop()
 	check("an incompatible daemon detaches the Studio listeners", root.DescendantAdded:count() == 0)
 
-	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 4 }))
+	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 5 }))
 	check(
 		"a newer daemon tells the user to update the naht plugin",
 		string.find(tostring(newerDaemon), "update the naht plugin", 1, true) ~= nil
@@ -5037,7 +5208,7 @@ suite("a poll names the session it handshook with, and a 409 sends the plugin ba
 			return reply(
 				200,
 				MessagePack.encode({
-					protocol_version = 3,
+					protocol_version = 4,
 					server_version = "0.1.0",
 					project_name = "demo",
 					session_id = if infos == 1 then "s1" else "s2",

@@ -164,7 +164,7 @@ function Connection.start(self)
 	end)
 end
 
-function Connection._terminate(self, detail: string?)
+function Connection._halt(self, state: State, detail: string?)
 	self.running = false
 	self.session += 1
 	self.epoch += 1
@@ -176,7 +176,24 @@ function Connection._terminate(self, detail: string?)
 	self.warnings = {}
 	self.conflicts = {}
 	self:_detachStudio()
-	self.onState("Disconnected", detail)
+	self.onState(state, detail)
+end
+
+function Connection._terminate(self, detail: string?)
+	self:_halt("Disconnected", detail)
+end
+
+function Connection._refuseToken(self, err: any): boolean
+	if not Support.isTokenRefusal(err) then
+		return false
+	end
+	self:_halt("TokenRequired", failureMessage(err))
+	return true
+end
+
+function Connection.submitToken(self, token: string)
+	self.client:setToken(token)
+	self:start()
 end
 
 function Connection.stop(self)
@@ -243,6 +260,9 @@ function Connection._run(self, session: number)
 			break
 		end
 		if not ok then
+			if self:_refuseToken(err) then
+				break
+			end
 			if Client.isTerminalError(tostring(err)) then
 				self:_terminate(tostring(err))
 				break
@@ -341,6 +361,9 @@ function Connection._ack(self, session: number, seqs: { number }, sessionId: str
 		self.ackBackoff = ACK_BACKOFF_START
 		self:_clearWarning("ack")
 		return {}
+	end
+	if self:_refuseToken(err) then
+		return seqs
 	end
 	if Client.isSessionChanged(tostring(err)) then
 		error(err, 0)

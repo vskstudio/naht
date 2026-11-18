@@ -8,6 +8,8 @@ export type ServerInfo = {
 	serve_place_id: number?,
 	conflicted: { string }?,
 	limits: { terrain_voxels: number }?,
+	project_id: string,
+	token_required: boolean?,
 }
 
 export type Patch = {
@@ -62,12 +64,13 @@ export type Codec = {
 	binary: (bytes: string) -> any,
 }
 
-local PROTOCOL_VERSION = 3
+local PROTOCOL_VERSION = 4
 
 local function new(MessagePack: Codec)
 	local Protocol = {}
 
 	Protocol.PROTOCOL_VERSION = PROTOCOL_VERSION
+	Protocol.TOKEN_HEADER = "x-naht-token"
 	Protocol.OUTDATED_PLUGIN_TOKEN = "outdated-plugin"
 	Protocol.INCOMPATIBLE_VERSION = "naht: incompatible protocol version"
 

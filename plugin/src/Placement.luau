@@ -302,7 +302,7 @@ function Placement._postInventory(self, sessionId: string)
 	end
 	local ok, posted = pcall(self.client.postInventory, self.client, scripts, sessionId)
 	if not ok then
-		if Support.isTransientFailure(posted) then
+		if Support.isTransientFailure(posted) or Support.isTokenRefusal(posted) then
 			error(posted, 0)
 		end
 		self.inventorySession = sessionId

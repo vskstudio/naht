@@ -22,6 +22,10 @@ function Support.isTransientFailure(err: any): boolean
 	return TRANSIENT_STATUSES[err.status] == true
 end
 
+function Support.isTokenRefusal(err: any): boolean
+	return type(err) == "table" and err.tokenRefused == true
+end
+
 function Support.failureMessage(err: any): string
 	if type(err) == "table" then
 		return tostring(err.message)
