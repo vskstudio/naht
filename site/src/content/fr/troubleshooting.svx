@@ -21,6 +21,17 @@ clair et une correction claire.
    requêtes. C'est une propriété verrouillée par sécurité. Règle-la dans les **Game Settings**, pas depuis un script. Voir
    [Terrain & assets](#/docs/terrain-assets).
 
+## « token required » ou « token rejected » (401)
+
+Chaque requête sauf `GET /info` doit porter le token du projet. Le plugin le demande une seule fois par projet et le
+garde dans les réglages du plugin. Un 401 veut dire que le daemon n'a pas reçu un token qu'il accepte :
+
+- **« token required »** : le plugin n'a envoyé aucun token. Lance `naht token` dans le projet, puis saisis la valeur
+  affichée dans le plugin et valide avec Entrée.
+- **« token rejected »** : la valeur ne correspond pas à `.naht/token`, par exemple après la suppression puis la
+  recréation de ce fichier. Lance `naht token` dans ce projet et saisis la valeur affichée. Le plugin te la redemande à la
+  prochaine tentative.
+
 ## Port déjà utilisé
 
 Un autre daemon (ou un autre outil, comme Rojo et Naht qui partagent le défaut `34872`) est sur le port. Soit tu l'arrêtes,

@@ -21,6 +21,16 @@ signal and a clear fix.
    requests. It is a security-locked property. Set it in **Game Settings**, not from a script. See
    [Terrain & assets](#/docs/terrain-assets).
 
+## "token required" or "token rejected" (401)
+
+Every request except `GET /info` must carry the project's token. The plugin asks for it once per project and
+stores it in the plugin settings. A 401 means the daemon did not receive a token it accepts:
+
+- **"token required"**: the plugin sent no token. Run `naht token` in the project, then enter the value it prints
+  in the plugin and press Enter.
+- **"token rejected"**: the value does not match `.naht/token`, for example after that file was deleted and made
+  again. Run `naht token` in this project and enter the value it prints. The plugin asks again on the next attempt.
+
 ## Port already in use
 
 Another daemon (or another tool, since Rojo and Naht share the default `34872`) is on the port. Either stop
