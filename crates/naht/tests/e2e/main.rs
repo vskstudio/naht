@@ -20,6 +20,7 @@ use tokio::time::sleep;
 mod adoption;
 mod instances;
 mod limits;
+mod offline;
 mod pull;
 #[cfg(test)]
 #[path = "../wire/mod.rs"]

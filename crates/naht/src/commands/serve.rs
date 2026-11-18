@@ -74,6 +74,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
             .filter_map(|node| node.path.as_deref())
             .map(PathBuf::from),
     )?;
+    session.rescan()?;
     let daemon_id = session.daemon_id().to_owned();
     let state = AppState::new(session, LONG_POLL, loaded.token);
     state
