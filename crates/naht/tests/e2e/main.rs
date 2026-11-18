@@ -16,6 +16,7 @@ use reqwest::Client;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
+mod adoption;
 mod instances;
 #[cfg(test)]
 #[path = "../wire/mod.rs"]
@@ -56,6 +57,7 @@ struct Daemon {
     client: Client,
     quick: Client,
     base: String,
+    port: u16,
     session: String,
 }
 
@@ -71,7 +73,13 @@ impl Daemon {
 
     async fn try_start(root: &Path) -> Option<Self> {
         let _starting = DAEMON_STARTS.lock().await;
-        let port = free_port();
+        let mut daemon = Self::spawn(root, free_port());
+        let session = daemon.wait_ready(root).await?;
+        daemon.session = session;
+        Some(daemon)
+    }
+
+    fn spawn(root: &Path, port: u16) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_naht"))
             .arg("serve")
             .arg(root)
@@ -81,25 +89,24 @@ impl Daemon {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let mut daemon = Self {
+        Self {
             child,
             client: Client::new(),
             quick: Client::builder().timeout(PENDING_WINDOW).build().unwrap(),
             base: format!("http://{}:{port}", Ipv4Addr::LOCALHOST),
+            port,
             session: String::new(),
-        };
-        let session = daemon.wait_ready().await?;
-        daemon.session = session;
-        Some(daemon)
+        }
     }
 
-    async fn wait_ready(&mut self) -> Option<String> {
+    async fn wait_ready(&mut self, root: &Path) -> Option<String> {
         let started = Instant::now();
         loop {
             if self.child.try_wait().unwrap().is_some() {
                 return None;
             }
-            if let Ok(resp) = wire::heartbeat(&self.client, &self.base).await
+            if adoption::names_port(root, self.port)
+                && let Ok(resp) = wire::heartbeat(&self.client, &self.base).await
                 && resp.status().is_success()
             {
                 let pong: Pong = wire::decode(resp).await;
