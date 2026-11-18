@@ -83,6 +83,14 @@ pub enum CommandError {
         /// The path as written in the project configuration.
         path: String,
     },
+    /// A `[[tree]]` source path, or a migrated Rojo `$path`, names a Windows device or a forbidden character.
+    #[error(
+        "`[[tree]]` path `{path}` names a Windows device or a character Windows forbids in file names"
+    )]
+    TreePathNotPortable {
+        /// The path as written in the project configuration.
+        path: String,
+    },
     /// A Rojo project file is not valid JSON for the fields Naht migrates.
     #[error("cannot parse the Rojo project `{}`", path.display())]
     RojoParse {

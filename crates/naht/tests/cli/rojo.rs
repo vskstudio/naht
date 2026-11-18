@@ -1,4 +1,4 @@
-use naht::commands;
+use naht::commands::{self, CommandError};
 
 use super::support::{child, property, read_place, service};
 use rbx_dom_weak::types::Variant;
@@ -208,5 +208,48 @@ fn build_rejects_a_tree_path_that_leaves_the_project_through_a_symlink() -> io::
 
     commands::build(&root, &place).expect_err("a symlink leaving the project is refused");
     assert!(!place.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn build_rejects_a_tree_path_naming_a_windows_device() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = project_with_a_sibling_outside_the_root(dir.path())?;
+    fs::create_dir_all(root.join("src").join("NUL"))?;
+    fs::write(root.join("src").join("NUL").join("Mod.luau"), "return 1")?;
+    tree_config(&root, "src/NUL")?;
+    let place = dir.path().join("game.rbxl");
+
+    assert!(matches!(
+        commands::build(&root, &place),
+        Err(CommandError::TreePathNotPortable { .. })
+    ));
+    assert!(!place.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn from_rojo_rejects_a_path_naming_a_windows_device() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().join("game");
+    fs::create_dir_all(root.join("src").join("CON"))?;
+    fs::write(
+        root.join("default.project.json"),
+        r#"{
+            "name": "Game",
+            "tree": {
+                "$className": "DataModel",
+                "ReplicatedStorage": { "Shared": { "$path": "src/CON" } }
+            }
+        }"#,
+    )?;
+
+    assert!(matches!(
+        commands::init(&root, true),
+        Err(CommandError::TreePathNotPortable { .. })
+    ));
+    assert!(!root.join("naht.toml").exists());
     Ok(())
 }

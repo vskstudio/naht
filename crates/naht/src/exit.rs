@@ -53,6 +53,7 @@ impl From<&CommandError> for Exit {
             CommandError::Tree { .. }
             | CommandError::RojoParse { .. }
             | CommandError::TreePathOutsideRoot { .. }
+            | CommandError::TreePathNotPortable { .. }
             | CommandError::Build(_)
             | CommandError::ReleaseMismatch { .. }
             | CommandError::Reconcile(
