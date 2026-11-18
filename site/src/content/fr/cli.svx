@@ -60,6 +60,18 @@ Demande à un daemon **en cours d'exécution** de re-synchroniser maintenant, pl
 naht pull
 ```
 
+## `naht unbind [path]`
+
+Oublie la place Studio à laquelle ce projet est rattaché, pour que la prochaine place qui se connecte le rattache à
+nouveau. La première place publiée qui se connecte est enregistrée, et le daemon refuse toute autre place tant
+qu'elle n'est pas effacée. Seule la place enregistrée est effacée : les bases, les conflits et le cache des assets
+restent. La commande refuse d'agir tant que `naht serve` tourne pour ce projet, donc arrête d'abord le daemon. Un
+`[serve] place_id` dans `naht.toml` prime, quelle que soit la place enregistrée.
+
+```sh
+naht unbind
+```
+
 ## `naht build [path] -o <out>`
 
 Construit le projet en un fichier model ou place Roblox. L'extension choisit le format : `.rbxm`/`.rbxmx`

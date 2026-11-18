@@ -29,6 +29,12 @@ export type Change = {
 	content: string?,
 }
 
+export type InventoryEntry = {
+	path: string,
+	class: string,
+	hash: string,
+}
+
 export type BlobInstance = {
 	path: string,
 	class: string,
@@ -112,6 +118,18 @@ local function new(MessagePack: Codec)
 
 	function Protocol.delete(path: string): Change
 		return { kind = "Delete", path = path }
+	end
+
+	function Protocol.encodeInventory(scripts: { InventoryEntry }): string
+		local wire = {}
+		for _, script in scripts do
+			table.insert(wire, {
+				path = script.path,
+				class = script.class,
+				hash = script.hash,
+			})
+		end
+		return MessagePack.encode({ scripts = MessagePack.array(wire) })
 	end
 
 	function Protocol.encodeAck(seqs: { number }): string

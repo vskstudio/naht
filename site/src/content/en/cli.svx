@@ -63,6 +63,18 @@ is refused in these cases, and the message says why:
 naht pull
 ```
 
+## `naht unbind [path]`
+
+Forget the Studio place this project is bound to, so the next place that attaches binds the project again.
+The first published place that attaches is recorded, and a daemon refuses any other place until it is cleared.
+Only the recorded place is cleared: the bases, the conflicts and the asset cache stay. The command refuses while
+`naht serve` runs for this project, so stop the daemon first. A `[serve] place_id` in `naht.toml` governs
+regardless of the recorded place.
+
+```sh
+naht unbind
+```
+
 ## `naht build [path] -o <out>`
 
 Build the project into a Roblox model or place file. The extension picks the format: `.rbxm`/`.rbxmx`

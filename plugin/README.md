@@ -11,10 +11,13 @@ mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core)
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec for the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Terrain.luau` | Read/write terrain voxels (`ReadVoxels`/`WriteVoxels`) as an opaque binary blob |
-| `src/Connection.luau` | Handshake, long-poll + apply, edit push, reconnect with backoff |
+| `src/Connection.luau` | Handshake, long-poll + apply, reconnect with backoff, posts the inventory on attach |
+| `src/TerrainSync.luau` | Terrain push and the `/blobs` channel, used only when `terrain_sync` is on |
+| `src/Placement.luau` | Maps DataModel scripts to file paths, queues renames, moves and removals, builds the inventory |
+| `src/PushQueue.luau` | Batches queued edits into `POST /changes`, retries after a failure and drops the paths the daemon refuses |
 | `src/Plugin.server.luau` | Entry: toolbar toggle and a status widget |
 
 ## Install
@@ -43,6 +46,18 @@ Behaviour notes:
   `ModuleScript`) and never creates folders to hold it. A delete for a missing parent does nothing.
 - An applied patch is not echoed back. Only a Studio edit that changes a script's source is pushed, and
   reverting a source to the value the daemon last sent is pushed as a real edit.
+- A rename of an instance, or a move of it to another parent inside the synced tree, is sent as one batch: a
+  `Delete` of the old path and an `Upsert` of the new path. Renaming a folder sends that pair for every script
+  under it, in the same batch. The plugin records the path the daemon holds for each instance, so a second
+  rename deletes the file the daemon actually has. If the daemon refuses the new path, the old file is kept and
+  the whole move is dropped, never half-applied.
+- With `[serve] terrain_sync = true`, a sculpt in Studio is pushed when a `ChangeHistoryService` waypoint is
+  added. The push waits one second after the last waypoint, so a burst of strokes sends one blob. A voxel blob
+  equal to the last one pushed or read back is never sent, and a blob the plugin has just applied from the daemon
+  is never pushed back. Failures, backoff and the 1,048,576 voxel cap are the same as for the initial snapshot.
+- A terrain blob for any path other than `Terrain.terrain` is skipped with a `Warning`,
+  `terrain blob for <path> skipped, only Terrain.terrain is synced`. Its content is never written over the
+  terrain, and the blob cursor advances past it.
 - An upsert matches an existing child by name and expected class. A same-named script of another class
   is replaced (its children move to the new script). A same-named non-script (a `Folder`, for example)
   is a sibling and never blocks the patch: `Foo/` and `Foo.luau` coexist, the way the daemon writes them.
@@ -111,9 +126,12 @@ Behaviour notes:
   other status is not retried: the widget shows `Warning` with `ack refused: <reason>` until Stop, and those
   paths are dropped from the unacked list.
 
-Every request carries `x-naht-client: plugin` and `x-naht-place-id` (the id of the open place). The
+Every request carries `x-naht-client: plugin` and `x-naht-place-id` (the id of the open place, read on each request, so a publish during a session needs no reconnect). The
 daemon answers `403` to a request without the client header, with a body that starts with the token
-`outdated-plugin`, and to a place id that differs from the project's `servePlaceId` when one is set. A plugin
+`outdated-plugin`, and to a place id that differs from the project's `servePlaceId` when one is set. Without a
+`servePlaceId`, it also answers `403` to a malformed place id, to a `POST` without the place id once the project is
+bound, to a place id other than the bound one, and to place id `0` (an unpublished place) once the project is bound.
+The body names the reason. A plugin
 built for protocol version 1 sends no client header and does not know that token: it keeps showing
 `Reconnecting` with the 403 reason, so update the plugin to match the daemon (protocol version 2). Only a
 plugin built for version 2 stops at `Disconnected` with the update message.
@@ -163,8 +181,15 @@ Setup: `naht init demo`, `naht serve` in the project, install the plugin, enable
 5. **Terrain sync** (with `[serve] terrain_sync = true` in `naht.toml`). Sculpt terrain in Studio,
    then change the synced `.terrain` blob on disk.
    - *Expected:* terrain changes propagate each way as an opaque voxel blob; a change on both sides
-     freezes the blob path like any binary conflict (no silent overwrite).
+     freezes the blob path like any binary conflict (no silent overwrite). A sculpt reaches the `.terrain`
+     file on disk about a second after the last stroke, without a reconnect.
 6. **Reconnect re-diff.** Kill `naht serve` (the widget shows `Reconnecting`), edit a file on disk
    while it is down, then restart `naht serve`.
    - *Expected:* the plugin reconnects with backoff and the daemon re-diffs against its persisted
      state: the offline edit syncs, and nothing already in sync is re-clobbered.
+7. **Rename in Studio.** Rename a synced `ModuleScript`, then rename it again.
+   - *Expected:* after each rename the old file is gone from disk and the new file holds the same source. Only
+     one file exists for the script at any time, and a folder rename moves every script under it.
+   - *Expected when refused:* a rename onto a path another script already holds, or onto a Windows device name such as `CON`, is refused with a warning that names the path. The file on disk is not overwritten, and the script keeps the file it had.
+8. **Rename while the plugin is stopped.** Stop the plugin (turn Naht Sync off, or close Studio), rename a synced `ModuleScript` in the place, then turn the plugin on again.
+   - *Expected:* on attach the plugin posts its listing, and the daemon removes the old file and writes the new one with the same source. Against a daemon that predates `/inventory`, the widget shows a warning to update naht, and the old file stays until naht is updated.

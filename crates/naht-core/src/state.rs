@@ -16,6 +16,8 @@ use std::time::Duration;
 
 #[cfg(test)]
 mod busy_tests;
+#[cfg(test)]
+mod place_id_tests;
 mod schema;
 #[cfg(test)]
 mod schema_tests;
@@ -29,6 +31,8 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 const PROJECT_ID_KEY: &str = "project_id";
+
+const PLACE_ID_KEY: &str = "place_id";
 
 /// Errors from the state store.
 #[derive(Debug, thiserror::Error)]
@@ -147,6 +151,48 @@ impl StateStore {
                 |row| row.get(0),
             )
             .optional()?)
+    }
+
+    /// Record the Studio place this project is bound to, overwriting any prior value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the place id cannot be written.
+    pub fn set_place_id(&self, place_id: u64) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (PLACE_ID_KEY, place_id.to_string()),
+        )?;
+        Ok(())
+    }
+
+    /// Forget the Studio place this project is bound to, so the next attach binds it again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the place id cannot be cleared.
+    pub fn clear_place_id(&self) -> Result<(), StateError> {
+        self.conn
+            .execute("DELETE FROM meta WHERE key = ?1", [PLACE_ID_KEY])?;
+        Ok(())
+    }
+
+    /// The Studio place this project is bound to, if one was recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the place id cannot be read.
+    pub fn place_id(&self) -> Result<Option<u64>, StateError> {
+        let stored: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [PLACE_ID_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(stored.and_then(|value| value.parse().ok()))
     }
 
     /// Insert or replace the base for one instance.

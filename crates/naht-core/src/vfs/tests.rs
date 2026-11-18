@@ -168,3 +168,30 @@ fn names_that_only_start_with_a_device_name_are_accepted() {
     assert_eq!(validate_source_path("CONSOLE.luau"), Ok(()));
     assert_eq!(validate_source_path("Comment.luau"), Ok(()));
 }
+
+#[test]
+fn rename_moves_a_file_over_the_one_at_the_target() {
+    let mut vfs = MemoryVfs::new()
+        .with_file("src/foo.luau", "new")
+        .with_file("src/Foo.luau", "old");
+    vfs.rename(Path::new("src/foo.luau"), Path::new("src/Foo.luau"))
+        .unwrap();
+    assert!(!vfs.exists(Path::new("src/foo.luau")));
+    assert_eq!(vfs.read(Path::new("src/Foo.luau")).unwrap(), b"new");
+}
+
+#[test]
+fn rename_refuses_a_directory_on_either_side() {
+    let mut vfs = MemoryVfs::new()
+        .with_file("src/Folder/A.luau", "a")
+        .with_file("src/plain.luau", "p");
+    assert!(matches!(
+        vfs.rename(Path::new("src/Folder"), Path::new("src/Moved")),
+        Err(VfsError::NotAFile(_))
+    ));
+    assert!(matches!(
+        vfs.rename(Path::new("src/plain.luau"), Path::new("src/Folder")),
+        Err(VfsError::NotAFile(_))
+    ));
+    assert!(vfs.exists(Path::new("src/plain.luau")));
+}

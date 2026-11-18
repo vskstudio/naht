@@ -43,6 +43,10 @@ poussée vers Studio ni écrasée par le terrain.
 Une exception : un fichier à la racine dont le nom ne diffère de `Terrain.terrain` que par la casse, comme `terrain.terrain`, arrête entièrement la synchronisation du terrain. `naht serve` laisse les deux copies intactes et écrit un avertissement dans le journal. Renomme ce fichier en `Terrain.terrain`, ou supprime-le si `Terrain.terrain` existe déjà, avant que le terrain ne se synchronise de nouveau.
 
 Pour libérer un terrain gelé, garde un côté avec `naht resolve --keep disk|studio` (voir [Conflits](#/docs/conflicts)).
+
+Pendant que Studio est connecté, un sculptage part en direct, pas seulement à la connexion. Le plugin pousse le terrain
+quand Studio ajoute un point d'annulation, dès qu'aucun nouveau point n'est arrivé depuis une seconde, et seulement si
+les voxels diffèrent du dernier blob envoyé ou reçu. Un blob venu du daemon n'est jamais renvoyé.
 <Callout type="note">
 
 Quand `terrain_sync` est **désactivé** (le défaut), le terrain est simplement signalé comme non synchronisé : rapporté, pas

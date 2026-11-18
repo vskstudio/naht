@@ -5,12 +5,21 @@ local task = require("@lune/task")
 
 local Protocol = require("../src/Protocol").new(require("../src/MessagePack"))
 local Client = require("../src/Client")
+local Fingerprint = require("../src/Fingerprint")
 
 local BIN = process.env.NAHT_BIN or "target/debug/naht"
 local PLACE_ID = 1
 local FILE = "src/A.luau"
 local STUDIO_FILE = "src/B.luau"
 local CREATED_FILE = "src/C.luau"
+local RENAME_FROM = "src/RenameOld.luau"
+local RENAME_TO = "src/RenameNew.luau"
+local UNSAVED_FILE = "src/Old.luau"
+local UNSAVED_NEW = "src/New.luau"
+local KEEP_FILE = "src/Keep.luau"
+local HIDDEN_FILE = "src/.Hidden.luau"
+local OTHER_FILE = "src/Other.luau"
+local OTHER_PLACE_ID = 999
 local READY_ATTEMPTS = 300
 local STOP_ATTEMPTS = 300
 local EDIT_ATTEMPTS = 3
@@ -102,7 +111,7 @@ local function startDaemon(root, port, log)
 	table.insert(daemons, daemon)
 	for _ = 1, READY_ATTEMPTS do
 		if isAlive(base) then
-			daemon.client = Client.new(base, PLACE_ID, httpBridge())
+			daemon.client = Client.new(base, function(): number return PLACE_ID end, httpBridge())
 			return daemon
 		end
 		task.wait(TICK)
@@ -212,7 +221,146 @@ local function scenario(root, port, log)
 	check("a restart emits no delete", countDeletes(replay) == 0)
 	ackAll(second.client, restarted.session_id, replay)
 
+	second.client:postChanges({ Protocol.upsert(RENAME_FROM, "ModuleScript", "return 5") })
+	check("the file to rename is written to disk", fs.isFile(root .. "/" .. RENAME_FROM))
+
+	second.client:postChanges({
+		Protocol.delete(RENAME_FROM),
+		Protocol.upsert(RENAME_TO, "ModuleScript", "return 5"),
+	})
+	check("a rename batch removes the old file from disk", not fs.isFile(root .. "/" .. RENAME_FROM))
+	check(
+		"a rename batch writes the new file to disk",
+		fs.isFile(root .. "/" .. RENAME_TO) and fs.readFile(root .. "/" .. RENAME_TO) == "return 5"
+	)
+
 	stopDaemon(second)
+end
+
+local function entryOf(path: string, content: string)
+	return { path = path, class = "ModuleScript", hash = Fingerprint.source(content) }
+end
+
+local function renamedWhileStopped(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeFile(root .. "/" .. RENAME_FROM, "return 6")
+
+	local first = startDaemon(root, port, log)
+	local info = first.client:info()
+	local initial = first.client:patches(0, info.session_id)
+	ackAll(first.client, info.session_id, initial)
+	stopDaemon(first)
+
+	local second = startDaemon(root, port, log)
+	local restarted = second.client:info()
+	second.client:postInventory({ entryOf(RENAME_TO, "return 6") }, restarted.session_id)
+	check("an inventory removes the file renamed while the plugin was stopped", not fs.isFile(root .. "/" .. RENAME_FROM))
+	check(
+		"an inventory writes the renamed file under its new path",
+		fs.isFile(root .. "/" .. RENAME_TO) and fs.readFile(root .. "/" .. RENAME_TO) == "return 6"
+	)
+	stopDaemon(second)
+end
+
+local function unsavedEdits(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeFile(root .. "/" .. UNSAVED_FILE, "v1")
+
+	local daemon = startDaemon(root, port, log)
+	local info = daemon.client:info()
+	local initial = daemon.client:patches(0, info.session_id)
+	ackAll(daemon.client, info.session_id, initial)
+	local cursor = initial.cursor
+
+	fs.writeFile(root .. "/" .. UNSAVED_NEW, "written in the editor")
+	local created = awaitPatch(daemon.client, info.session_id, cursor, UNSAVED_NEW, "written in the editor")
+	check("a file written in the editor reaches the plugin", created ~= nil)
+	if created ~= nil then
+		ackAll(daemon.client, info.session_id, created)
+		cursor = created.cursor
+	end
+	task.wait(0.3)
+
+	fs.writeFile(root .. "/" .. UNSAVED_FILE, "v2 edited in the editor")
+	local edited = awaitPatch(daemon.client, info.session_id, cursor, UNSAVED_FILE, "v2 edited in the editor")
+	check("an edit made in the editor reaches the plugin", edited ~= nil)
+	if edited ~= nil then
+		ackAll(daemon.client, info.session_id, edited)
+	end
+	task.wait(0.3)
+
+	local accepted, err = pcall(daemon.client.postInventory, daemon.client, { entryOf(UNSAVED_FILE, "v1") }, info.session_id)
+	check("the daemon accepts an inventory of the place as last saved", accepted and err ~= false, tostring(err))
+	check(
+		"an inventory of the place as last saved keeps the file written in the editor",
+		fs.isFile(root .. "/" .. UNSAVED_NEW) and fs.readFile(root .. "/" .. UNSAVED_NEW) == "written in the editor"
+	)
+	check(
+		"an inventory of the place as last saved does not overwrite the editor's edit",
+		fs.isFile(root .. "/" .. UNSAVED_FILE) and fs.readFile(root .. "/" .. UNSAVED_FILE) == "v2 edited in the editor"
+	)
+	stopDaemon(daemon)
+end
+
+local function hiddenNameRefused(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeFile(root .. "/" .. KEEP_FILE, "return 1")
+
+	local daemon = startDaemon(root, port, log)
+	local info = daemon.client:info()
+	local ok, err = pcall(daemon.client.postInventory, daemon.client, {
+		entryOf(KEEP_FILE, "return 1"),
+		entryOf(HIDDEN_FILE, "return 2"),
+	}, info.session_id)
+	check(
+		"the daemon refuses an inventory that names a hidden script with a 400",
+		not ok and type(err) == "table" and err.status == 400,
+		tostring(if type(err) == "table" then err.status else err)
+	)
+	check(
+		"the hidden name is named in the refusal",
+		not ok and type(err) == "table" and type(err.refused) == "table" and table.find(err.refused, HIDDEN_FILE) ~= nil,
+		if type(err) == "table" and type(err.refused) == "table" then table.concat(err.refused, ",") else tostring(err)
+	)
+	check("the refusal leaves the existing file on disk", fs.isFile(root .. "/" .. KEEP_FILE))
+	stopDaemon(daemon)
+end
+
+local function otherPlaceRefused(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeFile(root .. "/" .. KEEP_FILE, "return 1")
+
+	local bound = startDaemon(root, port, log)
+	local boundInfo = bound.client:info()
+	bound.client:postInventory({ entryOf(KEEP_FILE, "return 1") }, boundInfo.session_id)
+	stopDaemon(bound)
+
+	local other = startDaemon(root, math.random(20000, 60000), log)
+	local otherClient = Client.new(other.base, function(): number return OTHER_PLACE_ID end, httpBridge())
+	local infoOk, infoErr = pcall(otherClient.info, otherClient)
+	check(
+		"a session from a place the project is not bound to is refused at the handshake",
+		not infoOk and string.find(tostring(infoErr), "bound to place 1", 1, true) ~= nil,
+		tostring(infoErr)
+	)
+	check("the refusal leaves the bound place's file on disk", fs.isFile(root .. "/" .. KEEP_FILE))
+	stopDaemon(other)
 end
 
 local function main()
@@ -224,6 +372,22 @@ local function main()
 	local ok, err = pcall(scenario, root, port, log)
 	if not ok then
 		check("the daemon scenario ran to completion", false, tostring(err))
+	end
+	local renamedLog = WORK .. "/renamed.log"
+	local renamedOk, renamedErr = pcall(renamedWhileStopped, WORK .. "/renamed", math.random(20000, 60000), renamedLog)
+	if not renamedOk then
+		check("the rename-while-stopped scenario ran to completion", false, tostring(renamedErr))
+	end
+	local extra = {
+		{ name = "unsaved", run = unsavedEdits },
+		{ name = "hidden", run = hiddenNameRefused },
+		{ name = "other-place", run = otherPlaceRefused },
+	}
+	for _, scenarioEntry in extra do
+		local scenarioOk, scenarioErr = pcall(scenarioEntry.run, WORK .. "/" .. scenarioEntry.name, math.random(20000, 60000), WORK .. "/" .. scenarioEntry.name .. ".log")
+		if not scenarioOk then
+			check(scenarioEntry.name .. " scenario ran to completion", false, tostring(scenarioErr))
+		end
 	end
 	for _, daemon in daemons do
 		pcall(stopDaemon, daemon)

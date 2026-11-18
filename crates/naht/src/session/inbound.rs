@@ -6,10 +6,10 @@ use naht_core::mapper::{flat_init_path, init_flat_path, init_folder};
 use naht_core::protocol::{Change, EventKind, Outcome};
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::InstanceRecord;
-use naht_core::vfs::Vfs;
+use naht_core::vfs::{EntryKind, Vfs, VfsError};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn remove_emptied_dirs_in<V: Vfs>(vfs: &mut V, journal: &mut Option<Journal>, dirs: &[&Path]) {
     for dir in dirs {
@@ -23,7 +23,54 @@ fn remove_emptied_dirs_in<V: Vfs>(vfs: &mut V, journal: &mut Option<Journal>, di
     }
 }
 
-impl Session {
+fn is_case_only_rename(from: &str, to: &str) -> bool {
+    from != to && from.to_lowercase() == to.to_lowercase()
+}
+
+fn case_only_folder_steps(from: &str, to: &str) -> Vec<(String, String)> {
+    let from_parts: Vec<&str> = from.split('/').collect();
+    let to_parts: Vec<&str> = to.split('/').collect();
+    let folders = from_parts.len().saturating_sub(1);
+    let mut steps = Vec::new();
+    let mut prefix: Vec<&str> = Vec::new();
+    for (&from_part, &to_part) in from_parts.iter().zip(&to_parts).take(folders) {
+        let mut source = prefix.clone();
+        source.push(from_part);
+        prefix.push(to_part);
+        if from_part != to_part {
+            steps.push((source.join("/"), prefix.join("/")));
+        }
+    }
+    steps
+}
+
+fn leaf_on_disk(from: &str, to: &str) -> PathBuf {
+    let target = Path::new(to);
+    Path::new(from)
+        .file_name()
+        .map_or_else(|| target.to_path_buf(), |name| target.with_file_name(name))
+}
+
+fn move_folder<V: Vfs>(
+    journaled: &mut Journaled<'_, V>,
+    from: &Path,
+    to: &Path,
+) -> Result<(), VfsError> {
+    journaled.create_dir(to)?;
+    for entry in journaled.list(from)? {
+        let Some(name) = entry.path.file_name() else {
+            continue;
+        };
+        let destination = to.join(name);
+        match entry.kind {
+            EntryKind::Dir => move_folder(journaled, &entry.path, &destination)?,
+            EntryKind::File => journaled.rename(&entry.path, &destination)?,
+        }
+    }
+    journaled.remove_if_emptied(from)
+}
+
+impl<V: Vfs> Session<V> {
     /// Apply a batch of Studio-side edits to the mirror, then reconcile against the current
     /// filesystem. Filesystem writes (and conflict markers) are performed by the reconciler.
     ///
@@ -37,6 +84,10 @@ impl Session {
         batch.remove_emptied_dirs(&deleted);
         batch.commit();
         Ok(())
+    }
+
+    pub(super) fn has_pending_patch(&self, path: &str) -> bool {
+        self.queue.contains_key(path) || self.unacked.contains_key(path)
     }
 
     pub(super) fn remove_emptied_dirs(&mut self, deleted: &[String]) {
@@ -79,6 +130,8 @@ impl Session {
                 }
             }
         }
+        let renamed = self.rename_case_only_pairs(&removals, &upserts)?;
+        removals.retain(|path| !renamed.contains(path));
         let upserted: BTreeSet<String> = upserts.iter().map(|(path, _, _)| path.clone()).collect();
         let deleted: BTreeSet<String> = removals.iter().cloned().collect();
         let mut resolved_upserts = BTreeSet::new();
@@ -100,6 +153,98 @@ impl Session {
             emptied.push(path);
         }
         Ok(emptied)
+    }
+
+    fn rename_case_only_pairs(
+        &mut self,
+        removals: &[String],
+        upserts: &[(String, String, String)],
+    ) -> Result<BTreeSet<String>, SessionError> {
+        let mut renamed = BTreeSet::new();
+        let mut moved_folders = BTreeSet::new();
+        for old in removals {
+            let target = upserts
+                .iter()
+                .map(|(path, _, _)| path.as_str())
+                .find(|new| is_case_only_rename(old, new));
+            if let Some(new) = target
+                && self.rename_case_only(old, new, &mut moved_folders)?
+            {
+                renamed.insert(old.clone());
+            }
+        }
+        Ok(renamed)
+    }
+
+    fn rename_case_only(
+        &mut self,
+        from: &str,
+        to: &str,
+        moved_folders: &mut BTreeSet<String>,
+    ) -> Result<bool, SessionError> {
+        let frozen = self
+            .store
+            .get(from)?
+            .is_some_and(|record| record.conflicted);
+        if frozen || !self.vfs.exists(Path::new(from)) || self.leaf_taken(from, to)? {
+            return Ok(false);
+        }
+        for (source, target) in case_only_folder_steps(from, to) {
+            if moved_folders.insert(target.clone()) {
+                self.move_case_only_folder(&source, &target)?;
+            }
+        }
+        let on_disk = leaf_on_disk(from, to);
+        if on_disk != Path::new(to) {
+            Journaled {
+                inner: &mut self.vfs,
+                journal: &mut self.journal,
+            }
+            .rename(&on_disk, Path::new(to))?;
+        }
+        reconciler::move_base(&self.store, from, to)?;
+        self.write_studio(from.to_owned(), None);
+        Ok(true)
+    }
+
+    fn move_case_only_folder(&mut self, from: &str, to: &str) -> Result<(), SessionError> {
+        let scratch = format!("{from}.naht-case-rename");
+        if self.vfs.exists(Path::new(&scratch)) || self.has_entry_named(Path::new(to))? {
+            return Err(SessionError::FolderRenameBlocked {
+                from: from.to_owned(),
+                to: to.to_owned(),
+            });
+        }
+        let mut journaled = Journaled {
+            inner: &mut self.vfs,
+            journal: &mut self.journal,
+        };
+        move_folder(&mut journaled, Path::new(from), Path::new(&scratch))?;
+        move_folder(&mut journaled, Path::new(&scratch), Path::new(to))?;
+        Ok(())
+    }
+
+    fn leaf_taken(&self, from: &str, to: &str) -> Result<bool, SessionError> {
+        let from_path = Path::new(from);
+        let to_path = Path::new(to);
+        match (from_path.file_name(), to_path.file_name()) {
+            (Some(from_leaf), Some(to_leaf)) if from_leaf != to_leaf => {
+                self.has_entry_named(&from_path.with_file_name(to_leaf))
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn has_entry_named(&self, path: &Path) -> Result<bool, SessionError> {
+        let parent = path.parent().unwrap_or(Path::new(""));
+        if !parent.as_os_str().is_empty() && !self.vfs.exists(parent) {
+            return Ok(false);
+        }
+        Ok(self
+            .vfs
+            .list(parent)?
+            .iter()
+            .any(|entry| entry.path.as_path() == path))
     }
 
     fn batch_target(

@@ -131,6 +131,24 @@ pub fn set_base(
     advance_base(store, path, class, content)
 }
 
+/// Move the persisted base of `from` to `to`, for a rename that changes only the case of the name.
+///
+/// # Errors
+///
+/// Returns an error when the state store cannot be read or written.
+pub fn move_base(store: &StateStore, from: &str, to: &str) -> Result<(), ReconcileError> {
+    let Some(record) = store.get(from)? else {
+        return Ok(());
+    };
+    store.remove(from)?;
+    store.upsert(&InstanceRecord {
+        guid: to.to_owned(),
+        path: to.to_owned(),
+        ..record
+    })?;
+    Ok(())
+}
+
 pub(super) fn advance_base(
     store: &StateStore,
     path: &str,

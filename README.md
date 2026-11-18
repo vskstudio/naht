@@ -42,6 +42,7 @@ naht status [path]          # list paths frozen by a conflict
 naht resolve <path>         # clear a text conflict once its markers are gone; a frozen binary needs --keep disk|studio
 naht build [path] -o out.rbxm   # build a model (.rbxm/.rbxmx) or place (.rbxl/.rbxlx); --watch to rebuild on change
 naht pull [path]            # ask a running daemon to re-sync now
+naht unbind [path]          # forget the Studio place this project is bound to (refused while serve runs)
 naht package-plugin -o naht-plugin.rbxmx   # package the Studio plugin into an installable model
 ```
 

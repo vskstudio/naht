@@ -1,5 +1,4 @@
 use super::*;
-use std::path::PathBuf;
 
 fn read(root: &Path, path: &str) -> String {
     fs::read_to_string(root.join(path)).unwrap()

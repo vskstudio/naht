@@ -13,6 +13,7 @@ mod pull;
 mod release;
 mod rojo;
 mod serve;
+mod unbind;
 
 pub use build::{Built, build, build_watch, spawn_build_watcher};
 pub use error::CommandError;
@@ -22,3 +23,4 @@ pub use pull::{ResyncOutcome, pull, resync_running};
 pub use release::{check_release_version, package_plugin};
 pub use rojo::migrate_from_rojo;
 pub use serve::serve;
+pub use unbind::unbind;

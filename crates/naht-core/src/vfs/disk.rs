@@ -172,6 +172,19 @@ impl Vfs for DiskVfs {
         })
     }
 
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<(), VfsError> {
+        if is_symlink(from) {
+            return Err(VfsError::Symlink(from.to_path_buf()));
+        }
+        if matches!(self.kind(from), Ok(EntryKind::Dir)) {
+            return Err(VfsError::NotAFile(from.to_path_buf()));
+        }
+        fs::rename(from, to).map_err(|source| VfsError::Io {
+            path: from.to_path_buf(),
+            source,
+        })
+    }
+
     fn exists(&self, path: &Path) -> bool {
         path.exists()
     }

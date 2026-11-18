@@ -18,8 +18,9 @@ These come from the Roblox Studio plugin API and shape every decision:
    plugin only speaks HTTP to `localhost`.
 3. **`HttpService` is request/response only**: no server push, no WebSocket client. The plugin must
    *initiate* every exchange (long-poll). The daemon can never spontaneously push to Studio.
-4. **Property/type coverage is incomplete**: terrain, CSG geometry, `MeshPart.MeshId` binary data,
-   and security-locked properties like `HttpService.HttpEnabled` cannot round-trip live. See
+4. **Property/type coverage is incomplete**: CSG geometry, `MeshPart.MeshId` binary data,
+   and security-locked properties like `HttpService.HttpEnabled` cannot round-trip live. Terrain is the
+   exception: it crosses as an opaque voxel blob on its own channel. See
    [§9 Limits & workarounds](#9-limits--workarounds).
 5. **Assets (meshes, images, audio) are cloud uploads, not files**: a sync tool references an asset
    id; it does not sync pixels.
@@ -129,7 +130,7 @@ instances only the hash is stored (no merge base).
   is isolated behind the `serde` protocol types so it can be swapped (e.g. protobuf) later without a
   rewrite. We do not pursue gRPC (needs HTTP/2, unsupported by `HttpService`).
 - **Endpoints:** `GET /info` (handshake), `GET /patches` (long-poll, held
-  open until a change or timeout), `POST /changes` (Studio → FS), `GET /blobs` + `POST /blobs` (the
+  open until a change or timeout), `POST /changes` (Studio → FS), `POST /inventory` (the plugin's full script listing, once per session on attach), `GET /blobs` + `POST /blobs` (the
   binary terrain channel: a separate long-poll/push pair, kept apart from the text patch channel
   because blobs are synced opaquely with no diff/merge), `POST /ack` (the plugin confirms, by queue
   sequence, which patches it applied; an acked patch leaves the queue), `GET /heartbeat` (liveness ping), `GET /activity` (read-only live sync feed:
@@ -139,13 +140,17 @@ instances only the hash is stored (no merge base).
   the session id from `GET /info`. Without it the daemon answers `400`. With another session's id (the daemon
   restarted since the plugin read it) it answers `409`, the plugin re-handshakes, and the request changes nothing.
   An ack from a previous session settles no patch.
+- **Inventory (protocol 3, additive):** `POST /inventory?session=<id>` takes `{scripts: [{path, class, hash}]}`, where `path` is the path the plugin placed the script at (its reconciled path, not the Studio name when a rename was refused), `class` is the script class and `hash` is the source fingerprint (`naht_core::hash::source_fingerprint`, mirrored in `plugin/src/Fingerprint.luau`). The plugin posts it once per session, on attach. The daemon applies only rename pairs: a listed path the mirror lacks is paired with an unlisted mirror path of the same class and fingerprint, and the pair becomes a delete of the old path plus an upsert of the new one, so a rename made while the plugin was stopped leaves no old file. A listed path the mirror holds with another class or content is left alone, and creates and deletes without a partner are left alone and counted in one info line. A path with a queued or unacked patch is skipped, an empty listing changes nothing, and another session's id is answered `409`. A listed path the daemon refuses (`400`, naming it) fails the post, and the plugin reports it as a warning and carries on to `/patches`. A body over the 64 MiB limit is answered `413`, which the plugin also reports once per session without retrying. The route is additive: no protocol-version bump, and a daemon that predates it answers `404`, which the plugin reports as a warning.
 - **Trust boundary:** one middleware gates every route before any handler runs, and answers `403`
   when the request carries an `Origin` header, when its `Host` is not exactly one of `127.0.0.1:<port>`,
   `localhost:<port>` or `[::1]:<port>` (this stops a web page or a DNS-rebinding host from reading or
   writing through the daemon), when `x-naht-client` is missing or empty (a custom header forces a browser
   preflight that the daemon never answers), or, when `servePlaceId` is set, when `x-naht-place-id` is
-  missing or differs. The 403 body names the reason, and for a missing client header it starts with the token
-  `outdated-plugin`. `POST /changes` accepts only visible paths the mapper turns into a Studio script: a batch
+  missing, malformed or differs. Without `servePlaceId`, a request is also refused with `403` when its
+  `x-naht-place-id` is malformed, when a `POST` omits the header once the project is bound to a place, or when
+  the header names another place than the bound one (`bound to place N, not M`). A header naming place `0`, an
+  unpublished place, is refused once the project is bound and accepted without binding while it is not (§11).
+  The 403 body names the reason, and for a missing client header it starts with the token `outdated-plugin`. `POST /changes` accepts only visible paths the mapper turns into a Studio script: a batch
   with any refused change is refused whole, answered `400` with `{"refused_paths": [...]}` naming every refused
   path, and nothing in it is written; a batch with every change accepted is answered `200` with an empty body.
   `POST /blobs` accepts only `Terrain.terrain` at the project root; a batch naming any other path is `400`
@@ -225,7 +230,7 @@ lives in the final stage of [`spec.md`](spec.md).
 | Case | Status | Approach |
 |---|---|---|
 | **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, `naht build` alone uploads a *local* mesh/image file once via **Open Cloud**, caches it by the BLAKE3 digest of its bytes, and rewrites its property to `rbxassetid://…`; `sync` and `serve` never upload and leave references as written. Only properties that Roblox reflection types as Content are uploaded; a local file named by any other property is reported and left as written. Off by default. Stage 12. |
-| **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob: hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on, for `Terrain.terrain` at the project root only; `serve` ignores every other `.terrain` file. Stages 11, 13. |
+| **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob: hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on, for `Terrain.terrain` at the project root only; `serve` ignores every other `.terrain` file. A sculpt is pushed live on the next `ChangeHistoryService` waypoint after a 1 s debounce; an unchanged blob is never pushed, and a blob just applied from the daemon is never pushed back. Stages 11, 13. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
 
@@ -257,8 +262,32 @@ not a v1 blocker.
   do the same. Follow-up, not implemented: a per-daemon secret that the plugin presents on every request,
   or a peer-credential check on a Unix domain socket (`SO_PEERCRED`) that accepts only the owning
   account's processes. Either one closes the gap for shared machines.
-- **The place guard is a safety check (open).** `servePlaceId` stops a session bound to the wrong place
-  from syncing, but the place id is a value the client sends, so it is not a credential.
+- **The place guard is a safety check (open).** `[serve] place_id` stops a session bound to the wrong place
+  from syncing, but the place id is a value the client sends, so it is not a credential. Without `[serve] place_id`
+  the daemon binds the project to the first place that attaches (recorded in `.naht/state.db`) and refuses any other
+  with a message naming both ids. The binding is not a credential either: a first attach to the wrong place binds
+  the project to it, and the fix is `naht unbind` (or set `[serve] place_id`). `naht unbind` clears only the recorded
+  place, under the daemon lock, because deleting `.naht/state.db` would also drop the bases, the recorded conflicts
+  and the asset cache. Once a place is recorded,
+  every `POST` (`/changes`, `/blobs`, `/inventory`, `/ack`) without an `x-naht-place-id` header is refused with `403`,
+  so omitting the header cannot write into a bound project (`a_write_without_a_place_header_is_refused_once_a_place_is_bound`,
+  `a_write_without_a_place_header_is_refused_after_a_restart`). `GET` routes without the header stay open, which covers
+  `naht pull` (it reads `/info` without the header). `GET /patches` still hands queued Studio-bound patches to any local
+  client that passes the Host and Origin checks, so a local process can read the project's source through it; the
+  place guard does not restrict reads. The shipped plugin always sends the header.
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
+- **Place 0 is never bound.** Studio reports place id `0` until a place is published, and every unpublished place
+  reports it, so the daemon cannot tell them apart and never records it. An unbound project accepts a request for
+  place `0` without binding, so an unpublished place can attach before it is published; a bound project refuses it
+  with `403`. `[serve] place_id = 0` is a config error.
+- **A live rename from an unsaved Studio session is reverted on disk (open).** A rename synced live from a session
+  that is never saved looks, at the next attach, like a rename made while the plugin was stopped, so the inventory
+  pairs it and moves the file back to its old name. The content is preserved. This follows from the pairing rule in
+  §7 and is accepted.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.
+- **The inventory applies renames only (open).** A script created in Studio while the plugin was stopped is not written to disk, and a script deleted in Studio while the plugin was stopped stays on disk. Both are left alone and counted in one info line on the `naht::sync` target. Applying them would make Studio authoritative over the disk, which discards unsaved editor work (§7 rules that out).
+- **A folder renamed while the plugin was stopped moves only the scripts it can pair (open).** Each listed script is paired with an unlisted mirror script of the same class and fingerprint. A script whose content also changed, or that was deleted in Studio at the same time, is not paired: its old file stays under the old folder, the new Studio content is not written at attach, and the next edit in Studio writes it under the new path, so the old file has to be removed by hand.
+- **A folder case-only rename onto a folder spelled differently is refused (open).** On a case-insensitive disk, renaming `Utils` to `utils` in Studio moves the folder through a scratch name. When the disk already holds another folder that folds to the same name, the batch fails with `FolderRenameBlocked` and rolls back. The case-only folder rule is tested with a case-folding fake Vfs, not on a real case-insensitive volume in CI. A check on a vfat image showed that `rename(2)` to a case variant is a no-op on Linux, so the behaviour on macOS and Windows is reasoned, not measured.
+- **A body over 64 MiB is not chunked (open).** `POST /inventory` answers `413` for such a body, and the plugin skips the inventory for that session with a warning, so the next attach retries. Chunking was rejected: a rename pair can span two chunks, and a later chunk would then be read as a claim against a mirror entry an earlier chunk had paired.
+- **A script whose name starts with `.` is not synced (open).** The plugin refuses such names (`isSafeName`), and the daemon refuses hidden components on write (`validate_source_path`), although the project path rule accepts them. The script is not written to disk and the plugin warns once.

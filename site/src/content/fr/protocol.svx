@@ -22,6 +22,7 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 | `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Déclenche un re-diff contre l'état persisté à la (re)connexion. |
 | `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. Exige le paramètre de requête `session`. |
 | `POST /changes` | Éditions Studio → système de fichiers (un lot d'upserts/deletes). |
+| `POST /inventory` | Liste complète des scripts du plugin, envoyée une fois par session à l'attachement. Le daemon retire les scripts miroir que la liste ne nomme pas et écrit ceux qu'il n'a pas, si bien qu'un renommage fait pendant l'arrêt du plugin ne laisse pas d'ancien fichier. Exige le paramètre de requête `session`. Additif : pas de hausse de version de protocole. |
 | `GET /blobs` | Long-poll pour le canal **blob terrain** (daemon → Studio). Gardé séparé de `/patches` parce que les blobs se synchronisent de façon opaque, sans diff/merge. Le curseur fait office d'acquittement : les patches de blob en file sous ce curseur sont retirés. Exige le paramètre de requête `session`. |
 | `POST /blobs` | Changements de blob Studio → daemon (voxels de terrain). |
 | `POST /ack` | Le plugin confirme, par numéro de séquence, quels patches il a réellement appliqués. Gate l'avancée de la base. Exige le paramètre de requête `session`. |
@@ -36,7 +37,11 @@ Le daemon vérifie chaque route avant son handler. Une requête reçoit `403` qu
   rattachent un nom DNS à l'adresse de bouclage (DNS rebinding) ;
 - elle n'a pas le header `x-naht-client`. Un navigateur ne peut pas envoyer un header personnalisé à une autre
   origine sans preflight, et le daemon n'en répond jamais ;
-- le projet définit `[serve] place_id` et le header `x-naht-place-id` manque ou diffère.
+- le projet définit `[serve] place_id` et le header `x-naht-place-id` manque ou diffère ;
+- le projet n'a pas de `[serve] place_id` et il est rattaché à une place : un `POST` sans le header
+  `x-naht-place-id`, un header qui nomme une autre place, ou un header qui nomme la place `0` (une place non
+  publiée) est refusé. Un projet non rattaché accepte la place `0` sans l'enregistrer ;
+- le header `x-naht-place-id` est mal formé.
 
 Ces contrôles arrêtent les navigateurs et le DNS rebinding. Ce ne sont pas une authentification : tout processus
 de la machine qui atteint le port et envoie les headers est accepté. Sur une machine partagée, c'est donc le

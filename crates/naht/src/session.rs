@@ -13,6 +13,7 @@
 //! performed) advance the base immediately, since they are already durable.
 
 mod inbound;
+mod inventory;
 mod queue;
 mod rescan;
 mod state;
@@ -23,7 +24,7 @@ use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::SyncEvent;
 use naht_core::reconciler::{Patch, ReconcileError, TextInstance};
 use naht_core::state::{StateError, StateStore};
-use naht_core::vfs::{DiskVfs, RootedVfs, VfsError};
+use naht_core::vfs::{DiskVfs, RootedVfs, Vfs, VfsError};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -51,6 +52,25 @@ pub enum SessionError {
         /// The source root as configured.
         path: PathBuf,
     },
+    /// This project's state is bound to another Studio place, so attaching `requested` is refused.
+    #[error(
+        "this project is bound to place {bound}, not {requested}: set [serve] place_id = {requested} in naht.toml to accept place {requested}, or run `naht unbind` to reset the binding"
+    )]
+    PlaceBoundElsewhere {
+        /// The place the project state was first attached to.
+        bound: u64,
+        /// The place that tried to attach.
+        requested: u64,
+    },
+    /// A folder case-only rename cannot move `from` to `to`, because the target or its scratch name
+    /// is already taken. The batch is rolled back.
+    #[error("cannot rename folder `{from}` to `{to}`: the target is already taken")]
+    FolderRenameBlocked {
+        /// The folder as it is on disk.
+        from: String,
+        /// The spelling the folder should take.
+        to: String,
+    },
 }
 
 const PROJECT_ROOT: &str = "";
@@ -61,8 +81,8 @@ const ACTIVITY_CAP: usize = 256;
 
 /// One running sync session.
 #[derive(Debug)]
-pub struct Session {
-    vfs: RootedVfs<DiskVfs>,
+pub struct Session<V: Vfs = DiskVfs> {
+    vfs: RootedVfs<V>,
     store: StateStore,
     /// The last-known Studio side, keyed by project-relative path. Advances on ack, never on send.
     studio: BTreeMap<String, TextInstance>,
@@ -90,6 +110,7 @@ pub struct Session {
     id: String,
     daemon_id: String,
     serve_place_id: Option<u64>,
+    recorded_place: Option<u64>,
     terrain_sync: bool,
 }
 

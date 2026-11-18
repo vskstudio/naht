@@ -14,12 +14,13 @@ local Apply = require("../src/Apply")
 local Terrain = require("../src/Terrain")
 local Protocol = require("../src/Protocol").new(MessagePack)
 local Client = require("../src/Client")
+local Fingerprint = require("../src/Fingerprint")
 local Connection = require("../src/Connection")
 local fs = require("@lune/fs")
 local serde = require("@lune/serde")
 
 local GOLDEN = {
-	server_info = "87b070726f746f636f6c5f76657273696f6e03ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490",
+	server_info = "88b070726f746f636f6c5f76657273696f6e03ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490ac7465727261696e5f73796e63c2",
 	patch_batch = "82a6637572736f7202a7706174636865739186a373657101a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
 	change_batch = "81a76368616e6765739281a655707365727483a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a7636f6e74656e74a872657475726e203281a644656c65746581a470617468aa7372632f422e6c756175",
 	blob_patch_batch = "82a6637572736f7201a7706174636865739185a470617468af5465727261696e2e7465727261696ea5636c617373a75465727261696ea9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74c4050001ff807f",
@@ -307,19 +308,47 @@ end
 local SCRIPT_CLASSES = { Script = true, LocalScript = true, ModuleScript = true }
 
 local function newNode(className: string, name: string): any
+	local signals = { Name = signal(), Source = signal() }
+	local properties = { Name = name }
 	local node: any = {
 		ClassName = className,
-		Name = name,
 		Source = "",
 		Parent = nil,
 		children = {},
-		sourceChanged = signal(),
+		sourceChanged = signals.Source,
 	}
-	node.GetPropertyChangedSignal = function(_, _property)
-		return node.sourceChanged
+	setmetatable(node, {
+		__index = function(_, key)
+			if key == "Name" then
+				return properties.Name
+			end
+			return nil
+		end,
+		__newindex = function(target, key, value)
+			if key == "Name" then
+				properties.Name = value
+				signals.Name:Fire()
+			else
+				rawset(target, key, value)
+			end
+		end,
+	})
+	node.GetPropertyChangedSignal = function(_, property)
+		return signals[property] or signal()
 	end
 	node.GetChildren = function(self)
 		return table.clone(self.children)
+	end
+	node.GetDescendants = function(self)
+		local list = {}
+		local function visit(current)
+			for _, child in current.children do
+				table.insert(list, child)
+				visit(child)
+			end
+		end
+		visit(self)
+		return list
 	end
 	return node
 end
@@ -328,17 +357,6 @@ local function studioWorld(syncEcho: boolean)
 	local root: any = newNode("Folder", "root")
 	root.DescendantAdded = signal()
 	root.DescendantRemoving = signal()
-	root.GetDescendants = function(self)
-		local list = {}
-		local function visit(node)
-			for _, child in node.children do
-				table.insert(list, child)
-				visit(child)
-			end
-		end
-		visit(self)
-		return list
-	end
 	local queued: { any } = {}
 	local function detach(node)
 		local parent = node.Parent
@@ -351,6 +369,28 @@ local function studioWorld(syncEcho: boolean)
 			end
 		end
 		node.Parent = nil
+	end
+	local function fireRemoving(current: any)
+		root.DescendantRemoving:Fire(current)
+		for _, child in current.children do
+			fireRemoving(child)
+		end
+	end
+	local function fireAdded(current: any)
+		root.DescendantAdded:Fire(current)
+		for _, child in current.children do
+			fireAdded(child)
+		end
+	end
+	local function isUnderRoot(node: any): boolean
+		local current: any = node
+		while current ~= nil do
+			if current == root then
+				return true
+			end
+			current = current.Parent
+		end
+		return false
 	end
 	local tree = {
 		root = root,
@@ -382,10 +422,15 @@ local function studioWorld(syncEcho: boolean)
 			return node.Source
 		end,
 		setParent = function(node: any, parent: any)
+			if isUnderRoot(node) then
+				fireRemoving(node)
+			end
 			detach(node)
 			node.Parent = parent
 			table.insert(parent.children, node)
-			root.DescendantAdded:Fire(node)
+			if isUnderRoot(node) then
+				fireAdded(node)
+			end
 		end,
 		setSource = function(node: any, content: string)
 			if not SCRIPT_CLASSES[node.ClassName] then
@@ -399,12 +444,6 @@ local function studioWorld(syncEcho: boolean)
 			end
 		end,
 		destroy = function(node: any)
-			local function fireRemoving(current: any)
-				root.DescendantRemoving:Fire(current)
-				for _, child in current.children do
-					fireRemoving(child)
-				end
-			end
 			fireRemoving(node)
 			detach(node)
 		end,
@@ -697,11 +736,30 @@ local function extentsTerrainWith(region: any, onRead: ((any) -> ())?, onWrite: 
 	}
 end
 
+local function memoryTerrain(initial: number, region: any?)
+	local state = { value = initial }
+	local terrain = {
+		state = state,
+		MaxExtents = {
+			ExpandToGrid = function(_, _resolution)
+				return region or extentsRegion
+			end,
+		},
+		ReadVoxels = function(_, _readRegion, _resolution)
+			return { { { { Value = state.value } } } }, { { { 0.5 } } }
+		end,
+		WriteVoxels = function(_, _writeRegion, _resolution, materials, _occupancies)
+			state.value = materials[1][1][1]
+		end,
+	}
+	return terrain
+end
+
 local function blobPatchOf(content: string)
 	return { kind = "Upsert", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain", content = content }
 end
 
-local function deps(terrain: any, tree: any?)
+local function deps(terrain: any, tree: any?, history: any?)
 	return {
 		terrain = terrain,
 		tree = tree,
@@ -709,6 +767,7 @@ local function deps(terrain: any, tree: any?)
 		protocol = Protocol,
 		terrainBlob = Terrain,
 		delay = function(_, _fire) end,
+		history = history,
 	}
 end
 
@@ -939,6 +998,7 @@ suite("stop during a patch poll applies nothing", function()
 						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
 					}
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths)
 					acks += 1
 				end,
@@ -1148,6 +1208,7 @@ suite("a stop during apply leaves the patch cursor where it was", function()
 						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1308,6 +1369,7 @@ suite("a restarted daemon session drops the acks it was still owed", function()
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
+			postInventory = function() return true end,
 			postAck = function(_, seqs, _sessionId)
 				for _, seq in seqs do
 					table.insert(ackedSeqs, seq)
@@ -1348,6 +1410,7 @@ suite("an ack is sent with the session the plugin is attached to", function()
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
+			postInventory = function() return true end,
 			postAck = function(_, _seqs, sessionId)
 				ackedSession = sessionId
 			end,
@@ -1384,6 +1447,7 @@ suite("a daemon restart during an ack reconnects instead of retrying the ack", f
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
+			postInventory = function() return true end,
 			postAck = function(_, _seqs, _sessionId)
 				ackCalls += 1
 				if ackCalls > 2 then
@@ -1573,6 +1637,7 @@ suite("a rejected text patch holds the cursor at its seq so the next poll asks f
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function() end,
 			},
 			root,
@@ -1607,6 +1672,7 @@ suite("a rejected text patch sets a Warning naming the path and reason", functio
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, paths)
 					table.insert(acks, paths)
 				end,
@@ -1649,6 +1715,7 @@ suite("a rejected patch that later applies ends in Connected", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1682,6 +1749,7 @@ suite("a conflict plus a success in one batch ends in Conflict", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1720,6 +1788,7 @@ suite("a later success on the conflicted path ends the Conflict", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1794,15 +1863,18 @@ suite("the newest terrain snapshot arrives last across an epoch change", functio
 				end
 				table.insert(arrivals, call)
 			end,
+			postInventory = function() return true end,
 			postAck = function() end,
 		}
-		local connection = Connection.new(client, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local terrain = memoryTerrain(1)
+		local connection = Connection.new(client, root, noop, deps(terrain, tree))
 		connection.running = true
 		connection.epoch = 1
 		task.spawn(function()
 			connection:_pushTerrain(1)
 		end)
 		task.wait(0.01)
+		terrain.state.value = 2
 		connection.epoch = 2
 		task.spawn(function()
 			connection:_pushTerrain(2)
@@ -2011,6 +2083,7 @@ suite("a 503 on ack keeps the applied paths and retries them", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, paths)
 					ackAttempts += 1
 					if ackAttempts == 1 then
@@ -2148,6 +2221,7 @@ suite("a stop between patch poll and apply writes nothing", function()
 						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths)
 					acks += 1
 				end,
@@ -2454,6 +2528,7 @@ local function echoConnection(syncEcho: boolean)
 				end
 				error("stop")
 			end,
+			postInventory = function() return true end,
 			postAck = function(_, _paths) end,
 		},
 		root,
@@ -2494,6 +2569,664 @@ suite("a script with children is named by its init file, the way the daemon writ
 				"made " .. tostring(made and made.ClassName)
 			)
 		end
+end)
+
+local TOO_LARGE = "terrain too large for live push, use naht build"
+
+local function recordingClient(refuse: ((any) -> ())?)
+	local posts: { { any } } = {}
+	local attempts: { { any } } = {}
+	local client = {
+		postChanges = function(_, changes)
+			table.insert(attempts, changes)
+			if refuse ~= nil then
+				refuse(changes)
+			end
+			table.insert(posts, changes)
+		end,
+		postInventory = function() return true end,
+		postAck = noop,
+	}
+	return client, posts, attempts
+end
+
+local function hasChange(batch: { any }, kind: string, path: string): boolean
+	for _, change in batch do
+		if change.kind == kind and change.path == path then
+			return true
+		end
+	end
+	return false
+end
+
+local function anyChange(posts: { { any } }, kind: string, path: string): boolean
+	for _, batch in posts do
+		if hasChange(batch, kind, path) then
+			return true
+		end
+	end
+	return false
+end
+
+local function renameWorld(client: any)
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(client, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_attachStudio()
+	return connection, tree, root
+end
+
+suite("renaming a tracked script sends its old path's Delete and its new path's Upsert in one batch", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "New"
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"renaming a script deletes its old file and upserts its new file in one batch",
+			#attempts == 2 and hasChange(batch, "Delete", "Old.luau") and hasChange(batch, "Upsert", "New.luau"),
+			tostring(#attempts) .. " batches"
+		)
+		connection:stop()
+end)
+
+suite("renaming a folder sends each child script's old-path Delete and new-path Upsert in one batch", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local pack = place(tree, "Folder", "Pack", root)
+		place(tree, "ModuleScript", "A", pack)
+		place(tree, "ModuleScript", "B", pack)
+		waitFor(function() return #attempts >= 1 end)
+		pack.Name = "Box"
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"renaming a folder moves every child script in one batch",
+			hasChange(batch, "Delete", "Pack/A.luau")
+				and hasChange(batch, "Upsert", "Box/A.luau")
+				and hasChange(batch, "Delete", "Pack/B.luau")
+				and hasChange(batch, "Upsert", "Box/B.luau"),
+			tostring(#attempts) .. " batches"
+		)
+		connection:stop()
+end)
+
+suite("a rename the daemon refuses by its new path leaves the old file in place", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden.luau") then
+				error({ status = 400, message = "refused", refused = { ".Hidden.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = ".Hidden"
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(0.6)
+		check("a refused rename never sends the old file's Delete", not anyChange(posts, "Delete", "Old.luau"))
+		check(
+			"a refused rename restores the old path as the placed path",
+			connection.placed[script] == "Old.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("a rename refused without a named path sends its Delete only alongside its Upsert", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden.luau") then
+				error({ status = 400, message = "refused" })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		place(tree, "ModuleScript", "Old", root)
+		local script = findByClass(root, "Old", "ModuleScript")
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = ".Hidden"
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(0.6)
+		check(
+			"a 400 that names no path never sends the old file's Delete alone",
+			not anyChange(posts, "Delete", "Old.luau"),
+			tostring(#attempts) .. " attempts"
+		)
+		connection:stop()
+end)
+
+suite("moving a script into a folder sends its old Delete and its new Upsert in one batch", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		place(tree, "Folder", "Dir", root)
+		local dir = findByClass(root, "Dir", "Folder")
+		waitFor(function() return #attempts >= 1 end)
+		tree.setParent(script, dir)
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"moving a script deletes its old file and upserts its new file in one batch",
+			#attempts == 2 and hasChange(batch, "Delete", "A.luau") and hasChange(batch, "Upsert", "Dir/A.luau"),
+			tostring(#attempts) .. " batches"
+		)
+		connection:stop()
+end)
+
+suite("a reparent the daemon refuses leaves the old file in place", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden/A.luau") then
+				error({ status = 400, message = "refused", refused = { ".Hidden/A.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		place(tree, "Folder", ".Hidden", root)
+		local hidden = findByClass(root, ".Hidden", "Folder")
+		waitFor(function() return #attempts >= 1 end)
+		tree.setParent(script, hidden)
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(0.6)
+		check("a refused reparent never sends the old file's Delete", not anyChange(posts, "Delete", "A.luau"))
+		check(
+			"a refused reparent restores the old path as the placed path",
+			connection.placed[script] == "A.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("an edit made after a refused rename does not send the old file's Delete", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden.luau") then
+				error({ status = 400, message = "refused", refused = { ".Hidden.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = ".Hidden"
+		tree.setSource(script, "return 'edited'")
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(1)
+		check(
+			"an edit after a refused rename never sends the old file's Delete",
+			not anyChange(posts, "Delete", "Old.luau"),
+			tostring(#attempts) .. " attempts"
+		)
+		check(
+			"an edit after a refused rename restores the old path as the placed path",
+			connection.placed[script] == "Old.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("a Windows device name is warned once and yields no path", function()
+		local names = { "CON", "con", "nul.Extra", "LPT1", "COM\u{b2}", "CLOCK$" }
+		for _, name in names do
+			local tree, root = studioWorld(true)
+			local warnings: { string } = {}
+			local settings = deps(extentsTerrainWith(extentsRegion), tree)
+			settings.warn = function(message: string)
+				table.insert(warnings, message)
+			end
+			local connection = Connection.new({}, root, noop, settings)
+			local script = place(tree, "ModuleScript", name, root)
+			local first = connection:_pathOf(script)
+			local second = connection:_pathOf(script)
+			check(
+				"the device-named script " .. name .. " has no path",
+				first == nil and second == nil,
+				tostring(first)
+			)
+			check(
+				"the device-named script " .. name .. " is warned once",
+				#warnings == 1,
+				tostring(#warnings) .. " warnings"
+			)
+		end
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local console = place(tree, "ModuleScript", "CONSOLE", root)
+		check(
+			"a name that only starts with a device name keeps its path",
+			connection:_pathOf(console) == "CONSOLE.luau",
+			tostring(connection:_pathOf(console))
+		)
+end)
+
+suite("a rename onto a path another script holds is refused, warned once, and overwrites nothing", function()
+		local client, posts, attempts = recordingClient()
+		local tree, root = studioWorld(true)
+		local warnings: { string } = {}
+		local settings = deps(extentsTerrainWith(extentsRegion), tree)
+		settings.warn = function(message: string)
+			table.insert(warnings, message)
+		end
+		local connection = Connection.new(client, root, noop, settings)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		connection:_attachStudio()
+		local foo = place(tree, "ModuleScript", "Foo", root)
+		tree.setSource(foo, "return 'foo'")
+		local bar = place(tree, "ModuleScript", "Bar", root)
+		tree.setSource(bar, "return 'bar'")
+		task.wait(0.6)
+		local before = #posts
+		foo.Name = "Bar"
+		tree.setSource(foo, "return 'edited'")
+		task.wait(0.6)
+		local later = table.move(posts, before + 1, #posts, 1, {})
+		check(
+			"a rename onto a held path never upserts over the other script's file",
+			not anyChange(later, "Upsert", "Bar.luau") and not anyChange(later, "Delete", "Foo.luau"),
+			tostring(#later) .. " later batches"
+		)
+		check(
+			"a refused rename keeps the old path as the placed path",
+			connection.placed[foo] == "Foo.luau",
+			tostring(connection.placed[foo])
+		)
+		check(
+			"a refused rename onto a held path warns exactly once",
+			#warnings == 1,
+			tostring(#warnings) .. " warnings"
+		)
+		connection:stop()
+end)
+
+suite("a second rename before the post keeps the first rename's Delete in the refused group", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", "C.luau") then
+				error({ status = 400, message = "refused", refused = { "C.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "B"
+		script.Name = "C"
+		task.wait(1)
+		check(
+			"a chain of renames whose last name is refused never sends the first old file's Delete",
+			not anyChange(posts, "Delete", "A.luau"),
+			tostring(#posts) .. " posts"
+		)
+		check(
+			"a chain of renames whose last name is refused restores the first old path as the placed path",
+			connection.placed[script] == "A.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("a rename made while the first post is in flight ends with the old file deleted and the new one upserted", function()
+		local gate = true
+		local client, posts, attempts = recordingClient(function(_changes)
+			while gate do
+				task.wait(0.05)
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "B"
+		task.wait(0.5)
+		script.Name = "C"
+		gate = false
+		task.wait(1.5)
+		check(
+			"a rename made during an in-flight post deletes the first old file and upserts the last name",
+			anyChange(posts, "Delete", "A.luau") and anyChange(posts, "Upsert", "C.luau"),
+			tostring(#posts) .. " posts"
+		)
+		connection:stop()
+end)
+
+suite("moving a script out of the root deletes its file", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		local outside = tree.createInstance("Folder", "Outside")
+		tree.setParent(script, outside)
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"moving a script out of the root deletes its old file",
+			#attempts == 2 and hasChange(batch, "Delete", "A.luau"),
+			tostring(#attempts) .. " batches"
+		)
+		connection:stop()
+end)
+
+suite("the daemon's answer to a rename queues nothing back", function()
+		local tree, root = studioWorld(true)
+		place(tree, "ModuleScript", "Old", root)
+		local polls = 0
+		local client = {
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return {
+						cursor = 2,
+						patches = {
+							{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "New.luau", class = "ModuleScript", content = "" },
+							{ seq = 2, kind = "Delete", direction = "ToStudio", path = "Old.luau", class = "ModuleScript" },
+						},
+					}
+				end
+				error("stop")
+			end,
+			postInventory = function() return true end,
+			postAck = noop,
+		}
+		local connection = Connection.new(client, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.session = 1
+		connection:_attachStudio()
+		pcall(connection._serve, connection, 1, "s-1")
+		check(
+			"the daemon's rename answer queues no push",
+			next(connection.pendingPush) == nil,
+			tostring(next(connection.pendingPush))
+		)
+		check("the daemon's rename answer creates the new name", tree.findChild(root, "New") ~= nil)
+		connection:stop()
+end)
+
+suite("a second rename of a script deletes the path its first rename produced", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "B"
+		waitFor(function() return #attempts >= 2 end)
+		script.Name = "C"
+		waitFor(function() return #attempts >= 3 end)
+		local batch = attempts[3] or {}
+		check(
+			"the second rename deletes the B file the first rename produced",
+			hasChange(batch, "Delete", "B.luau") and hasChange(batch, "Upsert", "C.luau")
+		)
+		check("the second rename does not repeat the first rename's Delete", not hasChange(batch, "Delete", "A.luau"))
+		connection:stop()
+end)
+
+suite("renaming a script to a name the plugin cannot write sends nothing", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "Bad/Name"
+		task.wait(0.6)
+		check("a rename to an unwritable name sends no batch", #attempts == 1, tostring(#attempts))
+		check("a rename to an unwritable name does not delete the old file", not anyChange(posts, "Delete", "Old.luau"))
+		connection:stop()
+end)
+
+local function liveTerrainWorld(terrain: any, client: any, history: any, onState: ((string, string?) -> ())?)
+	local tree, root = studioWorld(true)
+	local settings = deps(terrain, tree, history)
+	settings.delay = task.delay
+	local connection = Connection.new(client, root, onState or noop, settings)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.terrainSync = true
+	connection:_attachStudio()
+	return connection
+end
+
+local function blobRecorder()
+	local blobs: { string } = {}
+	local client = {
+		postBlobs = function(_, batch)
+			table.insert(blobs, batch[1].content)
+		end,
+		postInventory = function() return true end,
+		postAck = noop,
+		postChanges = noop,
+	}
+	return client, blobs
+end
+
+suite("a waypoint that changes the terrain pushes the blob during the session", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		waitFor(function() return #blobs >= 2 end)
+		check(
+			"a sculpted waypoint pushes the new terrain",
+			#blobs == 2 and blobs[2] == Terrain.read(terrain, extentsRegion, 4),
+			tostring(#blobs) .. " blobs"
+		)
+		connection:stop()
+end)
+
+suite("a burst of waypoints pushes the terrain once, after the last one", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		for value = 2, 4 do
+			terrain.state.value = value
+			history.OnWaypointAdded:Fire("sculpt")
+			task.wait(0.3)
+		end
+		check("no push lands while the burst is still within its debounce", #blobs == 1, tostring(#blobs))
+		waitFor(function() return #blobs >= 2 end)
+		task.wait(1.2)
+		check(
+			"the burst pushes once, with the terrain as it was after the last waypoint",
+			#blobs == 2 and blobs[2] == Terrain.read(terrain, extentsRegion, 4),
+			tostring(#blobs) .. " blobs"
+		)
+		connection:stop()
+end)
+
+suite("a waypoint that leaves the terrain unchanged pushes nothing", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		history.OnWaypointAdded:Fire("select")
+		task.wait(1.5)
+		check("an unchanged terrain is not pushed again", #blobs == 1, tostring(#blobs))
+		connection:stop()
+end)
+
+suite("a terrain blob applied from the daemon is not pushed back", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		terrain.state.value = 5
+		local incoming = Terrain.read(terrain, extentsRegion, 4)
+		terrain.state.value = 1
+		connection:_applyBlob(incoming)
+		history.OnWaypointAdded:Fire("apply")
+		task.wait(1.5)
+		check("a blob written from the daemon is not echoed on the next waypoint", #blobs == 1, tostring(#blobs))
+		connection:stop()
+end)
+
+suite("a waypoint pushes no terrain while terrain_sync is off", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection.terrainSync = false
+		connection:_pushTerrain(1)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		task.wait(1.5)
+		check("a changed terrain is not pushed while the daemon disables terrain_sync", #blobs == 1, tostring(#blobs))
+		connection:stop()
+end)
+
+suite("stopping the connection cancels a terrain push waiting on its debounce", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		connection:stop()
+		task.wait(1.5)
+		check("a stopped connection pushes no terrain from its pending debounce", #blobs == 1, tostring(#blobs))
+end)
+
+suite("a live terrain change over the size cap warns instead of pushing", function()
+		local huge = { CFrame = extentsRegion.CFrame, Size = { X = 2048, Y = 2048, Z = 2048 } }
+		local terrain = memoryTerrain(1, huge)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local log, onState = stateLog()
+		local connection = liveTerrainWorld(terrain, client, history, onState)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		waitFor(function() return #warningsOf(log) > 0 end)
+		check(
+			"an oversized live push is refused with the build hint",
+			#blobs == 0 and warningsOf(log)[1] == TOO_LARGE,
+			tostring(warningsOf(log)[1])
+		)
+		connection:stop()
+end)
+
+local function connectWithoutTerrainSync(terrain: any, onState: (string, string?) -> ())
+	local tree, root = studioWorld(true)
+	local blobPosts = 0
+	local blobPolls = 0
+	local client = {
+		info = function(_)
+			return { project_name = "demo", session_id = "s-1", conflicted = {}, terrain_sync = false }
+		end,
+		patches = function(_, _cursor)
+			error("stop")
+		end,
+		blobs = function(_, _cursor)
+			blobPolls += 1
+			error("stop")
+		end,
+		postBlobs = function(_, _batch)
+			blobPosts += 1
+		end,
+		postChanges = noop,
+		postInventory = function() return true end,
+		postAck = noop,
+	}
+	local connection = Connection.new(client, root, onState, deps(terrain, tree))
+	connection.running = true
+	connection.session = 1
+	task.spawn(function()
+		connection:_run(1)
+	end)
+	task.wait(0.5)
+	connection:stop()
+	return blobPosts, blobPolls
+end
+
+suite("a connect with terrain_sync off posts no terrain snapshot and polls no blobs", function()
+		local blobPosts, blobPolls = connectWithoutTerrainSync(memoryTerrain(1), noop)
+		check(
+			"a connect with terrain_sync off posts no terrain blob",
+			blobPosts == 0,
+			tostring(blobPosts) .. " posts"
+		)
+		check(
+			"a connect with terrain_sync off polls no blobs",
+			blobPolls == 0,
+			tostring(blobPolls) .. " polls"
+		)
+end)
+
+suite("a connect with terrain_sync off sets no terrain warning, even over the size cap", function()
+		local huge = { CFrame = extentsRegion.CFrame, Size = { X = 2048, Y = 2048, Z = 2048 } }
+		local log, onState = stateLog()
+		connectWithoutTerrainSync(memoryTerrain(1, huge), onState)
+		check(
+			"a connect with terrain_sync off sets no terrain warning",
+			#warningsOf(log) == 0,
+			table.concat(warningsOf(log), " | ")
+		)
+end)
+
+suite("the connection takes live terrain sync from the daemon's handshake", function()
+		local terrain = memoryTerrain(1)
+		local tree, root = studioWorld(true)
+		local client = {
+			info = function(_)
+				return { project_name = "demo", session_id = "s-1", conflicted = {}, terrain_sync = true }
+			end,
+			patches = function(_, _cursor)
+				error("stop")
+			end,
+			blobs = function(_, _cursor)
+				error("stop")
+			end,
+			postBlobs = noop,
+			postChanges = noop,
+			postInventory = function() return true end,
+			postAck = noop,
+		}
+		local connection = Connection.new(client, root, noop, deps(terrain, tree))
+		connection.running = true
+		connection.session = 1
+		task.spawn(function()
+			connection:_run(1)
+		end)
+		local synced = waitFor(function() return connection.terrainSync end)
+		check("a handshake with terrain_sync enables live terrain sync", synced)
+		connection:stop()
+end)
+
+suite("a terrain blob for another path is skipped with a Warning and never written over the terrain", function()
+		local terrain = memoryTerrain(1)
+		local tree, root = studioWorld(true)
+		local client = { postAck = noop, postBlobs = noop, postChanges = noop }
+		local log, onState = stateLog()
+		local connection = Connection.new(client, root, onState, deps(terrain, tree))
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		terrain.state.value = 9
+		local terrainBlob = Terrain.read(terrain, extentsRegion, 4)
+		terrain.state.value = 7
+		local otherBlob = Terrain.read(terrain, extentsRegion, 4)
+		terrain.state.value = 1
+		connection:_applyBlobBatch(1, {
+			cursor = 3,
+			patches = {
+				{ kind = "Upsert", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain", content = terrainBlob },
+				{ kind = "Upsert", direction = "ToStudio", path = "Other.terrain", class = "Terrain", content = otherBlob },
+			},
+		})
+		check(
+			"the Terrain.terrain blob is applied and the other path's blob is not written",
+			terrain.state.value == 9,
+			tostring(terrain.state.value)
+		)
+		local found = warningsOf(log)
+		check(
+			"the skipped path is named in a Warning",
+			#found == 1 and string.find(found[1], "Other.terrain", 1, true) ~= nil,
+			tostring(found[1])
+		)
+		check("the skipped blob still advances the blob cursor", connection.blobCursor == 3, tostring(connection.blobCursor))
 end)
 
 suite("a script that gains its first child moves from its file to init, and back", function()
@@ -2589,6 +3322,7 @@ suite("a clean batch resets the rejected wait to its first step", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -2718,6 +3452,7 @@ suite("a same-named folder does not block a patch, so it is acked", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, paths)
 					acked = paths
 				end,
@@ -2798,6 +3533,7 @@ suite("start after a stop reconnects", function()
 				task.wait(0.01)
 				return { cursor = 0, patches = {} }
 			end,
+			postInventory = function() return true end,
 			postAck = function() end,
 			postBlobs = function() end,
 			postChanges = function() end,
@@ -2883,6 +3619,7 @@ suite("a completed poll resets the reconnect backoff", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -2909,6 +3646,7 @@ suite("an apply that changes nothing records no echo", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -2933,6 +3671,7 @@ suite("an apply that writes records its echo", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -2950,6 +3689,10 @@ for _, path in
 	{
 		"plugin/src/Protocol.luau",
 		"plugin/src/Client.luau",
+		"plugin/src/Support.luau",
+		"plugin/src/TerrainSync.luau",
+		"plugin/src/Placement.luau",
+		"plugin/src/PushQueue.luau",
 		"plugin/src/Connection.luau",
 		"plugin/src/Plugin.server.luau",
 	}
@@ -3210,6 +3953,7 @@ suite("a refused ack is not retried", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, _paths)
 					ackAttempts += 1
 					if ackAttempts > 10 then
@@ -3256,6 +4000,7 @@ suite("a transient ack failure retries one entry per path", function()
 					end
 					error("stop")
 				end,
+				postInventory = function() return true end,
 				postAck = function(_, paths)
 					ackAttempts += 1
 					table.insert(lengths, #paths)
@@ -3658,6 +4403,7 @@ local function abandoningConnection(onState: any, holds: { [number]: { done: boo
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
+			postInventory = function() return true end,
 			postAck = function(_, _paths) end,
 		},
 		root,
@@ -3953,6 +4699,12 @@ suite("a push after a dropped batch waits the first retry delay, not the grown o
 		)
 end)
 
+local function placeReader(placeId: number): () -> number
+	return function()
+		return placeId
+	end
+end
+
 local function fakeHttp(respond: (any) -> any)
 	local fake = { calls = {} :: { any } }
 	function fake.RequestAsync(_self, options)
@@ -3973,7 +4725,7 @@ suite("an ack names its session and a 409 on /ack reports a changed session", fu
 	local acks = fakeHttp(function(_options)
 		return reply(409, "")
 	end)
-	local client = Client.new("http://127.0.0.1:34872", 123, acks)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), acks)
 	local ok, err = pcall(function()
 		client:postAck({ 7 }, "s1")
 	end)
@@ -3998,7 +4750,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 	end
 
 	local everything = fakeHttp(answerEverything)
-	local everyRequest = Client.new("http://127.0.0.1:34872", 123, everything)
+	local everyRequest = Client.new("http://127.0.0.1:34872", placeReader(123), everything)
 	everyRequest:info()
 	everyRequest:patches(0, "s1")
 	everyRequest:blobs(0, "s1")
@@ -4015,7 +4767,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local missingClient = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(403, "outdated-plugin: missing x-naht-client header")
 		end)
@@ -4030,7 +4782,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local wrongPlace = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(403, "place id mismatch")
 		end)
@@ -4046,7 +4798,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local wordingOnly = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(403, "missing x-naht-client header")
 		end)
@@ -4061,7 +4813,7 @@ suite("the client sends the headers on every request and reports an outdated plu
 
 	local accepting = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(200, "")
 		end)
@@ -4072,10 +4824,31 @@ suite("the client sends the headers on every request and reports an outdated plu
 	check("an accepted batch answers an empty 200 and raises nothing", okAccepted)
 end)
 
+suite("the place id header is read on each request, so a publish needs no reconnect", function()
+	local placeId = 0
+	local http = fakeHttp(function(_options)
+		return reply(200, "")
+	end)
+	local client = Client.new("http://127.0.0.1:34872", function()
+		return placeId
+	end, http)
+	client:postAck({}, "s1")
+	placeId = 456
+	client:postAck({}, "s1")
+	check(
+		"a request before the publish names the unpublished place",
+		#http.calls == 2 and http.calls[1].Headers["x-naht-place-id"] == "0"
+	)
+	check(
+		"the next request after the publish names the published place",
+		#http.calls == 2 and http.calls[2].Headers["x-naht-place-id"] == "456"
+	)
+end)
+
 suite("a 400 refused_paths body is surfaced with its paths", function()
 	local refusing = Client.new(
 		"http://127.0.0.1:34872",
-		123,
+		placeReader(123),
 		fakeHttp(function()
 			return reply(400, '{"refused_paths":["src/Dir"]}')
 		end)
@@ -4140,7 +4913,7 @@ suite("an incompatible protocol version is terminal and names the side to update
 			})
 		)
 	end)
-	local connection = Connection.new(Client.new("http://127.0.0.1:34872", 123, http), root, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	local connection = Connection.new(Client.new("http://127.0.0.1:34872", placeReader(123), http), root, onState, deps(extentsTerrainWith(extentsRegion), tree))
 	connection:start()
 	waitFor(function()
 		return lastStateOf(log) == "Disconnected"
@@ -4199,6 +4972,7 @@ suite("an ack that failed is resent after a reconnect in the same session", func
 				return { cursor = 0, patches = {} }
 			end,
 			postBlobs = function(_, _blobs) end,
+			postInventory = function() return true end,
 			postAck = function(_, seqs)
 				table.insert(ackBodies, seqs)
 				if #ackBodies == 1 then
@@ -4262,7 +5036,7 @@ suite("a poll names the session it handshook with, and a 409 sends the plugin ba
 		return reply(200, MessagePack.encode({ cursor = 0, patches = {} }))
 	end)
 	connection = Connection.new(
-		Client.new("http://127.0.0.1:34872", 123, http),
+		Client.new("http://127.0.0.1:34872", placeReader(123), http),
 		root,
 		onState,
 		deps(extentsTerrainWith(extentsRegion), tree)
@@ -4354,6 +5128,459 @@ suite("a 400 refusal drops the named path, warns about it, and posts the rest", 
 	check("the second post carries only the accepted path", posts[2][1].path == "Good.luau")
 	check("a 400 refusal warns about the dropped path", connection.warnings["refused:Dir"] ~= nil)
 	check("the last state after a 400 refusal is Warning", lastStateOf(log) == "Warning")
+	connection:stop()
+end)
+
+local function inventoryClient()
+	local posts: { { any } } = {}
+	local client = {
+		postChanges = noop,
+		postInventory = function(_, scripts, _sessionId)
+			table.insert(posts, scripts)
+			return true
+		end,
+		postAck = noop,
+	}
+	return client, posts
+end
+
+local function pathsOf(scripts: { any }): { string }
+	local paths: { string } = {}
+	for _, entry in scripts do
+		table.insert(paths, entry.path)
+	end
+	return paths
+end
+
+local function entryAt(scripts: { any }, path: string): any?
+	for _, entry in scripts do
+		if entry.path == path then
+			return entry
+		end
+	end
+	return nil
+end
+
+local function attachedConnection(client: any, tree: any, root: any, onState: ((string, string?) -> ())?): any
+	local connection = Connection.new(client, root, onState or noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_attachStudio()
+	return connection
+end
+
+suite("a rename made while the plugin was stopped is posted as an inventory", function()
+	local tree, root = studioWorld(true)
+	local script = place(tree, "ModuleScript", "Old", root)
+	script.Source = "return 1"
+	script.Name = "New"
+	local posted: any = nil
+	local connection: any = nil
+	connection = Connection.new({
+		info = function(_, _placeId)
+			return { project_name = "demo", session_id = "s1", terrain_sync = false, conflicted = {} }
+		end,
+		patches = function(_, _cursor)
+			connection:stop()
+			return { cursor = 0, patches = {} }
+		end,
+		postInventory = function(_, scripts, _sessionId)
+			posted = scripts
+			return true
+		end,
+	}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection:_attachStudio()
+	connection:_run(1)
+
+	check(
+		"the inventory lists the renamed script under its new path",
+		posted ~= nil and #posted == 1 and posted[1].path == "New.luau",
+		tostring(posted ~= nil and #posted or -1)
+	)
+	local entry = if posted ~= nil then entryAt(posted, "New.luau") else nil
+	check("the inventory entry names the script class", entry ~= nil and entry.class == "ModuleScript")
+	check(
+		"the inventory entry carries the fingerprint of the source Studio holds",
+		entry ~= nil and entry.hash == "8-0a60e4b81d078f22",
+		if entry ~= nil then entry.hash else "not listed"
+	)
+end)
+
+suite("an empty tree posts no inventory", function()
+	local tree, root = studioWorld(true)
+	local posts = 0
+	local connection: any = nil
+	connection = Connection.new({
+		info = function(_, _placeId)
+			return { project_name = "demo", session_id = "s1", terrain_sync = false, conflicted = {} }
+		end,
+		patches = function(_, _cursor)
+			connection:stop()
+			return { cursor = 0, patches = {} }
+		end,
+		postInventory = function(_, _changes, _sessionId)
+			posts += 1
+			return true
+		end,
+	}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection:_attachStudio()
+	connection:_run(1)
+
+	check("an empty tree posts no inventory", posts == 0, tostring(posts))
+end)
+
+suite("the source fingerprint matches its golden values", function()
+	check(
+		"the fingerprint of 'return 1' is the golden value",
+		Fingerprint.source("return 1") == "8-0a60e4b81d078f22",
+		Fingerprint.source("return 1")
+	)
+	check(
+		"the fingerprint of 'return 2' is the golden value",
+		Fingerprint.source("return 2") == "8-0a60e4b91d078f23",
+		Fingerprint.source("return 2")
+	)
+	check("the fingerprint of an empty source is zero", Fingerprint.source("") == "0-0000000000000000", Fingerprint.source(""))
+end)
+
+suite("an inventory entry carries the fingerprint of the source Studio holds now", function()
+	local client, posts = inventoryClient()
+	local tree, root = studioWorld(true)
+	local script = place(tree, "ModuleScript", "Old", root)
+	script.Source = "return 2"
+	local connection = attachedConnection(client, tree, root)
+	connection:_postInventory("s1")
+	local entry = if posts[1] ~= nil then entryAt(posts[1], "Old.luau") else nil
+	check("the inventory lists the placed script under its path", entry ~= nil)
+	check(
+		"the inventory hashes the source Studio holds",
+		entry ~= nil and entry.hash == Fingerprint.source("return 2"),
+		if entry ~= nil then entry.hash else "not listed"
+	)
+	connection:stop()
+end)
+
+suite("a rename refused as a device name is listed under the path the daemon still holds", function()
+	local client, posts = inventoryClient()
+	local tree, root = studioWorld(true)
+	local script = place(tree, "ModuleScript", "Foo", root)
+	tree.setSource(script, "return 1")
+	local connection = attachedConnection(client, tree, root)
+	script.Name = "CON"
+	connection:_postInventory("s1")
+	local listed: { string } = if posts[1] ~= nil then pathsOf(posts[1]) else {}
+	check(
+		"the inventory keeps Foo.luau, the path the daemon holds",
+		table.find(listed, "Foo.luau") ~= nil,
+		table.concat(listed, ",")
+	)
+	check("the inventory never lists the refused CON.luau", table.find(listed, "CON.luau") == nil, table.concat(listed, ","))
+	connection:stop()
+end)
+
+suite("a rename onto a held name is refused, and each script is listed under its own path and source", function()
+	local client, posts = inventoryClient()
+	local tree, root = studioWorld(true)
+	local a = place(tree, "ModuleScript", "A", root)
+	tree.setSource(a, "return 'a'")
+	local b = place(tree, "ModuleScript", "B", root)
+	tree.setSource(b, "return 'b'")
+	local connection = attachedConnection(client, tree, root)
+	b.Name = "A"
+	connection:_postInventory("s1")
+	local scripts: { any } = if posts[1] ~= nil then posts[1] else {}
+	local listedA = entryAt(scripts, "A.luau")
+	local listedB = entryAt(scripts, "B.luau")
+	check(
+		"the holder A.luau is listed with its own hash",
+		listedA ~= nil and listedA.hash == Fingerprint.source("return 'a'"),
+		if listedA ~= nil then listedA.hash else "not listed"
+	)
+	check(
+		"the refused rename's script is listed as B.luau with its own hash",
+		listedB ~= nil and listedB.hash == Fingerprint.source("return 'b'"),
+		if listedB ~= nil then listedB.hash else "not listed"
+	)
+	connection:stop()
+end)
+
+suite("two scripts claiming one placed path are both left out of the inventory", function()
+	local client, posts = inventoryClient()
+	local tree, root = studioWorld(true)
+	local a = place(tree, "ModuleScript", "A", root)
+	tree.setSource(a, "return 'a'")
+	local b = place(tree, "ModuleScript", "B", root)
+	tree.setSource(b, "return 'b'")
+	local connection = attachedConnection(client, tree, root)
+	connection.placed[b] = "A.luau"
+	connection:_postInventory("s1")
+	local listed: { string } = if posts[1] ~= nil then pathsOf(posts[1]) else {}
+	check("neither script claiming A.luau is listed", table.find(listed, "A.luau") == nil, table.concat(listed, ","))
+	connection:stop()
+end)
+
+suite("a script named .Hidden is never listed in the inventory", function()
+	local client, posts = inventoryClient()
+	local tree, root = studioWorld(true)
+	local keep = place(tree, "ModuleScript", "Keep", root)
+	tree.setSource(keep, "return 1")
+	local hidden = place(tree, "ModuleScript", ".Hidden", root)
+	tree.setSource(hidden, "return 2")
+	local connection = attachedConnection(client, tree, root)
+	connection:_postInventory("s1")
+	local listed: { string } = if posts[1] ~= nil then pathsOf(posts[1]) else {}
+	check("the inventory lists Keep.luau", table.find(listed, "Keep.luau") ~= nil, table.concat(listed, ","))
+	check(
+		"the inventory never lists the hidden name",
+		table.find(listed, ".Hidden.luau") == nil and #listed == 1,
+		table.concat(listed, ",")
+	)
+	connection:stop()
+end)
+
+suite("a 400 on /inventory warns and the run still pulls patches, without a Reconnecting state", function()
+	local real = Client.new("http://127.0.0.1:34872", placeReader(123), fakeHttp(function(_options)
+		return reply(400, '{"refused_paths":[".Hidden.luau"]}')
+	end))
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local keep = place(tree, "ModuleScript", "Keep", root)
+	tree.setSource(keep, "return 1")
+	local pulls = 0
+	local connection: any = nil
+	connection = Connection.new({
+		info = function(_, _placeId)
+			return { project_name = "demo", session_id = "s1", terrain_sync = false, conflicted = {} }
+		end,
+		patches = function(_, _cursor)
+			pulls += 1
+			connection:stop()
+			return { cursor = 0, patches = {} }
+		end,
+		postInventory = function(_, scripts, sessionId)
+			return real:postInventory(scripts, sessionId)
+		end,
+		postAck = noop,
+		postChanges = noop,
+	}, root, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection:_attachStudio()
+	connection:_run(1)
+
+	local reconnecting = false
+	local warned = false
+	for _, entry in log do
+		if entry.state == "Reconnecting" then
+			reconnecting = true
+		end
+		if entry.state == "Warning" and string.find(entry.detail or "", "/inventory returned 400", 1, true) ~= nil then
+			warned = true
+		end
+	end
+	check("a 400 on /inventory leaves the run pulling patches", pulls > 0, tostring(pulls))
+	check("a 400 on /inventory does not enter Reconnecting", not reconnecting)
+	check("a 400 on /inventory is reported as a Warning", warned)
+end)
+
+suite("a 413 on /inventory warns once, and a second post in the same session is not sent", function()
+	local posts = 0
+	local client = {
+		postChanges = noop,
+		postAck = noop,
+		postInventory = function(_, _scripts, _sessionId)
+			posts += 1
+			error({ status = 413, message = "naht: /inventory returned 413" })
+		end,
+	}
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local keep = place(tree, "ModuleScript", "Keep", root)
+	tree.setSource(keep, "return 1")
+	local connection = attachedConnection(client, tree, root, onState)
+	connection:_postInventory("s1")
+	connection:_postInventory("s1")
+	local warnings = 0
+	for _, entry in log do
+		if entry.state == "Warning" then
+			warnings += 1
+		end
+	end
+	check("a 413 posts the inventory once in the session", posts == 1, tostring(posts))
+	check("a 413 raises one Warning", warnings == 1, tostring(warnings))
+	check(
+		"the 413 Warning names the refusal",
+		connection.warnings.inventory ~= nil and string.find(connection.warnings.inventory, "413", 1, true) ~= nil
+	)
+	connection:stop()
+end)
+
+suite("a lone Dir/init.luau is listed under its Studio name, which the daemon maps to the held init path", function()
+	local client, posts = inventoryClient()
+	local tree, root = studioWorld(true)
+	local connection = attachedConnection(client, tree, root)
+	local applier = Apply.create(tree, connection:_echo())
+	connection.applying = true
+	applier:apply({ kind = "Create", direction = "ToStudio", path = "Dir/init.luau", class = "ModuleScript", content = "return 'dir'" })
+	connection.applying = false
+	connection:_adoptPlacement()
+	connection:_postInventory("s1")
+	local listed: { string } = if posts[1] ~= nil then pathsOf(posts[1]) else {}
+	check("the inventory names the Studio path Dir.luau", table.find(listed, "Dir.luau") ~= nil, table.concat(listed, ","))
+	connection:stop()
+end)
+
+suite("a rename followed by a removal in one window sends only Deletes", function()
+	local client, posts, attempts = recordingClient()
+	local connection, tree, root = renameWorld(client)
+	local script = place(tree, "ModuleScript", "A", root)
+	tree.setSource(script, "return 1")
+	waitFor(function() return #attempts >= 1 end)
+	script.Name = "B"
+	tree.destroy(script)
+	waitFor(function() return #attempts >= 2 end)
+	task.wait(0.6)
+	local later = table.move(posts, 2, #posts, 1, {})
+	check("the renamed-from path is deleted", anyChange(later, "Delete", "A.luau"), tostring(#attempts) .. " attempts")
+	check("the removed path is deleted", anyChange(later, "Delete", "B.luau"))
+	check("the removed path is never upserted", not anyChange(later, "Upsert", "B.luau"))
+	connection:stop()
+end)
+
+suite("a folder rename of several hundred scripts reads the root's descendants a bounded number of times", function()
+	local client = inventoryClient()
+	local tree, root = studioWorld(true)
+	local folder = place(tree, "Folder", "Lib", root)
+	local last: any = nil
+	for index = 1, 300 do
+		last = place(tree, "ModuleScript", "M" .. index, folder)
+		tree.setSource(last, "return " .. index)
+	end
+	local connection = attachedConnection(client, tree, root)
+	local original = root.GetDescendants
+	local reads = 0
+	root.GetDescendants = function(self)
+		reads += 1
+		return original(self)
+	end
+	folder.Name = "Lib2"
+	check(
+		"the folder rename moves the last script under the new folder",
+		connection.placed[last] == "Lib2/M300.luau",
+		tostring(connection.placed[last])
+	)
+	check("the folder rename reads the root's descendants a bounded number of times", reads <= 2, tostring(reads))
+	connection:stop()
+end)
+
+suite("a table error from /info is reported by its message in the Reconnecting state", function()
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local connection: any = nil
+	connection = Connection.new({
+		info = function(_, _placeId)
+			infos += 1
+			if infos > 1 then
+				connection:stop()
+			end
+			error({ status = 503, message = "naht: /info returned 503" })
+		end,
+	}, root, onState, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection:_run(1)
+
+	local detail: string? = nil
+	for _, entry in log do
+		if entry.state == "Reconnecting" then
+			detail = entry.detail
+		end
+	end
+	check("a 503 on /info enters Reconnecting", detail ~= nil)
+	check(
+		"the Reconnecting detail is the message, not the table address",
+		detail == "naht: /info returned 503",
+		tostring(detail)
+	)
+end)
+
+suite("a move that ends with no path restores the pending edit of its old path", function()
+	local client, posts, attempts = recordingClient()
+	local connection, tree, root = renameWorld(client)
+	local script = place(tree, "ModuleScript", "Old", root)
+	waitFor(function() return #attempts >= 1 end)
+	tree.setSource(script, "return 2")
+	tree.destroy(script)
+	script.Name = ".Hidden"
+	tree.setParent(script, root)
+	waitFor(function() return #attempts >= 2 end)
+	task.wait(0.6)
+	local later = table.move(posts, 2, #posts, 1, {})
+	check("the pending edit of the old path is still upserted", anyChange(later, "Upsert", "Old.luau"), tostring(#posts) .. " posts")
+	check("the old path's Delete is not sent after the move ends with no path", not anyChange(later, "Delete", "Old.luau"))
+	connection:stop()
+end)
+
+suite("an inventory is posted once per session id", function()
+	local client, posts = inventoryClient()
+	local tree, root = studioWorld(true)
+	local script = place(tree, "ModuleScript", "A", root)
+	script.Source = "return 1"
+	local connection = attachedConnection(client, tree, root)
+	connection:_postInventory("s1")
+	connection:_postInventory("s1")
+	check("a second inventory in the same session is not posted", #posts == 1, tostring(#posts))
+	connection:_postInventory("s2")
+	check("an inventory for a new session id is posted again", #posts == 2, tostring(#posts))
+	connection:stop()
+end)
+
+suite("a waypoint schedules no terrain push while terrain_sync is off", function()
+	local terrain = memoryTerrain(1)
+	local history = { OnWaypointAdded = signal() }
+	local client = blobRecorder()
+	local tree, root = studioWorld(true)
+	local delays = 0
+	local settings = deps(terrain, tree, history)
+	settings.delay = function(_, _fire)
+		delays += 1
+	end
+	local connection = Connection.new(client, root, noop, settings)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_attachStudio()
+	history.OnWaypointAdded:Fire("sculpt")
+	check("a waypoint with terrain_sync off schedules no delay", delays == 0, tostring(delays))
+	connection:stop()
+end)
+
+suite("a daemon without the inventory route sets an inventory Warning", function()
+	local client = {
+		postChanges = noop,
+		postAck = noop,
+		postInventory = function(_, _scripts, _sessionId)
+			return false
+		end,
+	}
+	local log, onState = stateLog()
+	local tree, root = studioWorld(true)
+	local script = place(tree, "ModuleScript", "A", root)
+	script.Source = "return 1"
+	local connection = attachedConnection(client, tree, root, onState)
+	connection:_postInventory("s1")
+	check(
+		"a 404 on /inventory sets an inventory Warning",
+		connection.warnings.inventory ~= nil,
+		tostring(connection.warnings.inventory)
+	)
+	check("the Warning reaches onState", lastStateOf(log) == "Warning", lastStateOf(log))
 	connection:stop()
 end)
 

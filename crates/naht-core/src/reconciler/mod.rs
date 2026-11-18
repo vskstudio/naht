@@ -19,7 +19,8 @@ mod tests;
 
 pub use model::{Direction, Patch, PatchKind, ReconcileError, Status, TextInstance};
 pub use persist::{
-    record_studio_deletion, record_studio_side, resolve, set_base, status, studio_at_base,
+    move_base, record_studio_deletion, record_studio_side, resolve, set_base, status,
+    studio_at_base,
 };
 pub use scan::scan_text;
 pub(crate) use shared::{Classed, Side, class_of, remove_fs_copy, union_keys, write_toward};

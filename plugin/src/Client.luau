@@ -8,12 +8,12 @@ Client.__index = Client
 Client.OUTDATED_PLUGIN = "naht: this plugin is outdated, update the naht plugin to match the daemon"
 Client.SESSION_CHANGED = "naht: the daemon restarted, re-syncing from its new session"
 
-export type Client = typeof(setmetatable({} :: { baseUrl: string, placeId: number, http: any }, Client))
+export type Client = typeof(setmetatable({} :: { baseUrl: string, readPlaceId: () -> number, http: any }, Client))
 
-function Client.new(baseUrl: string, placeId: number, http: any?): Client
+function Client.new(baseUrl: string, readPlaceId: () -> number, http: any?): Client
 	return setmetatable({
 		baseUrl = baseUrl,
-		placeId = placeId,
+		readPlaceId = readPlaceId,
 		http = http or game:GetService("HttpService"),
 	}, Client)
 end
@@ -22,7 +22,7 @@ local function request(self: Client, options: { [string]: any }): { [string]: an
 	options.Url = self.baseUrl .. options.Url
 	local headers = options.Headers or {}
 	headers["x-naht-client"] = "plugin"
-	headers["x-naht-place-id"] = tostring(self.placeId)
+	headers["x-naht-place-id"] = tostring(self.readPlaceId())
 	options.Headers = headers
 	local ok, response = pcall(function()
 		return self.http:RequestAsync(options)
@@ -151,6 +151,29 @@ function Client.postChanges(self: Client, changes: { Protocol.Change })
 			refused = refusedPaths(self, response.Body),
 		})
 	end
+end
+
+function Client.postInventory(self: Client, scripts: { Protocol.InventoryEntry }, sessionId: string): boolean
+	local response = request(self, {
+		Url = "/inventory?session=" .. sessionId,
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/msgpack" },
+		Body = Protocol.encodeInventory(scripts),
+	})
+	if response.StatusCode == 409 then
+		error(Client.SESSION_CHANGED)
+	end
+	if response.StatusCode == 404 then
+		return false
+	end
+	if not response.Success then
+		error({
+			status = response.StatusCode,
+			message = "naht: /inventory returned " .. tostring(response.StatusCode),
+			refused = refusedPaths(self, response.Body),
+		})
+	end
+	return true
 end
 
 return Client

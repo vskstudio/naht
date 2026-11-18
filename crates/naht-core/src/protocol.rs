@@ -23,6 +23,9 @@ pub const CLIENT_HEADER: &str = "x-naht-client";
 /// Request header carrying the Roblox place id the client is connected to.
 pub const PLACE_ID_HEADER: &str = "x-naht-place-id";
 
+/// The place id Studio reports for a place that has never been published, which no project binds to.
+pub const UNPUBLISHED_PLACE_ID: u64 = 0;
+
 /// Token opening the 403 body for a request without the client header, sent by daemons that know it.
 pub const OUTDATED_PLUGIN_TOKEN: &str = "outdated-plugin";
 
@@ -48,6 +51,9 @@ pub struct ServerInfo {
     /// The paths frozen as conflicted, so a plugin that reconnects after a restart can show them.
     #[serde(default)]
     pub conflicted: Vec<String>,
+    /// Whether the daemon synchronizes terrain blobs live, as `[serve] terrain_sync` says.
+    #[serde(default)]
+    pub terrain_sync: bool,
 }
 
 /// The long-poll response from `GET /patches`: every queued patch past the client's cursor, plus the
@@ -257,6 +263,7 @@ mod tests {
             daemon_id: "d-1".to_owned(),
             serve_place_id: Some(123),
             conflicted: vec!["Frozen.luau".to_owned()],
+            terrain_sync: true,
         };
         let bytes = to_msgpack(&info).unwrap();
         assert_eq!(from_msgpack::<ServerInfo>(&bytes).unwrap(), info);
@@ -391,6 +398,7 @@ mod tests {
             daemon_id: "d-1".to_owned(),
             serve_place_id: Some(123),
             conflicted: Vec::new(),
+            terrain_sync: false,
         };
         assert_eq!(hex(&to_msgpack(&info).unwrap()), pinned_hex("server_info"));
     }

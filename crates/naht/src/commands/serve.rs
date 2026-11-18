@@ -106,7 +106,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     served.and(unpublished)
 }
 
-fn take_instance_lock(root: &Path) -> Result<File, CommandError> {
+pub(super) fn take_instance_lock(root: &Path) -> Result<File, CommandError> {
     let state_dir = root.join(".naht");
     fs::create_dir_all(&state_dir).map_err(|source| CommandError::CreateDir {
         path: state_dir.clone(),

@@ -90,6 +90,8 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   each change is externally tagged, `Upsert {path, class, content}` or `Delete {path}`. A malformed body is
   `400`, and a batch whose valid changes fail to apply is `500` with the Studio mirror restored to its state
   before the batch.
+
+- **`POST /inventory` response**: takes the same `{changes: [...]}` body as `/changes` and a `session` query parameter. It is answered `200` with an empty body when the listing applies (an empty listing changes nothing), `400` with `{"refused_paths": [...]}` when it holds a `Delete` or a refused path, `409` for another session's id, and `404` from a daemon that predates the route, which the plugin reports as a warning rather than a failure.
 - **Body limits**: at most two POST bodies are read and handled at once, each capped at 64 MiB (`413`), with
   a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 shipped in v0.4.0
   with the old `Ack` and `PatchBatch` shapes, so the sequenced shapes above and these limits ship as version 3,

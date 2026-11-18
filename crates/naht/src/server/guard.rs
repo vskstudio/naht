@@ -1,5 +1,6 @@
 use std::error::Error as StdError;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -13,7 +14,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use super::BODY_LIMIT;
+use super::{AppState, BODY_LIMIT};
+use crate::session::SessionError;
 
 pub(super) const CLIENT_HEADER: HeaderName = HeaderName::from_static(protocol::CLIENT_HEADER);
 const PLACE_ID_HEADER: HeaderName = HeaderName::from_static(protocol::PLACE_ID_HEADER);
@@ -39,25 +41,28 @@ impl PostGate {
     }
 }
 
-#[derive(Debug)]
 pub(super) struct Gate {
     hosts: [String; 3],
     serve_place_id: Option<u64>,
+    state: Arc<AppState>,
+    unpublished_logged: AtomicBool,
 }
 
 impl Gate {
-    pub(super) fn new(port: u16, serve_place_id: Option<u64>) -> Self {
+    pub(super) fn new(port: u16, state: Arc<AppState>) -> Self {
         Self {
             hosts: [
                 format!("127.0.0.1:{port}"),
                 format!("localhost:{port}"),
                 format!("[::1]:{port}"),
             ],
-            serve_place_id,
+            serve_place_id: state.serve_place_id,
+            state,
+            unpublished_logged: AtomicBool::new(false),
         }
     }
 
-    fn admit(&self, headers: &HeaderMap) -> Result<(), String> {
+    async fn admit(&self, method: &Method, headers: &HeaderMap) -> Result<(), String> {
         if headers.contains_key(header::ORIGIN) {
             return Err("cross-origin requests are not allowed".to_owned());
         }
@@ -71,10 +76,55 @@ impl Gate {
                 protocol::CLIENT_HEADER
             ));
         }
-        if let Some(expected) = self.serve_place_id
-            && !place_id_matches(headers, expected)
-        {
-            return Err("place id mismatch".to_owned());
+        match self.serve_place_id {
+            Some(expected) if !place_id_matches(headers, expected) => {
+                Err("place id mismatch".to_owned())
+            }
+            Some(_) => Ok(()),
+            None => {
+                if method == Method::POST
+                    && !headers.contains_key(PLACE_ID_HEADER)
+                    && let Some(bound) = self.state.bound_place.get()
+                {
+                    return Err(unplaced_write_refused(*bound));
+                }
+                self.bind_place(headers).await
+            }
+        }
+    }
+
+    async fn bind_place(&self, headers: &HeaderMap) -> Result<(), String> {
+        let Some(place_id) = requested_place_id(headers)? else {
+            return Ok(());
+        };
+        if place_id == protocol::UNPUBLISHED_PLACE_ID {
+            return self.admit_unpublished();
+        }
+        if let Some(bound) = self.state.bound_place.get() {
+            return if *bound == place_id {
+                Ok(())
+            } else {
+                Err(place_bound_elsewhere(*bound, place_id))
+            };
+        }
+        self.state
+            .session_lock()
+            .await
+            .bind_place(place_id)
+            .map_err(|error| error.to_string())?;
+        self.state.bound_place.get_or_init(|| place_id);
+        Ok(())
+    }
+
+    fn admit_unpublished(&self) -> Result<(), String> {
+        if let Some(bound) = self.state.bound_place.get() {
+            return Err(unpublished_place_refused(*bound));
+        }
+        if !self.unpublished_logged.swap(true, Ordering::Relaxed) {
+            tracing::info!(
+                target: "naht::server",
+                "a request names an unpublished place, so the project stays unbound"
+            );
         }
         Ok(())
     }
@@ -91,15 +141,42 @@ impl Gate {
 }
 
 fn place_id_matches(headers: &HeaderMap, expected: u64) -> bool {
+    requested_place_id(headers).is_ok_and(|requested| requested == Some(expected))
+}
+
+fn requested_place_id(headers: &HeaderMap) -> Result<Option<u64>, String> {
     headers
         .get(PLACE_ID_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        == Some(expected)
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .and_then(|text| text.parse::<u64>().ok())
+                .ok_or_else(|| "malformed place id header".to_owned())
+        })
+        .transpose()
+}
+
+fn place_bound_elsewhere(bound: u64, requested: u64) -> String {
+    SessionError::PlaceBoundElsewhere { bound, requested }.to_string()
+}
+
+fn unpublished_place_refused(bound: u64) -> String {
+    format!(
+        "the request names place {}, an unpublished place, but this project is bound to place {bound}: publish the place in Studio, or open place {bound}",
+        protocol::UNPUBLISHED_PLACE_ID
+    )
+}
+
+fn unplaced_write_refused(bound: u64) -> String {
+    format!(
+        "missing {} header: this project is bound to place {bound}, a write must name it",
+        protocol::PLACE_ID_HEADER
+    )
 }
 
 pub(super) async fn guard(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> Response {
-    match gate.admit(request.headers()) {
+    match gate.admit(request.method(), request.headers()).await {
         Ok(()) => next.run(request).await,
         Err(reason) => {
             tracing::warn!(target: "naht::server", reason = reason.as_str(), "request refused");
@@ -157,5 +234,7 @@ fn body_error_status(error: &axum::Error) -> StatusCode {
     StatusCode::BAD_REQUEST
 }
 
+#[cfg(test)]
+mod place_binding;
 #[cfg(test)]
 mod tests;

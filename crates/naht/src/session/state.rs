@@ -31,8 +31,26 @@ impl Session {
                 "could not remove stale temp files"
             );
         }
-        let vfs = RootedVfs::new(root, DiskVfs::new());
+        Self::assemble(
+            RootedVfs::new(root, DiskVfs::new()),
+            store,
+            project_name,
+            serve_place_id,
+            terrain_sync,
+        )
+    }
+}
+
+impl<V: Vfs> Session<V> {
+    pub(super) fn assemble(
+        vfs: RootedVfs<V>,
+        store: StateStore,
+        project_name: impl Into<String>,
+        serve_place_id: Option<u64>,
+        terrain_sync: bool,
+    ) -> Result<Self, SessionError> {
         let studio = reconciler::studio_at_base(&store)?;
+        let recorded_place = store.place_id()?;
         Ok(Self {
             vfs,
             store,
@@ -51,6 +69,7 @@ impl Session {
             id: new_session_id(),
             daemon_id: new_daemon_id()?,
             serve_place_id,
+            recorded_place,
             terrain_sync,
         })
     }
@@ -70,6 +89,7 @@ impl Session {
             daemon_id: self.daemon_id.clone(),
             serve_place_id: self.serve_place_id,
             conflicted: Vec::new(),
+            terrain_sync: self.terrain_sync,
         }
     }
 
@@ -97,6 +117,35 @@ impl Session {
     /// The place id this session is bound to, if any.
     pub fn serve_place_id(&self) -> Option<u64> {
         self.serve_place_id
+    }
+
+    /// The place id recorded in this project's state when the session opened, if one was bound.
+    pub fn recorded_place_id(&self) -> Option<u64> {
+        self.recorded_place
+    }
+
+    /// Bind this project's state to the Studio place that attaches first. A configured
+    /// `[serve] place_id` governs instead, so the binding is then left alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::PlaceBoundElsewhere`] when the state is bound to another place, or a
+    /// state error when the binding cannot be read or written.
+    pub fn bind_place(&self, place_id: u64) -> Result<(), SessionError> {
+        if self.serve_place_id.is_some() {
+            return Ok(());
+        }
+        match self.store.place_id()? {
+            None => self.store.set_place_id(place_id)?,
+            Some(bound) if bound == place_id => {}
+            Some(bound) => {
+                return Err(SessionError::PlaceBoundElsewhere {
+                    bound,
+                    requested: place_id,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Whether this session is allowed to synchronize terrain blobs.
@@ -190,7 +239,7 @@ mod tests {
     use naht_core::protocol::Change;
     use naht_core::state::{InstanceRecord, StateStore};
 
-    use crate::session::Session;
+    use crate::session::{Session, SessionError};
 
     fn record(path: &str, conflicted: bool) -> InstanceRecord {
         InstanceRecord {
@@ -217,6 +266,29 @@ mod tests {
             vec!["Frozen.luau".to_owned()]
         );
         assert_eq!(session.info().conflicted, Vec::<String>::new());
+    }
+
+    #[test]
+    fn info_reports_whether_terrain_sync_is_enabled() {
+        let root = tempfile::tempdir().unwrap();
+        let enabled = Session::new(
+            root.path(),
+            StateStore::open_in_memory().unwrap(),
+            "demo",
+            None,
+            true,
+        )
+        .unwrap();
+        let disabled = Session::new(
+            root.path(),
+            StateStore::open_in_memory().unwrap(),
+            "demo",
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(enabled.info().terrain_sync);
+        assert!(!disabled.info().terrain_sync);
     }
 
     #[test]
@@ -300,5 +372,34 @@ mod tests {
             .unwrap();
 
         assert!(!session.may_remove_emptied_dir(Path::new("packages/shared")));
+    }
+
+    #[test]
+    fn the_first_place_to_attach_binds_the_project_and_others_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::open_in_memory().unwrap();
+        let session = Session::new(root.path(), store, "demo", None, false).unwrap();
+
+        session.bind_place(11).unwrap();
+        session.bind_place(11).unwrap();
+
+        assert!(matches!(
+            session.bind_place(22),
+            Err(SessionError::PlaceBoundElsewhere {
+                bound: 11,
+                requested: 22
+            })
+        ));
+    }
+
+    #[test]
+    fn a_configured_place_id_leaves_the_binding_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::open_in_memory().unwrap();
+        let session = Session::new(root.path(), store, "demo", Some(11), false).unwrap();
+
+        session.bind_place(22).unwrap();
+
+        assert_eq!(session.store.place_id().unwrap(), None);
     }
 }
