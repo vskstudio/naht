@@ -23,6 +23,9 @@ pub const CLIENT_HEADER: &str = "x-naht-client";
 /// Request header carrying the Roblox place id the client is connected to.
 pub const PLACE_ID_HEADER: &str = "x-naht-place-id";
 
+/// The place id Studio reports for a place that has never been published, which no project binds to.
+pub const UNPUBLISHED_PLACE_ID: u64 = 0;
+
 /// Token opening the 403 body for a request without the client header, sent by daemons that know it.
 pub const OUTDATED_PLUGIN_TOKEN: &str = "outdated-plugin";
 

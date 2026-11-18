@@ -165,6 +165,17 @@ impl StateStore {
         Ok(())
     }
 
+    /// Forget the Studio place this project is bound to, so the next attach binds it again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the place id cannot be cleared.
+    pub fn clear_place_id(&self) -> Result<(), StateError> {
+        self.conn
+            .execute("DELETE FROM meta WHERE key = ?1", [PLACE_ID_KEY])?;
+        Ok(())
+    }
+
     /// The Studio place this project is bound to, if one was recorded.
     ///
     /// # Errors
@@ -456,6 +467,14 @@ mod tests {
         assert_eq!(store.place_id().unwrap(), None);
         store.set_place_id(123_456).unwrap();
         assert_eq!(store.place_id().unwrap(), Some(123_456));
+    }
+
+    #[test]
+    fn clearing_the_place_id_unbinds_the_project() {
+        let store = StateStore::open_in_memory().unwrap();
+        store.set_place_id(123_456).unwrap();
+        store.clear_place_id().unwrap();
+        assert_eq!(store.place_id().unwrap(), None);
     }
 
     #[test]

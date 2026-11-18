@@ -61,8 +61,31 @@ async fn a_second_place_is_refused_with_the_reset_instructions() {
 
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(body.contains("bound to place 11, not 22"), "{body}");
-    assert!(body.contains("delete .naht/state.db"), "{body}");
+    assert!(body.contains("naht unbind"), "{body}");
     assert_eq!(info(&state, Some("11")).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_unpublished_place_does_not_bind_the_project() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+
+    assert_eq!(info(&state, Some("0")).await.0, StatusCode::OK);
+    assert_eq!(info(&state, Some("11")).await.0, StatusCode::OK);
+    assert_eq!(info(&state, Some("22")).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn an_unpublished_place_is_refused_once_the_project_is_bound() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+    info(&state, Some("11")).await;
+
+    let (status, body) = info(&state, Some("0")).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(body.contains("unpublished"), "{body}");
+    assert!(body.contains("bound to place 11"), "{body}");
 }
 
 #[tokio::test]

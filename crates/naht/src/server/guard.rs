@@ -1,5 +1,6 @@
 use std::error::Error as StdError;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -44,6 +45,7 @@ pub(super) struct Gate {
     hosts: [String; 3],
     serve_place_id: Option<u64>,
     state: Arc<AppState>,
+    unpublished_logged: AtomicBool,
 }
 
 impl Gate {
@@ -56,6 +58,7 @@ impl Gate {
             ],
             serve_place_id: state.serve_place_id,
             state,
+            unpublished_logged: AtomicBool::new(false),
         }
     }
 
@@ -94,6 +97,9 @@ impl Gate {
         let Some(place_id) = requested_place_id(headers)? else {
             return Ok(());
         };
+        if place_id == protocol::UNPUBLISHED_PLACE_ID {
+            return self.admit_unpublished();
+        }
         if let Some(bound) = self.state.bound_place.get() {
             return if *bound == place_id {
                 Ok(())
@@ -107,6 +113,19 @@ impl Gate {
             .bind_place(place_id)
             .map_err(|error| error.to_string())?;
         self.state.bound_place.get_or_init(|| place_id);
+        Ok(())
+    }
+
+    fn admit_unpublished(&self) -> Result<(), String> {
+        if let Some(bound) = self.state.bound_place.get() {
+            return Err(unpublished_place_refused(*bound));
+        }
+        if !self.unpublished_logged.swap(true, Ordering::Relaxed) {
+            tracing::info!(
+                target: "naht::server",
+                "a request names an unpublished place, so the project stays unbound"
+            );
+        }
         Ok(())
     }
 
@@ -140,6 +159,13 @@ fn requested_place_id(headers: &HeaderMap) -> Result<Option<u64>, String> {
 
 fn place_bound_elsewhere(bound: u64, requested: u64) -> String {
     SessionError::PlaceBoundElsewhere { bound, requested }.to_string()
+}
+
+fn unpublished_place_refused(bound: u64) -> String {
+    format!(
+        "the request names place {}, an unpublished place, but this project is bound to place {bound}: publish the place in Studio, or open place {bound}",
+        protocol::UNPUBLISHED_PLACE_ID
+    )
 }
 
 fn unplaced_write_refused(bound: u64) -> String {

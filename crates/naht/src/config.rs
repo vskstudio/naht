@@ -10,6 +10,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use naht_core::protocol::UNPUBLISHED_PLACE_ID;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::env;
@@ -49,6 +50,9 @@ pub enum ConfigError {
     /// Port 0 asks the OS for an arbitrary port, which a daemon cannot advertise.
     #[error("port must be between 1 and 65535, got 0")]
     PortZero,
+    /// Place 0 is the id of an unpublished place, which a project cannot be pinned to.
+    #[error("place_id must name a published Studio place, got 0")]
+    PlaceIdZero,
 }
 
 /// A single config layer, as parsed from one TOML file. Every field is optional so layers can be
@@ -146,6 +150,9 @@ impl Config {
             config.overlay(read_layer(home)?);
         }
         config.overlay(read_layer(&root.join(PROJECT_FILE))?);
+        if config.serve.place_id == Some(UNPUBLISHED_PLACE_ID) {
+            return Err(ConfigError::PlaceIdZero);
+        }
         Ok(config)
     }
 
@@ -282,6 +289,27 @@ mod tests {
         Config::default()
             .resolve_port(Some(0))
             .expect_err("port 0 is rejected");
+    }
+
+    #[test]
+    fn a_place_id_of_zero_is_refused_after_the_layers_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(PROJECT_FILE), "[serve]\nplace_id = 0\n").unwrap();
+
+        let outcome = Config::load_from(None, dir.path());
+
+        assert!(matches!(outcome, Err(ConfigError::PlaceIdZero)));
+    }
+
+    #[test]
+    fn a_place_id_of_zero_is_refused_when_the_home_layer_sets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("config.toml");
+        fs::write(&home, "[serve]\nplace_id = 0\n").unwrap();
+
+        let outcome = Config::load_from(Some(&home), dir.path());
+
+        assert!(matches!(outcome, Err(ConfigError::PlaceIdZero)));
     }
 
     #[test]
