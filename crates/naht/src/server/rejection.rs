@@ -54,16 +54,22 @@ impl IntoResponse for Rejection {
             tracing::error!(target: "naht::server", status = status.as_u16(), error = ?self, "request failed");
             return (status, "internal server error").into_response();
         }
-        if let Self::RefusedPaths(refused_paths) = &self {
-            return json_response(
+        match &self {
+            Self::RefusedPaths(refused_paths) => json_response(
                 status,
                 &serde_json::json!({ "refused_paths": refused_paths }),
-            );
+            ),
+            Self::InvalidPath(_) | Self::Malformed(_) => {
+                json_response(status, &serde_json::json!({ "error": self.to_string() }))
+            }
+            Self::Disallowed(_)
+            | Self::Encode(_)
+            | Self::Session(_)
+            | Self::Blocking(_)
+            | Self::Busy
+            | Self::SessionChanged
+            | Self::MissingSession => (status, self.to_string()).into_response(),
         }
-        if let Self::InvalidPath(error) = &self {
-            return json_response(status, &serde_json::json!({ "error": error.to_string() }));
-        }
-        (status, self.to_string()).into_response()
     }
 }
 
