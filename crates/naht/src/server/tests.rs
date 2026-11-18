@@ -1,3 +1,4 @@
+use naht_core::protocol::Change;
 use std::fs;
 use std::path::PathBuf;
 

@@ -6,8 +6,6 @@
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
 //! decisions are delegated to the [`Session`]; this layer is pure transport.
 
-use std::collections::BTreeSet;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -25,9 +23,9 @@ use axum::routing::{get, post};
 use cursor::{CursorQuery, SessionQuery};
 use naht_core::binary::{BlobInstance, TERRAIN_CLASS, terrain_voxel_count};
 use naht_core::protocol::{
-    self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, ServerInfo,
+    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong, ServerInfo,
 };
-use naht_core::vfs::{validate_blob_path, validate_directory_path, validate_source_path};
+use naht_core::vfs::validate_blob_path;
 use rejection::Rejection;
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
@@ -47,8 +45,10 @@ use crate::session::Session;
 mod guard;
 mod inventory;
 mod listen;
+mod refuse;
 
 use guard::{Gate, PostGate, guard, limit_post_bodies};
+use refuse::{refuse_directories, refused_text_paths};
 use std::io;
 use tokio::net::TcpListener;
 use tokio::sync::MutexGuard;
@@ -307,64 +307,6 @@ fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, 
     let count = batch.changes.len();
     session.apply_changes(batch.changes)?;
     Ok(count)
-}
-
-fn refused_text_paths(session: &Session, changes: &[Change]) -> Vec<String> {
-    let deleted: BTreeSet<&Path> = changes.iter().filter_map(deleted_path).collect();
-    changes
-        .iter()
-        .filter(|change| is_refused_text_change(session, change, &deleted))
-        .map(|change| change_path(change).to_owned())
-        .collect()
-}
-
-fn is_refused_text_change(session: &Session, change: &Change, deleted: &BTreeSet<&Path>) -> bool {
-    let path = change_path(change);
-    if session.validate_path(path).is_err() {
-        return true;
-    }
-    if session.is_directory(path) {
-        return !removes_whole_directory(session, change, deleted);
-    }
-    validate_source_path(path).is_err()
-}
-
-fn removes_whole_directory(session: &Session, change: &Change, deleted: &BTreeSet<&Path>) -> bool {
-    match change {
-        Change::Delete { path } => {
-            validate_directory_path(path).is_ok()
-                && session.subtree_deleted_by(Path::new(path), deleted)
-        }
-        Change::Upsert { .. } => false,
-    }
-}
-
-fn deleted_path(change: &Change) -> Option<&Path> {
-    match change {
-        Change::Delete { path } => Some(Path::new(path)),
-        Change::Upsert { .. } => None,
-    }
-}
-
-fn change_path(change: &Change) -> &str {
-    match change {
-        Change::Upsert { path, .. } | Change::Delete { path } => path,
-    }
-}
-
-fn refuse_directories<'a>(
-    session: &Session,
-    paths: impl Iterator<Item = &'a str>,
-) -> Result<(), Rejection> {
-    let refused: Vec<String> = paths
-        .filter(|path| session.is_directory(path))
-        .map(str::to_owned)
-        .collect();
-    if refused.is_empty() {
-        Ok(())
-    } else {
-        Err(Rejection::RefusedPaths(refused))
-    }
 }
 
 async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
