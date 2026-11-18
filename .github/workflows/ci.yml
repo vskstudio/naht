@@ -96,6 +96,41 @@ jobs:
       - name: Run plugin harness
         run: timeout 300 lune run plugin/tests/run.luau
 
+  e2e:
+    name: daemon e2e (naht serve + plugin client)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Build naht
+        run: cargo build -p naht --locked
+      - name: Install pinned Lune
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/lune-org/lune/releases/download/v0.10.4/lune-0.10.4-linux-x86_64.zip"
+          archive="$RUNNER_TEMP/lune.zip"
+          curl --fail --location --silent --show-error "$url" --output "$archive"
+          echo "ffba0bd404ae078c9543ef5ac12479938a741aab255768a11a08517ae963b288  $archive" | sha256sum --check
+          unzip -p "$archive" lune > "$RUNNER_TEMP/lune"
+          chmod +x "$RUNNER_TEMP/lune"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/lune" --version
+      - name: Run daemon e2e
+        env:
+          NAHT_BIN: target/debug/naht
+        run: timeout 300 lune run plugin/tests/e2e.luau
+
   docker:
     name: site image build + scan
     runs-on: ubuntu-24.04

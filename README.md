@@ -39,7 +39,7 @@ sync. See [`docs/`](docs/) for the architecture and the staged build plan.
 naht init [path]            # scaffold a project (--from-rojo converts a default.project.json)
 naht serve [path]           # run the localhost sync daemon (--port to override, -v/-vv for logs)
 naht status [path]          # list paths frozen by a conflict
-naht resolve <path>         # clear a conflict once its markers are gone (--project <dir> to scope it)
+naht resolve <path>         # clear a text conflict once its markers are gone; a frozen binary needs --keep disk|studio
 naht build [path] -o out.rbxm   # build a model (.rbxm/.rbxmx) or place (.rbxl/.rbxlx); --watch to rebuild on change
 naht pull [path]            # ask a running daemon to re-sync now
 naht package-plugin -o naht-plugin.rbxmx   # package the Studio plugin into an installable model

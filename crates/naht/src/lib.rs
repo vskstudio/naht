@@ -12,6 +12,7 @@ mod daemon_port;
 pub mod logging;
 /// Rendering of the command-line report.
 pub mod output;
+mod project_path;
 pub mod server;
 pub mod session;
 /// Graceful shutdown on signals and on request.

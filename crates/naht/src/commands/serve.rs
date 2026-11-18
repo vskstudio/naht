@@ -1,6 +1,7 @@
 use super::error::CommandError;
 use super::files::{canonical, open_store};
 use super::inspect::{serve_warnings, unsyncable_lines};
+use super::rojo::checked_tree_path;
 use crate::config::Config;
 use crate::daemon_port;
 use crate::output::Output;
@@ -34,6 +35,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     port: u16,
     out: &mut Output<Stdout, Stderr>,
 ) -> Result<(), CommandError> {
+    checked_tree_paths(&config)?;
     let root = canonical(root)?;
     let _instance = take_instance_lock(&root)?;
     let startup_snapshot = {
@@ -67,7 +69,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
             .iter()
             .filter_map(|node| node.path.as_deref())
             .map(PathBuf::from),
-    );
+    )?;
     let daemon_id = session.daemon_id().to_owned();
     let state = AppState::new(session, LONG_POLL);
     state
@@ -130,13 +132,110 @@ fn take_instance_lock(root: &Path) -> Result<File, CommandError> {
     }
 }
 
+fn checked_tree_paths(config: &Config) -> Result<(), CommandError> {
+    for path in config.tree.iter().filter_map(|node| node.path.as_deref()) {
+        checked_tree_path(path)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, TcpListener};
     use std::time::Duration;
 
-    use super::{CommandError, Config, Output, serve};
+    use super::{CommandError, Config, Output, checked_tree_paths, serve};
+    use crate::config::TreeNode;
     use tokio::time;
+
+    fn config_with_tree_path(path: &str) -> Config {
+        Config {
+            tree: vec![TreeNode {
+                instance: "ReplicatedStorage/Src".to_owned(),
+                path: Some(path.to_owned()),
+                ..TreeNode::default()
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn serve_refuses_a_tree_path_with_a_parent_component() {
+        for path in ["a/../src", "../src", "src/.."] {
+            assert!(
+                matches!(
+                    checked_tree_paths(&config_with_tree_path(path)),
+                    Err(CommandError::TreePathOutsideRoot { .. })
+                ),
+                "serve accepted the tree path `{path}`"
+            );
+        }
+    }
+
+    #[test]
+    fn serve_refuses_an_absolute_tree_path() {
+        assert!(
+            matches!(
+                checked_tree_paths(&config_with_tree_path("/abs/src")),
+                Err(CommandError::TreePathOutsideRoot { .. })
+            ),
+            "serve accepted an absolute tree path"
+        );
+    }
+
+    #[test]
+    fn serve_accepts_tree_paths_that_stay_inside_the_root() {
+        for path in ["src", "./src", "packages/Shared"] {
+            assert!(
+                checked_tree_paths(&config_with_tree_path(path)).is_ok(),
+                "serve refused the tree path `{path}`"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn a_dot_tree_path_is_accepted_and_serve_reaches_the_bind() {
+        for path in [".", "./"] {
+            let root = tempfile::tempdir().unwrap();
+            let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = taken.local_addr().unwrap().port();
+            let mut out = Output::new(Vec::new(), Vec::new());
+            let outcome = time::timeout(
+                Duration::from_secs(10),
+                serve(config_with_tree_path(path), root.path(), port, &mut out),
+            )
+            .await;
+            assert!(
+                matches!(outcome, Ok(Err(CommandError::Bind { .. }))),
+                "serve refused the tree path `{path}`: {outcome:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_tree_path_is_refused_before_the_instance_lock_is_taken() {
+        let root = tempfile::tempdir().unwrap();
+        let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let mut out = Output::new(Vec::new(), Vec::new());
+        let outcome = time::timeout(
+            Duration::from_secs(10),
+            serve(
+                config_with_tree_path("a/../src"),
+                root.path(),
+                port,
+                &mut out,
+            ),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Ok(Err(CommandError::TreePathOutsideRoot { .. }))),
+            "serve did not refuse the tree path first: {outcome:?}"
+        );
+        assert!(
+            !root.path().join(".naht").exists(),
+            "serve wrote .naht before refusing the tree path"
+        );
+    }
 
     #[tokio::test]
     async fn a_taken_port_fails_instead_of_hanging() {

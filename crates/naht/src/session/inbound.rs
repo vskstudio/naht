@@ -2,6 +2,7 @@ use super::Session;
 use super::transaction::{BlobsJournal, Journal, Journaled, Transaction};
 use super::{MASS_DELETE_WARN, SessionError};
 use naht_core::binary::{BlobInstance, BlobPatch};
+use naht_core::mapper::{flat_init_path, init_flat_path, init_folder};
 use naht_core::protocol::{Change, EventKind, Outcome};
 use naht_core::reconciler::{self, Direction, Patch, PatchKind, TextInstance};
 use naht_core::state::InstanceRecord;
@@ -30,15 +31,8 @@ impl Session {
     ///
     /// Returns [`SessionError`] when a change cannot be applied.
     pub fn apply_changes(&mut self, changes: Vec<Change>) -> Result<(), SessionError> {
-        let deleted: Vec<String> = changes
-            .iter()
-            .filter_map(|change| match change {
-                Change::Delete { path } => Some(path.clone()),
-                Change::Upsert { .. } => None,
-            })
-            .collect();
         let mut batch = Transaction::begin(self)?;
-        batch.stage_text_changes(changes)?;
+        let deleted = batch.stage_text_changes(changes)?;
         batch.reconcile_all()?;
         batch.remove_emptied_dirs(&deleted);
         batch.commit();
@@ -46,17 +40,29 @@ impl Session {
     }
 
     pub(super) fn remove_emptied_dirs(&mut self, deleted: &[String]) {
+        let session = &*self;
         let candidates: BTreeSet<&Path> = deleted
             .iter()
-            .flat_map(|path| Path::new(path).ancestors())
-            .filter(|candidate| self.may_remove_emptied_dir(candidate))
+            .flat_map(|path| {
+                let own_folder = init_folder(path).map(Path::new);
+                Path::new(path).ancestors().filter(move |candidate| {
+                    session.may_remove_emptied_dir(candidate)
+                        || (Some(*candidate) == own_folder
+                            && session.may_remove_init_folder(candidate))
+                })
+            })
             .collect();
         let mut dirs: Vec<&Path> = candidates.into_iter().collect();
         dirs.sort_by_key(|dir| Reverse(dir.components().count()));
         remove_emptied_dirs_in(&mut self.vfs, &mut self.journal, &dirs);
     }
 
-    pub(super) fn stage_text_changes(&mut self, changes: Vec<Change>) -> Result<(), SessionError> {
+    pub(super) fn stage_text_changes(
+        &mut self,
+        changes: Vec<Change>,
+    ) -> Result<Vec<String>, SessionError> {
+        let mut upserts = Vec::new();
+        let mut removals = Vec::new();
         for change in changes {
             match change {
                 Change::Upsert {
@@ -65,18 +71,65 @@ impl Session {
                     content,
                 } => {
                     self.vfs.validate_path(&path)?;
-                    reconciler::record_studio_side(&self.store, &path, &class, Some(&content))?;
-                    let instance = TextInstance::new(path.clone(), class, content);
-                    self.write_studio(path, Some(instance));
+                    upserts.push((path, class, content));
                 }
                 Change::Delete { path } => {
                     self.vfs.validate_path(&path)?;
-                    reconciler::record_studio_deletion(&self.store, &path)?;
-                    self.write_studio(path, None);
+                    removals.push(path);
                 }
             }
         }
-        Ok(())
+        let upserted: BTreeSet<String> = upserts.iter().map(|(path, _, _)| path.clone()).collect();
+        let deleted: BTreeSet<String> = removals.iter().cloned().collect();
+        let mut resolved_upserts = BTreeSet::new();
+        for (path, class, content) in upserts {
+            let path = self.batch_target(&path, &upserted, &deleted);
+            reconciler::record_studio_side(&self.store, &path, &class, Some(&content))?;
+            resolved_upserts.insert(path.clone());
+            let instance = TextInstance::new(path.clone(), class, content);
+            self.write_studio(path, Some(instance));
+        }
+        let mut emptied = Vec::with_capacity(removals.len());
+        for path in removals {
+            let path = self.batch_target(&path, &resolved_upserts, &deleted);
+            if resolved_upserts.contains(&path) {
+                continue;
+            }
+            reconciler::record_studio_deletion(&self.store, &path)?;
+            self.write_studio(path.clone(), None);
+            emptied.push(path);
+        }
+        Ok(emptied)
+    }
+
+    fn batch_target(
+        &self,
+        path: &str,
+        upserted: &BTreeSet<String>,
+        deleted: &BTreeSet<String>,
+    ) -> String {
+        let unclaimed =
+            |candidate: &str| !upserted.contains(candidate) && !deleted.contains(candidate);
+        if let (Some(flat), Some(folder)) = (init_flat_path(path), init_folder(path)) {
+            let folder_prefix = format!("{folder}/");
+            let folder_is_shared = upserted
+                .iter()
+                .any(|other| other.as_str() != path && other.starts_with(&folder_prefix));
+            if self.vfs.exists(Path::new(&flat))
+                && !self.vfs.exists(Path::new(folder))
+                && !folder_is_shared
+                && unclaimed(&flat)
+            {
+                return flat;
+            }
+        } else if let Some(init) = flat_init_path(path)
+            && self.vfs.exists(Path::new(&init))
+            && !self.vfs.exists(Path::new(path))
+            && unclaimed(&init)
+        {
+            return init;
+        }
+        path.to_owned()
     }
 
     fn write_studio(&mut self, path: String, instance: Option<TextInstance>) {

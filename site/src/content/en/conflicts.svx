@@ -56,6 +56,20 @@ naht resolve src/Hello.luau # clears the freeze; refuses while markers remain
 accidentally commit a half-resolved file. Once the markers are gone and the path is cleared, sync
 resumes for that path automatically.
 
+## Resolving a binary conflict
+
+A binary conflict has no markers to delete, so `naht resolve` needs the side to keep:
+
+```sh
+naht resolve --keep disk src/Map.terrain    # the disk file wins: its bytes go to Studio
+naht resolve --keep studio src/Map.terrain  # the Studio copy wins: its bytes replace the file
+```
+
+`--keep disk` clears the freeze, and the next sync pushes the disk bytes to Studio. It is refused when
+the disk file is missing. `--keep studio` writes the Studio bytes over the file, or recreates the file
+from Studio when it is missing. A binary path refuses a bare `naht resolve`, and a text file refuses
+`--keep`.
+
 <Callout type="warning">
 
 Don't delete the file to "fix" a conflict. That's a real deletion that will sync. Edit the file,

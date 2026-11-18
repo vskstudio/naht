@@ -36,6 +36,7 @@ Terrain is read/written via `ReadVoxels`/`WriteVoxels` and synced as one opaque 
 last-writer-wins. If **both** sides changed the terrain since the base, Naht **freezes** it rather than
 guessing. The same never-overwrite principle as text [conflicts](#/docs/conflicts), applied to binary.
 
+To clear a frozen terrain, keep one side with `naht resolve --keep disk|studio` (see [Conflicts](#/docs/conflicts)).
 <Callout type="note">
 
 When `terrain_sync` is **off** (the default), terrain is simply flagged as unsynced: reported, not

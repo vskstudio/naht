@@ -19,8 +19,8 @@ local fs = require("@lune/fs")
 local serde = require("@lune/serde")
 
 local GOLDEN = {
-	server_info = "87b070726f746f636f6c5f76657273696f6e02ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490",
-	patch_batch = "82a6637572736f7202a7706174636865739185a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
+	server_info = "87b070726f746f636f6c5f76657273696f6e03ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490",
+	patch_batch = "82a6637572736f7202a7706174636865739186a373657101a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
 	change_batch = "81a76368616e6765739281a655707365727483a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a7636f6e74656e74a872657475726e203281a644656c65746581a470617468aa7372632f422e6c756175",
 	blob_patch_batch = "82a6637572736f7201a7706174636865739185a470617468af5465727261696e2e7465727261696ea5636c617373a75465727261696ea9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74c4050001ff807f",
 }
@@ -77,11 +77,11 @@ local function noop() end
 
 suite("the server_info golden decodes to the expected fields and a matching version is accepted", function()
 	local info = MessagePack.decode(fromHex(GOLDEN.server_info))
-	check("server_info protocol_version", info.protocol_version == 2)
+	check("server_info protocol_version", info.protocol_version == 3)
 	check("server_info project_name", info.project_name == "demo")
 	check("server_info serve_place_id", info.serve_place_id == 123)
 	check("server_info daemon_id", info.daemon_id == "d-1")
-	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 2)
+	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 3)
 	check(
 		"mismatched protocol version is rejected",
 		not pcall(Protocol.assertCompatible, {
@@ -317,6 +317,9 @@ local function newNode(className: string, name: string): any
 	}
 	node.GetPropertyChangedSignal = function(_, _property)
 		return node.sourceChanged
+	end
+	node.GetChildren = function(self)
+		return table.clone(self.children)
 	end
 	return node
 end
@@ -571,6 +574,62 @@ suite("a same-named Folder does not block a ModuleScript", function()
 			countNamed(root, "Utils") == 2 and script ~= nil and script.Source == "print(1)"
 		)
 		check("the Folder Utils keeps its children", folder ~= nil and tree.findChild(folder, "Helper") ~= nil)
+end)
+
+suite("an init.luau patch makes its directory a ModuleScript of the directory's name", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		local node = tree.findChild(root, "Folder")
+		check(
+			"an init.luau patch makes its directory a ModuleScript of the directory's name",
+			countNamed(root, "Folder") == 1 and node ~= nil and node.ClassName == "ModuleScript" and node.Source == "return 1"
+		)
+		check("an init.luau patch creates no child named init", node ~= nil and tree.findChild(node, "init") == nil)
+end)
+
+suite("an init.server.luau patch makes its directory a Script", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Boot/init.server.luau", class = "Script", kind = "Create", content = "print(1)" })
+		local node = tree.findChild(root, "Boot")
+		check(
+			"an init.server.luau patch makes its directory a Script",
+			node ~= nil and node.ClassName == "Script" and node.Source == "print(1)"
+		)
+end)
+
+suite("a child of an init directory lands under the script that stands for it", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		applier:apply({ path = "Folder/Child.luau", class = "ModuleScript", kind = "Create", content = "return 2" })
+		local node = tree.findChild(root, "Folder")
+		check(
+			"a child of an init directory lands under the script that stands for it",
+			countNamed(root, "Folder") == 1 and node ~= nil and tree.findChild(node, "Child") ~= nil
+		)
+end)
+
+suite("an init patch over a Folder holding children keeps them under the script", function()
+		local tree, root, applier = freshApplier()
+		local folder = place(tree, "Folder", "Dir", root)
+		place(tree, "ModuleScript", "Kid", folder)
+		applier:apply({ path = "Dir/init.luau", class = "ModuleScript", kind = "Create", content = "return 3" })
+		local node = tree.findChild(root, "Dir")
+		check(
+			"an init patch over a Folder holding children keeps them under the script",
+			countNamed(root, "Dir") == 1 and node ~= nil and node.ClassName == "ModuleScript" and tree.findChild(node, "Kid") ~= nil
+		)
+end)
+
+suite("deleting init.luau turns its directory back into a Folder keeping its children", function()
+		local tree, root, applier = freshApplier()
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Create", content = "return 1" })
+		applier:apply({ path = "Folder/Child.luau", class = "ModuleScript", kind = "Create", content = "return 2" })
+		applier:apply({ path = "Folder/init.luau", class = "ModuleScript", kind = "Delete" })
+		local node = tree.findChild(root, "Folder")
+		check(
+			"deleting init.luau turns its directory back into a Folder keeping its children",
+			countNamed(root, "Folder") == 1 and node ~= nil and node.ClassName == "Folder" and tree.findChild(node, "Child") ~= nil
+		)
 end)
 
 suite("apply records the expected echo before the write", function()
@@ -877,7 +936,7 @@ suite("stop during a patch poll applies nothing", function()
 					connection:stop()
 					return {
 						cursor = 1,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
 					}
 				end,
 				postAck = function(_, _paths)
@@ -893,6 +952,43 @@ suite("stop during a patch poll applies nothing", function()
 		connection:_serve(1)
 		check("stop during a patch poll applies nothing", tree.findChild(root, "Late") == nil)
 		check("stop during a patch poll acks nothing", acks == 0)
+end)
+
+suite("a reshape while the daemon's patch is being applied queues nothing", function()
+	local tree, root = studioWorld(true)
+	local connection = Connection.new({
+		postChanges = function(_, _changes) end,
+	}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_attachStudio()
+	local folder = newNode("ModuleScript", "Folder")
+	folder.Parent = root
+	table.insert(root.children, folder)
+	local child = newNode("ModuleScript", "Child")
+	child.Parent = folder
+	table.insert(folder.children, child)
+
+	connection.applying = true
+	root.DescendantAdded:Fire(child)
+	local queuedWhileApplying = next(connection.pendingPush)
+	connection.applying = false
+	connection.pendingPush = {}
+	root.DescendantAdded:Fire(child)
+	local queuedOutsideApply = connection.pendingPush["Folder.luau"] ~= nil
+	connection:stop()
+
+	check(
+		"a reshape while the daemon's patch is being applied queues nothing",
+		queuedWhileApplying == nil,
+		"queued " .. tostring(queuedWhileApplying)
+	)
+	check(
+		"the same reshape outside an apply queues the flat file's delete",
+		queuedOutsideApply,
+		"control did not reshape"
+	)
 end)
 
 suite("a pending push posts nothing after stop", function()
@@ -1049,7 +1145,7 @@ suite("a stop during apply leaves the patch cursor where it was", function()
 				patches = function(_, _cursor)
 					return {
 						cursor = 5,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
 				postAck = function(_, _paths) end,
@@ -1140,11 +1236,361 @@ suite("a stop during the backoff wait leaves the backoff unchanged", function()
 		check("a stop during the backoff wait leaves the backoff unchanged", connection.backoff == 0.05, "backoff " .. tostring(connection.backoff))
 end)
 
+local function cursorsAcrossReconnect(sessionIds: { string }): { number }
+	local tree, root = studioWorld(true)
+	local cursors: { number } = {}
+	local connects = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				connects += 1
+				return { project_name = "demo", session_id = sessionIds[connects] }
+			end,
+			patches = function(_, cursor)
+				table.insert(cursors, cursor)
+				if #cursors == 1 then
+					return { cursor = 3, patches = {} }
+				elseif #cursors == 2 then
+					error("daemon down")
+				end
+				connection:stop()
+				return { cursor = 3, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection:_run(1)
+	return cursors
+end
+
+suite("a reconnect to the same daemon session resumes from the cursor it held", function()
+		local cursors = cursorsAcrossReconnect({ "s1", "s1" })
+		check(
+			"a reconnect to the same daemon session resumes from the cursor it held",
+			cursors[3] == 3,
+			"cursors " .. table.concat(cursors, ",")
+		)
+end)
+
+suite("a reconnect to a restarted daemon session starts the cursor at 0", function()
+		local cursors = cursorsAcrossReconnect({ "s1", "s2" })
+		check(
+			"a reconnect to a restarted daemon session starts the cursor at 0",
+			cursors[3] == 0,
+			"cursors " .. table.concat(cursors, ",")
+		)
+end)
+
+suite("a restarted daemon session drops the acks it was still owed", function()
+	local tree, root = studioWorld(true)
+	local ackedSeqs: { number } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				return { project_name = "demo", session_id = "s2" }
+			end,
+			patches = function(_, _cursor)
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, seqs, _sessionId)
+				for _, seq in seqs do
+					table.insert(ackedSeqs, seq)
+				end
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.sessionId = "s1"
+	connection.pendingAcks = { 7 }
+	connection:_run(1)
+	check(
+		"a restarted daemon session drops the acks it was still owed",
+		not table.find(ackedSeqs, 7),
+		"acked " .. table.concat(ackedSeqs, ",")
+	)
+end)
+
+suite("an ack is sent with the session the plugin is attached to", function()
+	local tree, root = studioWorld(true)
+	local ackedSession: any = nil
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				return { project_name = "demo", session_id = "s1" }
+			end,
+			patches = function(_, _cursor)
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, _seqs, sessionId)
+				ackedSession = sessionId
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.sessionId = "s1"
+	connection.pendingAcks = { 7 }
+	connection:_run(1)
+	check("an ack is sent with the session the plugin is attached to", ackedSession == "s1", tostring(ackedSession))
+end)
+
+suite("a daemon restart during an ack reconnects instead of retrying the ack", function()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local ackCalls = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				return { project_name = "demo", session_id = if infos == 1 then "s1" else "s2" }
+			end,
+			patches = function(_, _cursor)
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, _seqs, _sessionId)
+				ackCalls += 1
+				if ackCalls > 2 then
+					connection:stop()
+					return
+				end
+				error(Client.SESSION_CHANGED)
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.ackBackoff = 0.01
+	connection.sessionId = "s1"
+	connection.pendingAcks = { 7 }
+	connection:_run(1)
+	check(
+		"a daemon restart during an ack reconnects instead of retrying the ack",
+		ackCalls == 1 and infos == 2,
+		"acks " .. tostring(ackCalls) .. ", connects " .. tostring(infos)
+	)
+end)
+
+suite("a restarted daemon session during a poll resets the reconnect backoff to its start", function()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local polls = 0
+	local backoffOnReconnect: any = nil
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				if infos == 2 then
+					backoffOnReconnect = connection.backoff
+				end
+				return { project_name = "demo", session_id = "s1" }
+			end,
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					error(Client.SESSION_CHANGED)
+				end
+				connection:stop()
+				return { cursor = 0, patches = {} }
+			end,
+			blobs = function(_, _cursor)
+				error("no blob poll expected")
+			end,
+			postBlobs = function(_, _blobs) end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.sessionId = "s1"
+	connection:_run(1)
+	check(
+		"a restarted daemon session during a poll resets the reconnect backoff to its start",
+		backoffOnReconnect == 2,
+		"backoff " .. tostring(backoffOnReconnect)
+	)
+end)
+
+suite("a failed text poll ends the blob poll of its epoch before the next handshake", function()
+	local tree, root = studioWorld(true)
+	local textFailed = false
+	local blobCallsAfterFailure = 0
+	local infos = 0
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				if infos == 1 then
+					return { project_name = "demo", session_id = "s1" }
+				end
+				if infos == 3 then
+					connection:stop()
+				end
+				error("daemon down")
+			end,
+			patches = function(_, _cursor, _sessionId)
+				textFailed = true
+				error("daemon down")
+			end,
+			blobs = function(_, _cursor, _sessionId)
+				if textFailed then
+					blobCallsAfterFailure += 1
+				end
+				task.wait(0.01)
+				return { cursor = 0, patches = {} }
+			end,
+			postBlobs = function(_, _blobs) end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection:_run(1)
+	task.wait(0.05)
+	check(
+		"no blob poll starts once the text poll has failed",
+		blobCallsAfterFailure == 0,
+		"blob polls after the failure " .. tostring(blobCallsAfterFailure)
+	)
+end)
+
+suite("a reconnect to the same daemon session resumes the blob cursor it held", function()
+		local tree, root = studioWorld(true)
+		local blobCursors: { number } = {}
+		local textPolls = 0
+		local connection: any = nil
+		connection = Connection.new(
+			{
+				info = function(_, _placeId)
+					return { project_name = "demo", session_id = "s1" }
+				end,
+				patches = function(_, _cursor)
+					textPolls += 1
+					if textPolls == 1 then
+						return { cursor = 0, patches = {} }
+					elseif textPolls == 2 then
+						error("daemon down")
+					end
+					connection:stop()
+					return { cursor = 0, patches = {} }
+				end,
+				blobs = function(_, cursor)
+					table.insert(blobCursors, cursor)
+					if #blobCursors == 1 then
+						return { cursor = 5, patches = {} }
+					end
+					error("no blob patch expected")
+				end,
+				postBlobs = function(_, _blobs) end,
+			},
+			root,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.backoff = 0.01
+		connection.blobBackoff = 0.01
+		connection:_run(1)
+		local resumed = true
+		for index = 2, #blobCursors do
+			if blobCursors[index] ~= 5 then
+				resumed = false
+			end
+		end
+		check(
+			"a reconnect to the same daemon session resumes the blob cursor it held",
+			resumed,
+			"blob cursors " .. table.concat(blobCursors, ",")
+		)
+end)
+
+suite("a rejected text patch holds the cursor at its seq so the next poll asks for it again", function()
+		local _, onState = stateLog()
+		local tree, root = studioWorld(true)
+		lockedSource(tree, "Bad", 1000)
+		local cursors: { number } = {}
+		local connection = Connection.new(
+			{
+				patches = function(_, cursor)
+					table.insert(cursors, cursor)
+					if #cursors == 1 then
+						return {
+							cursor = 3,
+							patches = {
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 2, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+							},
+						}
+					end
+					error("stop")
+				end,
+				postAck = function() end,
+			},
+			root,
+			onState,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		pcall(connection._serve, connection, 1)
+		check("a rejected patch holds the cursor at its seq", cursors[2] == 1, "cursors " .. table.concat(cursors, ","))
+end)
+
 suite("a rejected text patch sets a Warning naming the path and reason", function()
 		local log, onState = stateLog()
 		local tree, root = studioWorld(true)
 		lockedSource(tree, "Bad", 1000)
-		local acks: { { string } } = {}
+		local acks: { { number } } = {}
 		local polls = 0
 		local connection = Connection.new(
 			{
@@ -1154,8 +1600,8 @@ suite("a rejected text patch sets a Warning naming the path and reason", functio
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
-								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 2, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
 							},
 						}
 					end
@@ -1182,14 +1628,14 @@ suite("a rejected text patch sets a Warning naming the path and reason", functio
 				and string.find(last.detail, "Source is locked", 1, true) ~= nil,
 			if last ~= nil then tostring(last.detail) else "no state reported"
 		)
-		check("a rejected text patch is left out of the ack", #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau")
+		check("a rejected text patch is left out of the ack", #acks == 1 and #acks[1] == 1 and acks[1][1] == 2)
 end)
 
 suite("a rejected patch that later applies ends in Connected", function()
 		local log, onState = stateLog()
 		local tree, root = studioWorld(true)
 		lockedSource(tree, "Bad", 1)
-		local bad = { kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" }
+		local bad = { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" }
 		local polls = 0
 		local connection = Connection.new(
 			{
@@ -1228,9 +1674,9 @@ suite("a conflict plus a success in one batch ends in Conflict", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
-								{ kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" },
-								{ kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
+								{ seq = 2, kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" },
+								{ seq = 3, kind = "Upsert", direction = "ToStudio", path = "Bad.luau", class = "ModuleScript", content = "B" },
 							},
 						}
 					end
@@ -1263,13 +1709,13 @@ suite("a later success on the conflicted path ends the Conflict", function()
 					if polls == 1 then
 						return {
 							cursor = 1,
-							patches = { { kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" } },
+							patches = { { seq = 1, kind = "Conflict", direction = "ToStudio", path = "C.luau", class = "ModuleScript" } },
 						}
 					end
 					if polls == 2 then
 						return {
 							cursor = 2,
-							patches = { { kind = "Upsert", direction = "ToStudio", path = "C.luau", class = "ModuleScript", content = "C" } },
+							patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "C.luau", class = "ModuleScript", content = "C" } },
 						}
 					end
 					error("stop")
@@ -1543,7 +1989,7 @@ end)
 
 suite("a 503 on ack keeps the applied paths and retries them", function()
 		local log, onState = stateLog()
-		local acks: { { string } } = {}
+		local acks: { { number } } = {}
 		local ackAttempts = 0
 		local patchCalls = 0
 		local tree, root = studioWorld(true)
@@ -1556,7 +2002,7 @@ suite("a 503 on ack keeps the applied paths and retries them", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
 							},
 						}
 					end
@@ -1584,7 +2030,7 @@ suite("a 503 on ack keeps the applied paths and retries them", function()
 		pcall(connection._serve, connection, 1)
 		check(
 			"a 503 on ack keeps the applied paths and retries them",
-			ackAttempts == 2 and #acks == 1 and #acks[1] == 1 and acks[1][1] == "Good.luau",
+			ackAttempts == 2 and #acks == 1 and #acks[1] == 1 and acks[1][1] == 1,
 			string.format("attempts %d, acks %d", ackAttempts, #acks)
 		)
 		local warned = false
@@ -1609,7 +2055,7 @@ suite("a connect with a frozen path reports it as a Conflict and never Connected
 		connection = Connection.new(
 			{
 				info = function(_, _placeId)
-					return { protocol_version = 2, project_name = "demo", conflicted = { "Frozen.luau" } }
+					return { protocol_version = 3, project_name = "demo", conflicted = { "Frozen.luau" } }
 				end,
 				patches = function(_, _cursor)
 					connection:stop()
@@ -1699,7 +2145,7 @@ suite("a stop between patch poll and apply writes nothing", function()
 					connection:stop()
 					return {
 						cursor = 3,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
 				postAck = function(_, _paths)
@@ -2003,7 +2449,7 @@ local function echoConnection(syncEcho: boolean)
 				if polls == 1 then
 					return {
 						cursor = 1,
-						patches = { { kind = "Upsert", direction = "ToStudio", path = "Z.luau", class = "ModuleScript", content = "A" } },
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Z.luau", class = "ModuleScript", content = "A" } },
 					}
 				end
 				error("stop")
@@ -2025,6 +2471,142 @@ local function editStudio(node: any, content: string)
 	node.Source = content
 	node.sourceChanged:Fire()
 end
+
+suite("a script with children is named by its init file, the way the daemon writes it", function()
+		local initNames = { ModuleScript = "init.luau", Script = "init.server.luau", LocalScript = "init.client.luau" }
+		for className, initName in initNames do
+			local tree, root = studioWorld(true)
+			local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+			local script = place(tree, className, "Folder", root)
+			place(tree, "ModuleScript", "Child", script)
+			local path = connection:_pathOf(script)
+			check(
+				"a " .. className .. " with children is named Folder/" .. initName,
+				path == "Folder/" .. initName,
+				"path " .. tostring(path)
+			)
+			local freshTree, freshRoot, applier = freshApplier()
+			applier:apply({ path = "Folder/" .. initName, class = className, kind = "Create", content = "return 1" })
+			local made = freshTree.findChild(freshRoot, "Folder")
+			check(
+				"the daemon path for a " .. className .. " with children rebuilds a " .. className,
+				made ~= nil and made.ClassName == className,
+				"made " .. tostring(made and made.ClassName)
+			)
+		end
+end)
+
+suite("a script that gains its first child moves from its file to init, and back", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.session = 1
+		connection:_attachStudio()
+		local script = place(tree, "ModuleScript", "Folder", root)
+		connection.pendingPush = {}
+		local child = place(tree, "ModuleScript", "Child", script)
+		local removedFile = connection.pendingPush["Folder.luau"]
+		local newInit = connection.pendingPush["Folder/init.luau"]
+		check(
+			"gaining a child deletes the childless file",
+			removedFile ~= nil and removedFile.kind == "Delete",
+			"Folder.luau " .. tostring(removedFile and removedFile.kind)
+		)
+		check(
+			"gaining a child upserts the init file",
+			newInit ~= nil and newInit.kind == "Upsert",
+			"Folder/init.luau " .. tostring(newInit and newInit.kind)
+		)
+		connection.pendingPush = {}
+		tree.destroy(child)
+		task.wait(0.01)
+		local deletedInit = connection.pendingPush["Folder/init.luau"]
+		local restoredFile = connection.pendingPush["Folder.luau"]
+		check(
+			"losing the last child deletes the init file",
+			deletedInit ~= nil and deletedInit.kind == "Delete",
+			"Folder/init.luau " .. tostring(deletedInit and deletedInit.kind)
+		)
+		check(
+			"losing the last child upserts the childless file",
+			restoredFile ~= nil and restoredFile.kind == "Upsert",
+			"Folder.luau " .. tostring(restoredFile and restoredFile.kind)
+		)
+		connection:stop()
+end)
+
+suite("destroying a script with children leaves no file behind", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.session = 1
+		connection:_attachStudio()
+		local script = place(tree, "Script", "Folder", root)
+		place(tree, "ModuleScript", "Child", script)
+		connection.pendingPush = {}
+		tree.destroy(script)
+		task.wait(0.01)
+		local initDelete = connection.pendingPush["Folder/init.server.luau"]
+		check(
+			"destroying the script deletes its init file",
+			initDelete ~= nil and initDelete.kind == "Delete",
+			"Folder/init.server.luau " .. tostring(initDelete and initDelete.kind)
+		)
+		check(
+			"destroying the script does not resurrect its childless file",
+			connection.pendingPush["Folder.server.luau"] == nil,
+			"Folder.server.luau " .. tostring(connection.pendingPush["Folder.server.luau"] and connection.pendingPush["Folder.server.luau"].kind)
+		)
+		connection:stop()
+end)
+
+suite("a rejected patch batch waits 1 s, then doubles per rejection up to the cap", function()
+		local tree, root = studioWorld(true)
+		local connection = Connection.new({}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local waits = {}
+		for _ = 1, 8 do
+			table.insert(waits, connection:_takeRejectedDelay())
+		end
+		check(
+			"a rejected batch waits 1, 2, 4, 8, 16, 32, then the 60 s cap",
+			table.concat(waits, " ") == "1 2 4 8 16 32 60 60",
+			"waits " .. table.concat(waits, " ")
+		)
+end)
+
+suite("a clean batch resets the rejected wait to its first step", function()
+		local tree, root = studioWorld(true)
+		local polls = 0
+		local connection = Connection.new(
+			{
+				patches = function(_, _cursor)
+					polls += 1
+					if polls == 1 then
+						return {
+							cursor = 1,
+							patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Z.luau", class = "ModuleScript", content = "A" } },
+						}
+					end
+					error("stop")
+				end,
+				postAck = function(_, _paths) end,
+			},
+			root,
+			noop,
+			deps(extentsTerrainWith(extentsRegion), tree)
+		)
+		connection.running = true
+		connection.session = 1
+		connection.rejectedBackoff = 8
+		connection:_attachStudio()
+		pcall(connection._serve, connection, 1)
+		check(
+			"a clean batch resets the rejected wait to 1 s",
+			connection.rejectedBackoff == 1,
+			"rejected wait " .. tostring(connection.rejectedBackoff)
+		)
+		connection:stop()
+end)
 
 suite("sync echo: edit to B then revert to A pushes A", function()
 		local connection, node = echoConnection(true)
@@ -2118,7 +2700,7 @@ end)
 
 suite("a same-named folder does not block a patch, so it is acked", function()
 		local tree, root = studioWorld(true)
-		local acked: { string } = {}
+		local acked: { number } = {}
 		local blockedPolls = 0
 		place(tree, "Folder", "Utils", root)
 		local connection = Connection.new(
@@ -2129,8 +2711,8 @@ suite("a same-named folder does not block a patch, so it is acked", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Utils.luau", class = "ModuleScript", content = "x" },
-								{ kind = "Upsert", direction = "ToStudio", path = "Other.luau", class = "ModuleScript", content = "y" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Utils.luau", class = "ModuleScript", content = "x" },
+								{ seq = 2, kind = "Upsert", direction = "ToStudio", path = "Other.luau", class = "ModuleScript", content = "y" },
 							},
 						}
 					end
@@ -2149,7 +2731,7 @@ suite("a same-named folder does not block a patch, so it is acked", function()
 		pcall(connection._serve, connection, 1)
 		check(
 			"a same-named folder does not block a patch, so it is acked",
-			#acked == 2 and acked[1] == "Utils.luau" and acked[2] == "Other.luau",
+			#acked == 2 and acked[1] == 1 and acked[2] == 2,
 			"acked " .. table.concat(acked, ",")
 		)
 end)
@@ -2619,7 +3201,7 @@ suite("a refused ack is not retried", function()
 						return {
 							cursor = 1,
 							patches = {
-								{ kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
+								{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" },
 							},
 						}
 					end
@@ -2666,7 +3248,7 @@ suite("a transient ack failure retries one entry per path", function()
 				patches = function(_, _cursor)
 					patchCalls += 1
 					if patchCalls == 1 then
-						local same = { kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" }
+						local same = { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Good.luau", class = "ModuleScript", content = "G" }
 						return { cursor = 1, patches = { same, same } }
 					end
 					if patchCalls == 2 or patchCalls == 3 then
@@ -3387,6 +3969,22 @@ local function reply(status: number, body: string)
 	return { Success = status >= 200 and status < 300, StatusCode = status, Body = body }
 end
 
+suite("an ack names its session and a 409 on /ack reports a changed session", function()
+	local acks = fakeHttp(function(_options)
+		return reply(409, "")
+	end)
+	local client = Client.new("http://127.0.0.1:34872", 123, acks)
+	local ok, err = pcall(function()
+		client:postAck({ 7 }, "s1")
+	end)
+	check("a 409 on /ack is reported as a session change", not ok and Client.isSessionChanged(tostring(err)), tostring(err))
+	check(
+		"an ack names its session in the query",
+		#acks.calls == 1 and string.find(acks.calls[1].Url, "/ack?session=s1", 1, true) ~= nil,
+		if #acks.calls == 1 then acks.calls[1].Url else "no call"
+	)
+end)
+
 suite("the client sends the headers on every request and reports an outdated plugin", function()
 	local function answerEverything(options)
 		if string.find(options.Url, "/info", 1, true) then
@@ -3402,10 +4000,10 @@ suite("the client sends the headers on every request and reports an outdated plu
 	local everything = fakeHttp(answerEverything)
 	local everyRequest = Client.new("http://127.0.0.1:34872", 123, everything)
 	everyRequest:info()
-	everyRequest:patches(0)
-	everyRequest:blobs(0)
+	everyRequest:patches(0, "s1")
+	everyRequest:blobs(0, "s1")
 	everyRequest:postBlobs({})
-	everyRequest:postAck({})
+	everyRequest:postAck({}, "s1")
 	everyRequest:postChanges({})
 	local headersOnEveryRequest = #everything.calls == 6
 	for _, call in everything.calls do
@@ -3564,11 +4162,134 @@ suite("an incompatible protocol version is terminal and names the side to update
 	connection:stop()
 	check("an incompatible daemon detaches the Studio listeners", root.DescendantAdded:count() == 0)
 
-	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 3 }))
+	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 4 }))
 	check(
 		"a newer daemon tells the user to update the naht plugin",
 		string.find(tostring(newerDaemon), "update the naht plugin", 1, true) ~= nil
 	)
+end)
+
+suite("an ack that failed is resent after a reconnect in the same session", function()
+	local tree, root = studioWorld(true)
+	local infos = 0
+	local polls = 0
+	local ackBodies: { { number } } = {}
+	local connection: any = nil
+	connection = Connection.new(
+		{
+			info = function(_, _placeId)
+				infos += 1
+				return { project_name = "demo", session_id = "s1", conflicted = {} }
+			end,
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return {
+						cursor = 2,
+						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Pending.luau", class = "ModuleScript", content = "P" } },
+					}
+				end
+				if polls >= 4 then
+					connection:stop()
+				end
+				error({ status = 500, message = "naht: /patches returned 500" })
+			end,
+			blobs = function(_, _cursor)
+				task.wait(0.01)
+				return { cursor = 0, patches = {} }
+			end,
+			postBlobs = function(_, _blobs) end,
+			postAck = function(_, seqs)
+				table.insert(ackBodies, seqs)
+				if #ackBodies == 1 then
+					error({ status = 500, message = "naht: /ack returned 500" })
+				end
+				connection:stop()
+			end,
+		},
+		root,
+		noop,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection.running = true
+	connection.session = 1
+	connection.backoff = 0.01
+	connection.ackBackoff = 0.01
+	connection:_run(1)
+
+	check("the reconnect handshook again in the same session", infos >= 2, "handshakes " .. tostring(infos))
+	check(
+		"the first ack is refused, so seq 1 is still unacked",
+		ackBodies[1] ~= nil and ackBodies[1][1] == 1,
+		"acks " .. tostring(#ackBodies) .. " polls " .. tostring(polls)
+	)
+	check(
+		"the reconnect resends seq 1 before polling again",
+		ackBodies[2] ~= nil and ackBodies[2][1] == 1,
+		"acks " .. tostring(#ackBodies) .. " polls " .. tostring(polls)
+	)
+end)
+
+suite("a poll names the session it handshook with, and a 409 sends the plugin back to /info", function()
+	local tree, root = studioWorld(true)
+	local log, onState = stateLog()
+	local infos = 0
+	local polls: { string } = {}
+	local connection: any = nil
+	local http = fakeHttp(function(options)
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			infos += 1
+			return reply(
+				200,
+				MessagePack.encode({
+					protocol_version = 3,
+					server_version = "0.1.0",
+					project_name = "demo",
+					session_id = if infos == 1 then "s1" else "s2",
+					daemon_id = "d-1",
+				})
+			)
+		end
+		if string.find(options.Url, "/blobs", 1, true) ~= nil then
+			task.wait(0.01)
+			return reply(200, MessagePack.encode({ cursor = 0, patches = {} }))
+		end
+		table.insert(polls, options.Url)
+		if #polls == 1 then
+			return reply(409, "")
+		end
+		connection:stop()
+		return reply(200, MessagePack.encode({ cursor = 0, patches = {} }))
+	end)
+	connection = Connection.new(
+		Client.new("http://127.0.0.1:34872", 123, http),
+		root,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection:start()
+	waitFor(function()
+		return #polls >= 2
+	end)
+	task.wait(0.05)
+	connection:stop()
+
+	check(
+		"a poll names the session the handshake returned",
+		polls[1] ~= nil and string.find(polls[1], "/patches?cursor=0&session=s1", 1, true) ~= nil,
+		"polls " .. table.concat(polls, " ")
+	)
+	check("a 409 sends the plugin back to /info", infos == 2, "handshakes " .. tostring(infos))
+	check(
+		"the re-handshake polls the new session from cursor 0",
+		polls[2] ~= nil and string.find(polls[2], "/patches?cursor=0&session=s2", 1, true) ~= nil,
+		"polls " .. table.concat(polls, " ")
+	)
+	local reportedRestart = false
+	for _, entry in log do
+		reportedRestart = reportedRestart or (entry.detail ~= nil and Client.isSessionChanged(entry.detail))
+	end
+	check("a 409 is reported as a restart, not an unknown failure", reportedRestart)
 end)
 
 suite("a 400 naming an invalid path drops it, warns about it and never resends it", function()

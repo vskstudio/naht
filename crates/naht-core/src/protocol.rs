@@ -15,7 +15,7 @@ use rmp_serde::encode;
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
 /// it so an incompatible plugin/daemon pair fails loudly instead of misreading each other.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Request header every client sends to identify itself as the Studio plugin or the local CLI.
 pub const CLIENT_HEADER: &str = "x-naht-client";
@@ -54,7 +54,18 @@ pub struct PatchBatch {
     /// The sequence number to pass as the next request's cursor.
     pub cursor: u64,
     /// Patches flowing filesystem → Studio, in order.
-    pub patches: Vec<Patch>,
+    pub patches: Vec<SequencedPatch>,
+}
+
+/// A filesystem → Studio patch stamped with its queue sequence, which the plugin returns in
+/// [`Ack::seqs`] once it has applied the patch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SequencedPatch {
+    /// The queue sequence to acknowledge once the patch is applied.
+    pub seq: u64,
+    /// The patch itself, flattened so its fields sit beside `seq` on the wire.
+    #[serde(flatten)]
+    pub patch: Patch,
 }
 
 /// One Studio-side change pushed to `POST /changes`.
@@ -155,12 +166,14 @@ pub struct SyncActivity {
     pub events: Vec<SyncEvent>,
 }
 
-/// Confirmation from the plugin that it applied the given paths' patches. Only acked paths advance
-/// the daemon's base; unacked ones re-diff on the next cycle, so a half-applied batch loses nothing.
+/// The plugin's confirmation of the patches it applied, by queue sequence.
+///
+/// Only acked patches advance the daemon's base. A sequence the daemon has since superseded is
+/// ignored, so a late ack never confirms newer content than the plugin holds.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Ack {
-    /// The project-relative paths whose patches were successfully applied.
-    pub paths: Vec<String>,
+    /// The queue sequences of the patches the plugin successfully applied.
+    pub seqs: Vec<u64>,
 }
 
 /// Errors from encoding or decoding a protocol message.
@@ -277,12 +290,15 @@ mod tests {
     fn patch_batch_round_trips_through_msgpack() {
         let batch = PatchBatch {
             cursor: 7,
-            patches: vec![Patch {
-                path: "src/A.luau".to_owned(),
-                class: "ModuleScript".to_owned(),
-                direction: Direction::ToStudio,
-                kind: PatchKind::Update,
-                content: Some("return 2".to_owned()),
+            patches: vec![SequencedPatch {
+                seq: 4,
+                patch: Patch {
+                    path: "src/A.luau".to_owned(),
+                    class: "ModuleScript".to_owned(),
+                    direction: Direction::ToStudio,
+                    kind: PatchKind::Update,
+                    content: Some("return 2".to_owned()),
+                },
             }],
         };
         let bytes = to_msgpack(&batch).unwrap();
@@ -380,12 +396,15 @@ mod tests {
     fn patch_batch_encodes_to_the_bytes_the_plugin_suite_pins() {
         let batch = PatchBatch {
             cursor: 2,
-            patches: vec![Patch {
-                path: "src/A.luau".to_owned(),
-                class: "ModuleScript".to_owned(),
-                direction: Direction::ToStudio,
-                kind: PatchKind::Update,
-                content: Some("return 1".to_owned()),
+            patches: vec![SequencedPatch {
+                seq: 1,
+                patch: Patch {
+                    path: "src/A.luau".to_owned(),
+                    class: "ModuleScript".to_owned(),
+                    direction: Direction::ToStudio,
+                    kind: PatchKind::Update,
+                    content: Some("return 1".to_owned()),
+                },
             }],
         };
         assert_eq!(hex(&to_msgpack(&batch).unwrap()), pinned_hex("patch_batch"));

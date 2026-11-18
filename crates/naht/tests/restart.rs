@@ -20,8 +20,9 @@ fn open(root: &Path, terrain_sync: bool) -> Session {
     Session::new(root, store, "demo", None, terrain_sync).unwrap()
 }
 
-fn paths(patches: &[Patch]) -> Vec<String> {
-    patches.iter().map(|patch| patch.path.clone()).collect()
+fn patches_of(session: &Session, cursor: u64) -> (u64, Vec<Patch>) {
+    let (next, sequenced) = session.take_patches(cursor);
+    (next, sequenced.into_iter().map(|item| item.patch).collect())
 }
 
 fn synced_and_acked(root: &Path, content: &str) {
@@ -30,7 +31,8 @@ fn synced_and_acked(root: &Path, content: &str) {
     let mut before = open(root, false);
     before.rescan().unwrap();
     let (_, first) = before.take_patches(0);
-    before.ack(&paths(&first)).unwrap();
+    let seqs: Vec<u64> = first.iter().map(|patch| patch.seq).collect();
+    before.ack(&seqs).unwrap();
 }
 
 #[test]
@@ -41,7 +43,7 @@ fn a_restart_leaves_an_unchanged_file_alone() {
 
     let mut after = open(root, false);
     after.rescan().unwrap();
-    let (_, patches) = after.take_patches(0);
+    let (_, patches) = patches_of(&after, 0);
 
     assert!(
         root.join(FILE).exists(),
@@ -59,7 +61,7 @@ fn an_edit_made_while_the_daemon_was_down_becomes_a_studio_update() {
 
     let mut after = open(root, false);
     after.rescan().unwrap();
-    let (_, patches) = after.take_patches(0);
+    let (_, patches) = patches_of(&after, 0);
 
     assert_eq!(patches.len(), 1, "expected one patch, got {patches:?}");
     assert_eq!(patches[0].direction, Direction::ToStudio);
@@ -209,13 +211,13 @@ fn a_resolved_conflict_reaches_studio_on_the_next_reconcile() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut session = conflicted(root);
-    let (cursor, _) = session.take_patches(0);
+    let (cursor, _) = patches_of(&session, 0);
 
     fs::write(root.join(FILE), "local a = 99\n").unwrap();
-    commands::resolve(root, FILE).unwrap();
+    commands::resolve(root, FILE, None).unwrap();
     session.rescan().unwrap();
 
-    let (_, patches) = session.take_patches(cursor);
+    let (_, patches) = patches_of(&session, cursor);
     assert_eq!(
         patches.len(),
         1,
@@ -245,13 +247,13 @@ fn a_studio_edit_made_while_frozen_survives_a_restart() {
 
     let mut restarted = open(root, false);
     restarted.rescan().unwrap();
-    restarted.take_patches(0);
+    patches_of(&restarted, 0);
     fs::write(root.join(FILE), "local a = 99\n").unwrap();
-    commands::resolve(root, FILE).unwrap();
+    commands::resolve(root, FILE, None).unwrap();
 
     let mut resolved = open(root, false);
     resolved.rescan().unwrap();
-    let (_, patches) = resolved.take_patches(0);
+    let (_, patches) = patches_of(&resolved, 0);
 
     assert!(
         patches
@@ -279,7 +281,7 @@ fn a_resolved_conflict_reaches_studio_after_a_restart() {
 
     let mut restarted = open(root, false);
     restarted.rescan().unwrap();
-    let (_, frozen) = restarted.take_patches(0);
+    let (_, frozen) = patches_of(&restarted, 0);
     assert!(frozen.is_empty(), "a frozen path re-emitted {frozen:?}");
     assert_eq!(
         commands::status(root).unwrap().conflicted,
@@ -288,11 +290,11 @@ fn a_resolved_conflict_reaches_studio_after_a_restart() {
     drop(restarted);
 
     fs::write(root.join(FILE), "local a = 99\n").unwrap();
-    commands::resolve(root, FILE).unwrap();
+    commands::resolve(root, FILE, None).unwrap();
 
     let mut resolved = open(root, false);
     resolved.rescan().unwrap();
-    let (_, patches) = resolved.take_patches(0);
+    let (_, patches) = patches_of(&resolved, 0);
     assert_eq!(
         patches.len(),
         1,

@@ -1,6 +1,7 @@
 use super::error::CommandError;
 use super::files::{dir_name, write_file};
 use crate::config::{Config, INTERNAL_DIR, PROJECT_FILE};
+use crate::project_path::stays_inside_project;
 use naht_core::mapper;
 use naht_core::snapshot::Snapshot;
 use naht_core::vfs::DiskVfs;
@@ -9,7 +10,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 struct RojoProject {
@@ -291,13 +292,9 @@ pub(super) fn assemble_project_snapshot(
     Ok((snapshot, warnings))
 }
 
-fn checked_tree_path(path: &str) -> Result<&Path, CommandError> {
+pub(super) fn checked_tree_path(path: &str) -> Result<&Path, CommandError> {
     let relative = Path::new(path);
-    let stays_inside = !relative.as_os_str().is_empty()
-        && relative
-            .components()
-            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
-    if stays_inside {
+    if stays_inside_project(relative) {
         Ok(relative)
     } else {
         Err(CommandError::TreePathOutsideRoot {

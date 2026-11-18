@@ -34,6 +34,12 @@ local SCRIPT_KINDS = {
 
 local SCRIPT_CLASSES = { Script = true, LocalScript = true, ModuleScript = true }
 
+local INIT_CLASSES = {
+	["init.server.luau"] = "Script",
+	["init.client.luau"] = "LocalScript",
+	["init.luau"] = "ModuleScript",
+}
+
 local function scriptKind(fileName: string): { suffix: string, class: string }?
 	for _, kind in SCRIPT_KINDS do
 		if #fileName > #kind.suffix and string.sub(fileName, -#kind.suffix) == kind.suffix then
@@ -76,12 +82,16 @@ end
 
 function Applier._container(self, parent: Node, name: string): Node?
 	local tree = self.tree
+	local script: Node? = nil
 	for _, child in tree.children(parent) do
-		if child.Name == name and not SCRIPT_CLASSES[tree.className(child)] then
-			return child
+		if child.Name == name then
+			if not SCRIPT_CLASSES[tree.className(child)] then
+				return child
+			end
+			script = script or child
 		end
 	end
-	return nil
+	return script
 end
 
 function Applier._ensureParent(self, segments: { string }): Node
@@ -111,6 +121,48 @@ function Applier._findParent(self, segments: { string }): Node?
 	return parent
 end
 
+local function adopt(tree: Tree, node: Node, stale: { Node })
+	for _, old in stale do
+		for _, grandchild in tree.children(old) do
+			tree.setParent(grandchild, node)
+		end
+		tree.destroy(old)
+	end
+end
+
+function Applier._initNode(self, parent: Node, dirName: string, class: string): Node
+	local tree = self.tree
+	local matching: Node? = nil
+	local folders: { Node } = {}
+	for _, child in tree.children(parent) do
+		if child.Name == dirName then
+			if tree.className(child) == class then
+				matching = matching or child
+			elseif tree.className(child) == "Folder" then
+				table.insert(folders, child)
+			end
+		end
+	end
+	local node = matching
+	if node == nil then
+		node = tree.createInstance(class, dirName)
+		tree.setParent(node, parent)
+	end
+	adopt(tree, node, folders)
+	return node
+end
+
+function Applier._demoteInit(self, parent: Node, dirName: string, class: string)
+	local tree = self.tree
+	for _, child in tree.children(parent) do
+		if child.Name == dirName and tree.className(child) == class then
+			local folder = tree.createInstance("Folder", dirName)
+			tree.setParent(folder, parent)
+			adopt(tree, folder, { child })
+		end
+	end
+end
+
 function Applier._scriptNode(self, parent: Node, leafName: string, class: string): Node
 	local tree = self.tree
 	local matching: Node? = nil
@@ -129,12 +181,7 @@ function Applier._scriptNode(self, parent: Node, leafName: string, class: string
 		node = tree.createInstance(class, leafName)
 		tree.setParent(node, parent)
 	end
-	for _, old in stale do
-		for _, grandchild in tree.children(old) do
-			tree.setParent(grandchild, node)
-		end
-		tree.destroy(old)
-	end
+	adopt(tree, node, stale)
 	return node
 end
 
@@ -152,6 +199,25 @@ function Applier._write(self, path: string, node: Node, content: string)
 	end
 end
 
+function Applier._applyInit(self, segments: { string }, class: string, patch: Patch)
+	local tree = self.tree
+	table.remove(segments)
+	local dirName = segments[#segments]
+	if patch.kind == "Delete" then
+		local parent = self:_findParent(segments)
+		if parent ~= nil then
+			self:_demoteInit(parent, dirName, class)
+		end
+		return
+	end
+	local parent = self:_ensureParent(segments)
+	local node = self:_initNode(parent, dirName, class)
+	local content = patch.content
+	if content ~= nil and tree.getSource(node) ~= content then
+		self:_write(patch.path, node, content)
+	end
+end
+
 function Applier.apply(self, patch: Patch)
 	local tree = self.tree
 	local segments = splitPath(patch.path)
@@ -159,6 +225,11 @@ function Applier.apply(self, patch: Patch)
 		return
 	end
 	local fileName = segments[#segments]
+	local initClass = INIT_CLASSES[fileName]
+	if initClass ~= nil and #segments >= 2 then
+		self:_applyInit(segments, initClass, patch)
+		return
+	end
 	local leafName = instanceName(fileName)
 
 	if patch.kind == "Delete" then

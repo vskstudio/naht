@@ -59,6 +59,20 @@ peux pas committer accidentellement un fichier à moitié résolu. Une fois les 
 chemin libéré, la sync reprend automatiquement pour ce chemin. Si le daemon tourne, `naht resolve` le
 relance aussitôt : le fichier résolu part vers Studio sans autre action.
 
+## Résoudre un conflit binaire
+
+Un conflit binaire n'a aucun marqueur à retirer, donc `naht resolve` doit savoir quel côté garder :
+
+```sh
+naht resolve --keep disk src/Map.terrain    # le fichier sur disque gagne : ses octets partent vers Studio
+naht resolve --keep studio src/Map.terrain  # la copie Studio gagne : ses octets remplacent le fichier
+```
+
+`--keep disk` libère le gel, et la sync suivante pousse les octets du disque vers Studio. Il est refusé
+si le fichier sur disque manque. `--keep studio` écrit les octets de Studio par-dessus le fichier, ou
+recrée le fichier depuis Studio s'il manque. Un chemin binaire refuse un `naht resolve` sans côté, et un
+fichier texte refuse `--keep`.
+
 <Callout type="warning">
 
 Ne supprime pas le fichier pour « régler » un conflit. C'est une vraie suppression qui sera

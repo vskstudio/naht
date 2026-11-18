@@ -190,6 +190,46 @@ pub(crate) fn init_class(file_name: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns the folder that holds an init script path, or `None` when the path is not an init file.
+pub fn init_folder(path: &str) -> Option<&str> {
+    let (parent, file_name) = split_parent(path);
+    init_class(file_name)?;
+    parent
+}
+
+/// Returns the flat script path that an init script's folder would be written as.
+pub fn init_flat_path(path: &str) -> Option<String> {
+    let (parent, file_name) = split_parent(path);
+    let class = init_class(file_name)?;
+    let (grandparent, folder_name) = split_parent(parent?);
+    Some(join_path(
+        grandparent,
+        &script_file_name(class, folder_name),
+    ))
+}
+
+/// Returns the init script path a flat script would be written as inside its folder.
+pub fn flat_init_path(path: &str) -> Option<String> {
+    let (parent, file_name) = split_parent(path);
+    let (class, stem) = script_class(file_name)?;
+    let folder = join_path(parent, &stem);
+    Some(join_path(Some(&folder), init_file_name(class)))
+}
+
+fn split_parent(path: &str) -> (Option<&str>, &str) {
+    match path.rsplit_once('/') {
+        Some((parent, file_name)) => (Some(parent), file_name),
+        None => (None, path),
+    }
+}
+
+fn join_path(parent: Option<&str>, name: &str) -> String {
+    match parent {
+        Some(parent) => format!("{parent}/{name}"),
+        None => name.to_owned(),
+    }
+}
+
 fn script_file_name(class: &str, name: &str) -> String {
     match class {
         SCRIPT => format!("{name}.server.luau"),

@@ -2,9 +2,13 @@ use super::Session;
 use super::transaction::Outbound;
 use super::{ACTIVITY_CAP, SessionError};
 use naht_core::binary::BlobPatch;
-use naht_core::protocol::{EventKind, Outcome, SyncActivity, SyncEvent};
+use naht_core::protocol::{EventKind, Outcome, SequencedPatch, SyncActivity, SyncEvent};
 use naht_core::reconciler::{self, Direction, Patch, TextInstance};
+use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(test)]
+mod tests;
 
 impl Session {
     /// The activity snapshot for `GET /activity`: the live pending count (unacked text patches) plus
@@ -25,34 +29,49 @@ impl Session {
         }
     }
 
-    /// Confirm that the plugin applied the patches for `paths`: advance the base and the mirror for
-    /// each, so they stop re-diffing. Paths not in `paths` stay pending and re-emit next cycle.
+    /// Confirm that the plugin applied the patches with the given sequences: each settled patch leaves
+    /// the queue, and a gated one advances the base and the mirror so they stop re-diffing. A sequence
+    /// no longer queued was superseded or already acked, so it confirms nothing.
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] when the acknowledged paths are unknown.
-    pub fn ack(&mut self, paths: &[String]) -> Result<(), SessionError> {
-        for path in paths {
-            let Some(patch) = self.unacked.remove(path) else {
+    /// Returns [`SessionError`] when a base record cannot be written.
+    pub fn ack(&mut self, seqs: &[u64]) -> Result<(), SessionError> {
+        let acked: BTreeSet<u64> = seqs.iter().copied().collect();
+        let settled: Vec<String> = self
+            .queue
+            .iter()
+            .filter(|(_, (seq, _))| acked.contains(seq))
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in settled {
+            let Some((_, patch)) = self.queue.remove(&path) else {
                 continue;
             };
-            if let Some(content) = &patch.content {
-                reconciler::set_base(&self.store, &patch.path, &patch.class, content)?;
-                self.studio.insert(
-                    patch.path.clone(),
-                    TextInstance::new(patch.path.clone(), patch.class.clone(), content.clone()),
-                );
-            } else {
-                self.store.remove(&patch.path)?;
-                self.studio.remove(&patch.path);
+            if self.unacked.remove(&path).is_some() {
+                self.settle(patch)?;
             }
-            self.record_event(
-                patch.path.clone(),
-                Direction::ToStudio,
-                EventKind::Text,
-                Outcome::Ok,
-            );
         }
+        Ok(())
+    }
+
+    fn settle(&mut self, patch: Patch) -> Result<(), SessionError> {
+        if let Some(content) = &patch.content {
+            reconciler::set_base(&self.store, &patch.path, &patch.class, content)?;
+            self.studio.insert(
+                patch.path.clone(),
+                TextInstance::new(patch.path.clone(), patch.class.clone(), content.clone()),
+            );
+        } else {
+            self.store.remove(&patch.path)?;
+            self.studio.remove(&patch.path);
+        }
+        self.record_event(
+            patch.path,
+            Direction::ToStudio,
+            EventKind::Text,
+            Outcome::Ok,
+        );
         Ok(())
     }
 
@@ -83,8 +102,9 @@ impl Session {
         self.blob_queue.values().any(|(seq, _)| *seq >= cursor)
     }
 
-    /// Every queued blob patch at or beyond `cursor`, in sequence order, with the cursor to send next.
-    pub fn take_blob_patches(&self, cursor: u64) -> (u64, Vec<BlobPatch>) {
+    /// Blob patches from `cursor` on, in order; earlier ones are acked and dropped.
+    pub fn take_blob_patches(&mut self, cursor: u64) -> (u64, Vec<BlobPatch>) {
+        self.blob_queue.retain(|_, (seq, _)| *seq >= cursor);
         let mut entries: Vec<&(u64, BlobPatch)> = self
             .blob_queue
             .values()
@@ -104,7 +124,7 @@ impl Session {
     }
 
     /// Every queued patch at or beyond `cursor`, in sequence order, with the cursor to send next.
-    pub fn take_patches(&self, cursor: u64) -> (u64, Vec<Patch>) {
+    pub fn take_patches(&self, cursor: u64) -> (u64, Vec<SequencedPatch>) {
         let mut entries: Vec<&(u64, Patch)> = self
             .queue
             .values()
@@ -113,7 +133,10 @@ impl Session {
         entries.sort_by_key(|(seq, _)| *seq);
         let patches = entries
             .into_iter()
-            .map(|(_, patch)| patch.clone())
+            .map(|(seq, patch)| SequencedPatch {
+                seq: *seq,
+                patch: patch.clone(),
+            })
             .collect();
         (self.next_seq, patches)
     }
@@ -123,6 +146,11 @@ impl Session {
     }
 
     fn push_patch(&mut self, patch: Patch) {
+        if let Some((_, queued)) = self.queue.get(&patch.path)
+            && *queued == patch
+        {
+            return;
+        }
         tracing::info!(
             target: "naht::sync",
             path = ?patch.path,

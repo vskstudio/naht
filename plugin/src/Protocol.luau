@@ -55,7 +55,7 @@ export type Codec = {
 	binary: (bytes: string) -> any,
 }
 
-local PROTOCOL_VERSION = 2
+local PROTOCOL_VERSION = 3
 
 local function new(MessagePack: Codec)
 	local Protocol = {}
@@ -114,8 +114,8 @@ local function new(MessagePack: Codec)
 		return { kind = "Delete", path = path }
 	end
 
-	function Protocol.encodeAck(paths: { string }): string
-		return MessagePack.encode({ paths = MessagePack.array(paths) })
+	function Protocol.encodeAck(seqs: { number }): string
+		return MessagePack.encode({ seqs = MessagePack.array(seqs) })
 	end
 
 	function Protocol.encodeChanges(changes: { Change }): string

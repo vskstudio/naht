@@ -96,17 +96,19 @@ naht status
 
 ## `naht resolve <path>`
 
-Clear a conflict once its markers are gone. **Refuses while any conflict markers remain.**
+Clear a conflict. A text conflict clears once its markers are gone, and **refuses while any conflict markers remain**. A frozen binary file (such as terrain) has no markers: name the side to keep with `--keep`, which is required for it and refused for text.
 
 Once cleared, it asks the daemon recorded in `.naht/daemon.port` to re-sync, and never waits more than 2 seconds for it. It prints `daemon re-synced` when that works, nothing extra when no daemon is running, and the reason otherwise (for example, the daemon did not answer in time). The file is resolved in every case, and the exit status stays 0. A nudge that fails never fails the command: only the message changes. That includes a recorded port that belongs to another project.
 
 ```sh
 naht resolve src/Hello.luau
 naht resolve src/Hello.luau --project ../demo   # scope to another project dir
+naht resolve src/Map.terrain --keep studio      # keep the Studio copy of a frozen binary
 ```
 
 | Flag | Purpose |
 |---|---|
+| `--keep <disk\|studio>` | The side a frozen binary conflict keeps. Required for a binary file, refused for text. `disk` pushes the file to Studio; `studio` writes the Studio copy over the file. |
 | `--project <DIR>` | The project directory (defaults to `.`). |
 
 See [Conflicts](#/docs/conflicts) for the full resolution workflow.

@@ -18,6 +18,7 @@ local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
 local DECODE_FAILURE_LIMIT = 5
 local ACK_BACKOFF_START = 2
+local REJECTED_PATCH_START = 1
 local RETRY_BACKOFF_MAX = 60
 local SERVER_ERROR_LIMIT = 3
 local PUSH_ABANDON_AFTER = 30
@@ -159,9 +160,11 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		pushServerErrors = 0,
 		pushAbandons = 0,
 		ackBackoff = ACK_BACKOFF_START,
+		rejectedBackoff = REJECTED_PATCH_START,
 		terrainInFlight = false,
 		cursor = 0,
 		blobCursor = 0,
+		pendingAcks = {},
 		epoch = 0,
 		applying = false,
 		lastApplied = {},
@@ -293,11 +296,15 @@ function Connection._unsafeReason(_self, instance: Instance, segments: { string 
 end
 
 function Connection._pathOf(self, instance: Instance): string?
+	return self:_shapePath(instance, #instance:GetChildren() > 0)
+end
+
+function Connection._shapePath(self, instance: Instance, hasChildren: boolean): string?
 	local suffix = CLASS_SUFFIX[instance.ClassName]
 	if suffix == nil then
 		return nil
 	end
-	local segments = { instance.Name .. suffix }
+	local segments = if hasChildren then { instance.Name, "init" .. suffix } else { instance.Name .. suffix }
 	local current = instance.Parent
 	while current ~= nil and current ~= self.root do
 		table.insert(segments, 1, current.Name)
@@ -333,17 +340,21 @@ function Connection._run(self, session: number)
 			end
 			self:_refreshState()
 			self:_schedulePush()
-			self.cursor = 0
-			self.blobCursor = 0
+			if info.session_id ~= self.sessionId then
+				self.cursor = 0
+				self.blobCursor = 0
+				self.pendingAcks = {}
+				self.sessionId = info.session_id
+			end
 			self.epoch += 1
 			local epoch = self.epoch
 			task.spawn(function()
 				self:_pushTerrain(epoch)
 			end)
 			task.spawn(function()
-				self:_serveBlobs(epoch)
+				self:_serveBlobs(epoch, info.session_id)
 			end)
-			self:_serve(session)
+			self:_serve(session, info.session_id)
 		end)
 		if not self:_isCurrent(session) then
 			break
@@ -353,7 +364,11 @@ function Connection._run(self, session: number)
 				self:_terminate(tostring(err))
 				break
 			end
+			self.epoch += 1
 			self.onState("Reconnecting", tostring(err))
+			if Client.isSessionChanged(tostring(err)) then
+				self.backoff = BACKOFF_START
+			end
 			task.wait(self.backoff)
 			if not self:_isCurrent(session) then
 				break
@@ -363,64 +378,86 @@ function Connection._run(self, session: number)
 	end
 end
 
-function Connection._serve(self, session: number)
-	local unacked: { string } = {}
+function Connection._serve(self, session: number, sessionId: string)
+	if #self.pendingAcks > 0 then
+		self.pendingAcks = self:_ack(session, self.pendingAcks, sessionId)
+		if not self:_isCurrent(session) then
+			return
+		end
+	end
 	while self:_isCurrent(session) do
-		local batch = self.client:patches(self.cursor)
+		local batch = self.client:patches(self.cursor, sessionId)
 		self.applying = true
 		local applier = self.apply.create(self.tree, self:_echo())
-		local applied = {}
+		local nextCursor = batch.cursor
+		local rejected = false
 		for _, patch in batch.patches do
 			if not self:_isCurrent(session) then
 				break
 			end
 			local ok, err = pcall(function()
-					applier:apply(patch)
-				end)
-				local source = "patch:" .. patch.path
-				if ok then
-					table.insert(applied, patch.path)
-					self:_clearWarning(source)
-					if patch.kind == "Conflict" then
-						self:_setConflict(patch.path)
-					else
-						self:_clearConflict(patch.path)
-					end
-				else
-					self:_setWarning(source, string.format("patch rejected: %s: %s", patch.path, tostring(err)))
+				applier:apply(patch)
+			end)
+			local source = "patch:" .. patch.path
+			if ok then
+				if not table.find(self.pendingAcks, patch.seq) then
+					table.insert(self.pendingAcks, patch.seq)
 				end
+				self:_clearWarning(source)
+				if patch.kind == "Conflict" then
+					self:_setConflict(patch.path)
+				else
+					self:_clearConflict(patch.path)
+				end
+			else
+				self:_setWarning(source, string.format("patch rejected: %s: %s", patch.path, tostring(err)))
+				if not rejected then
+					rejected = true
+					nextCursor = patch.seq
+				end
+			end
 		end
 		self.applying = false
 		if not self:_isCurrent(session) then
 			return
 		end
-		self.cursor = batch.cursor
+		self.cursor = nextCursor
 		self.backoff = BACKOFF_START
-		for _, path in applied do
-			if not table.find(unacked, path) then
-				table.insert(unacked, path)
-			end
+		if not rejected then
+			self.rejectedBackoff = REJECTED_PATCH_START
 		end
-		if #unacked > 0 then
-			unacked = self:_ack(session, unacked)
+		if #self.pendingAcks > 0 then
+			self.pendingAcks = self:_ack(session, self.pendingAcks, sessionId)
 			if not self:_isCurrent(session) then
 				return
 			end
 		end
+		if rejected then
+			task.wait(self:_takeRejectedDelay())
+		end
 	end
 end
 
-function Connection._ack(self, session: number, paths: { string }): { string }
+function Connection._takeRejectedDelay(self: any): number
+	local delay = self.rejectedBackoff
+	self.rejectedBackoff = doubled(delay, RETRY_BACKOFF_MAX)
+	return delay
+end
+
+function Connection._ack(self, session: number, seqs: { number }, sessionId: string): { number }
 	local ok, err = pcall(function()
-		self.client:postAck(paths)
+		self.client:postAck(seqs, sessionId)
 	end)
 	if not self:_isCurrent(session) then
-		return paths
+		return seqs
 	end
 	if ok then
 		self.ackBackoff = ACK_BACKOFF_START
 		self:_clearWarning("ack")
 		return {}
+	end
+	if Client.isSessionChanged(tostring(err)) then
+		error(err, 0)
 	end
 	if not isTransientFailure(err) then
 		self:_setWarning("refused:ack", "ack refused: " .. failureMessage(err))
@@ -431,14 +468,14 @@ function Connection._ack(self, session: number, paths: { string }): { string }
 	local delay = self.ackBackoff
 	self.ackBackoff = doubled(delay, RETRY_BACKOFF_MAX)
 	task.wait(delay)
-	return paths
+	return seqs
 end
 
-function Connection._serveBlobs(self, epoch: number)
+function Connection._serveBlobs(self, epoch: number, sessionId: string)
 	local decodeFailures = 0
 	while self:_isBlobCurrent(epoch) do
 		local ok, batch = pcall(function()
-			return self.client:blobs(self.blobCursor)
+			return self.client:blobs(self.blobCursor, sessionId)
 		end)
 		if not self:_isBlobCurrent(epoch) then
 			return
@@ -568,11 +605,7 @@ function Connection._attachStudio(self)
 		table.insert(connections, signal:Connect(handler))
 	end
 
-	local function onChanged(instance: Instance)
-		local path = self:_pathOf(instance)
-		if path == nil then
-			return
-		end
+	local function pushInstance(instance: Instance, path: string)
 		local source = (instance :: any).Source
 		local expected = self.lastApplied[path]
 		if expected ~= nil and expected == source then
@@ -585,6 +618,42 @@ function Connection._attachStudio(self)
 		self.lastApplied[path] = nil
 		self.pendingPush[path] = self.protocol.upsert(path, instance.ClassName, source)
 		self:_schedulePush()
+	end
+
+	local function onChanged(instance: Instance)
+		local path = self:_pathOf(instance)
+		if path == nil then
+			return
+		end
+		pushInstance(instance, path)
+	end
+
+	local function reshape(parent: Instance, hadChildren: boolean, hasChildren: boolean)
+		if self.applying then
+			return
+		end
+		local previous = self:_shapePath(parent, hadChildren)
+		local current = self:_shapePath(parent, hasChildren)
+		if previous == current then
+			return
+		end
+		if previous ~= nil then
+			self.lastApplied[previous] = nil
+			self.pendingPush[previous] = self.protocol.delete(previous)
+		end
+		if current ~= nil then
+			pushInstance(parent, current)
+		end
+		self:_schedulePush()
+	end
+
+	local function reshapeAfterRemoval(parent: Instance)
+		task.defer(function()
+			if self.studioConnections ~= connections then
+				return
+			end
+			reshape(parent, true, #parent:GetChildren() > 0)
+		end)
 	end
 
 	local function track(instance: Instance)
@@ -601,6 +670,10 @@ function Connection._attachStudio(self)
 	listen(self.root.DescendantAdded, function(descendant: Instance)
 		track(descendant)
 		onChanged(descendant)
+		local parent = descendant.Parent
+		if parent ~= nil then
+			reshape(parent, #parent:GetChildren() > 1, true)
+		end
 	end)
 	listen(self.root.DescendantRemoving, function(descendant: Instance)
 		if self.applying then
@@ -610,6 +683,10 @@ function Connection._attachStudio(self)
 		if path ~= nil then
 			self.pendingPush[path] = self.protocol.delete(path)
 			self:_schedulePush()
+		end
+		local parent = descendant.Parent
+		if parent ~= nil then
+			reshapeAfterRemoval(parent)
 		end
 	end)
 end
