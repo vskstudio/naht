@@ -3428,6 +3428,10 @@ for _, path in
 	{
 		"plugin/src/Protocol.luau",
 		"plugin/src/Client.luau",
+		"plugin/src/Support.luau",
+		"plugin/src/TerrainSync.luau",
+		"plugin/src/Placement.luau",
+		"plugin/src/PushQueue.luau",
 		"plugin/src/Connection.luau",
 		"plugin/src/Plugin.server.luau",
 	}

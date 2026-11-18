@@ -1,0 +1,216 @@
+--!strict
+
+local Support = require(if script ~= nil then script.Parent.Support else "./Support")
+
+local Placement = {}
+
+local CLASS_SUFFIX = Support.CLASS_SUFFIX
+
+local UNSAFE_NAME_CHARACTERS = { "/", "\\", ":", "<", ">", "\"", "|", "?", "*" }
+for code = 0, 31 do
+	table.insert(UNSAFE_NAME_CHARACTERS, string.char(code))
+end
+local UNSAFE_NAMES = { [""] = true, ["."] = true, [".."] = true }
+local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
+
+local function isSafeName(name: string): boolean
+	if UNSAFE_NAMES[name] then
+		return false
+	end
+	for _, character in UNSAFE_NAME_CHARACTERS do
+		if string.find(name, character, 1, true) ~= nil then
+			return false
+		end
+	end
+	return true
+end
+
+local function endsWithScriptSuffix(name: string): boolean
+	for _, suffix in SCRIPT_SUFFIXES do
+		if string.sub(name, -#suffix) == suffix then
+			return true
+		end
+	end
+	return false
+end
+
+function Placement._unsafeReason(_self, instance: Instance, segments: { string }): string?
+	for _, segment in segments do
+		if not isSafeName(segment) then
+			return "a name contains '/', '\\', ':', '< > \" | ? *' or a control byte, or is empty, '.' or '..'"
+		end
+	end
+	if instance.ClassName == "ModuleScript" and endsWithScriptSuffix(instance.Name) then
+		return "a ModuleScript name ends in .server, .client or .luau"
+	end
+	return nil
+end
+
+function Placement._pathOf(self, instance: Instance): string?
+	return self:_shapePath(instance, #instance:GetChildren() > 0)
+end
+
+function Placement._shapePath(self, instance: Instance, hasChildren: boolean): string?
+	local suffix = CLASS_SUFFIX[instance.ClassName]
+	if suffix == nil then
+		return nil
+	end
+	local segments = if hasChildren then { instance.Name, "init" .. suffix } else { instance.Name .. suffix }
+	local current = instance.Parent
+	while current ~= nil and current ~= self.root do
+		table.insert(segments, 1, current.Name)
+		current = current.Parent
+	end
+	if current ~= self.root then
+		return nil
+	end
+	local path = table.concat(segments, "/")
+	local reason = self:_unsafeReason(instance, segments)
+	if reason ~= nil then
+		if not self.skippedPaths[path] then
+			self.skippedPaths[path] = true
+			self.warn(string.format("Naht: not syncing %q, %s", path, reason))
+		end
+		return nil
+	end
+	return path
+end
+
+function Placement._revertGroup(self, group: any)
+	if group.script ~= nil and self.placed[group.script] == group.to then
+		self.placed[group.script] = group.from
+	end
+end
+
+function Placement._revertPending(self)
+	for _, change in self.pendingPush do
+		local group = self.groupOf[change]
+		if group ~= nil then
+			self:_revertGroup(group)
+		end
+	end
+end
+
+function Placement._queue(self, path: string, change: any, group: any?)
+	self.pendingPush[path] = change
+	if group ~= nil then
+		self.groupOf[change] = group
+	end
+end
+
+function Placement._queueMove(self, script: Instance, from: string, to: string)
+	local group = { script = script, from = from, to = to }
+	self.lastApplied[from] = nil
+	self:_queue(from, self.protocol.delete(from), group)
+	self:_queue(to, self.protocol.upsert(to, script.ClassName, (script :: any).Source), group)
+	self.placed[script] = to
+end
+
+function Placement._pushInstance(self, instance: Instance, path: string)
+	local source = (instance :: any).Source
+	local expected = self.lastApplied[path]
+	if expected ~= nil and expected == source then
+		self.lastApplied[path] = nil
+		return
+	end
+	if self.applying then
+		return
+	end
+	self.lastApplied[path] = nil
+	self.placed[instance] = path
+	self.pendingPush[path] = self.protocol.upsert(path, instance.ClassName, source)
+	self:_schedulePush()
+end
+
+function Placement._onSourceChanged(self, instance: Instance)
+	local path = self:_pathOf(instance)
+	if path == nil then
+		return
+	end
+	self:_pushInstance(instance, path)
+end
+
+function Placement._relocate(self, script: Instance)
+	local from = self.placed[script]
+	local to = self:_pathOf(script)
+	if to == nil or to == from then
+		return
+	end
+	if from == nil then
+		self:_pushInstance(script, to)
+		return
+	end
+	self:_queueMove(script, from, to)
+	self:_schedulePush()
+end
+
+function Placement._relocateSubtree(self, instance: Instance)
+	if CLASS_SUFFIX[instance.ClassName] ~= nil then
+		self:_relocate(instance)
+	end
+	for _, descendant in instance:GetDescendants() do
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			self:_relocate(descendant)
+		end
+	end
+end
+
+function Placement._reconcilePlacement(self)
+	for _, descendant in self.root:GetDescendants() do
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			local from = self.placed[descendant]
+			local to = self:_pathOf(descendant)
+			if to ~= nil then
+				if from == nil then
+					self.placed[descendant] = to
+				elseif to ~= from then
+					self:_queueMove(descendant, from, to)
+				end
+			end
+		end
+	end
+end
+
+function Placement._adoptPlacement(self)
+	for _, descendant in self.root:GetDescendants() do
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			local path = self:_pathOf(descendant)
+			if path ~= nil then
+				self.placed[descendant] = path
+			end
+		end
+	end
+end
+
+function Placement._removeScript(self, script: Instance)
+	local from = self.placed[script] or self:_pathOf(script)
+	if from == nil then
+		return
+	end
+	local group = { script = script, from = from, previous = self.pendingPush[from] }
+	self.lastApplied[from] = nil
+	self:_queue(from, self.protocol.delete(from), group)
+	self.moves[script] = group
+	task.defer(function()
+		if self.moves[script] == group then
+			self.moves[script] = nil
+			self.placed[script] = nil
+		end
+	end)
+	self:_schedulePush()
+end
+
+function Placement._finishMove(self, script: Instance, group: any)
+	local to = self:_pathOf(script)
+	if to == nil then
+		self.pendingPush[group.from] = group.previous
+		self.placed[script] = group.from
+		return
+	end
+	group.to = to
+	self:_queue(to, self.protocol.upsert(to, script.ClassName, (script :: any).Source), group)
+	self.placed[script] = to
+	self:_schedulePush()
+end
+
+return Placement
