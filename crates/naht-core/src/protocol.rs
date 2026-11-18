@@ -25,6 +25,8 @@ pub const PLACE_ID_HEADER: &str = "x-naht-place-id";
 
 /// Request header carrying the project's token, required on every route except `GET /info`.
 pub const TOKEN_HEADER: &str = "x-naht-token";
+/// The place id Studio reports for a place that has never been published, which no project binds to.
+pub const UNPUBLISHED_PLACE_ID: u64 = 0;
 
 /// Token opening the 403 body for a request without the client header, sent by daemons that know it.
 pub const OUTDATED_PLUGIN_TOKEN: &str = "outdated-plugin";

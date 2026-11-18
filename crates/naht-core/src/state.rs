@@ -16,6 +16,8 @@ use std::time::Duration;
 
 #[cfg(test)]
 mod busy_tests;
+#[cfg(test)]
+mod place_id_tests;
 mod schema;
 #[cfg(test)]
 mod schema_tests;
@@ -162,6 +164,17 @@ impl StateStore {
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (PLACE_ID_KEY, place_id.to_string()),
         )?;
+        Ok(())
+    }
+
+    /// Forget the Studio place this project is bound to, so the next attach binds it again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the place id cannot be cleared.
+    pub fn clear_place_id(&self) -> Result<(), StateError> {
+        self.conn
+            .execute("DELETE FROM meta WHERE key = ?1", [PLACE_ID_KEY])?;
         Ok(())
     }
 
@@ -448,14 +461,6 @@ mod tests {
         store.upsert(&text_record("g")).unwrap();
         store.remove("g").unwrap();
         assert_eq!(store.get("g").unwrap(), None);
-    }
-
-    #[test]
-    fn place_id_round_trips() {
-        let store = StateStore::open_in_memory().unwrap();
-        assert_eq!(store.place_id().unwrap(), None);
-        store.set_place_id(123_456).unwrap();
-        assert_eq!(store.place_id().unwrap(), Some(123_456));
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub enum SessionError {
     },
     /// This project's state is bound to another Studio place, so attaching `requested` is refused.
     #[error(
-        "this project is bound to place {bound}, not {requested}: set [serve] place_id = {requested} in naht.toml to accept place {requested}, or delete .naht/state.db to reset the binding"
+        "this project is bound to place {bound}, not {requested}: set [serve] place_id = {requested} in naht.toml to accept place {requested}, or run `naht unbind` to reset the binding"
     )]
     PlaceBoundElsewhere {
         /// The place the project state was first attached to.

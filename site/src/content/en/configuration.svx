@@ -41,14 +41,14 @@ name = "my-game"   # defaults to the project directory name when unset
 ```toml
 [serve]
 port = 34872         # localhost port the daemon listens on
-place_id = 0         # optional place-id guard (see below)
+place_id = 1234567890 # optional place-id guard (see below)
 terrain_sync = false # opt into live terrain blob sync
 ```
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `port` | u16 | `34872` | The localhost port the daemon binds. Overridable per-run with `--port`. |
-| `place_id` | u64 | _unset_ | If set, the daemon only connects to the Studio session whose place id matches. |
+| `place_id` | u64 | _unset_ | If set, the daemon only connects to the Studio session whose place id matches. `0` is refused: it is the id Studio reports for an unpublished place. |
 | `terrain_sync` | bool | `false` | Sync terrain live as an opaque voxel blob. Off by default; when off, terrain is flagged as unsynced. |
 
 <Callout type="important">

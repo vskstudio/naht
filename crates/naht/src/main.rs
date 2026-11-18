@@ -94,6 +94,12 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Forget the Studio place this project is bound to, so the next attach binds it again.
+    Unbind {
+        /// The project directory; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Build the project into a Roblox model (`.rbxm`/`.rbxmx`) or place (`.rbxl`/`.rbxlx`) file.
     Build {
         /// The project directory; defaults to the current directory.
@@ -178,6 +184,14 @@ async fn dispatch<Stdout: Write, Stderr: Write>(
             commands::pull(&path, &config).await?;
             out.say("pulled, daemon re-synced")?;
         }
+        Command::Unbind { path } => match commands::unbind(&path)? {
+            Some(place_id) => {
+                out.say(format_args!(
+                    "cleared the binding to place {place_id}; the next attach binds this project again"
+                ))?;
+            }
+            None => out.say("this project has no place binding to clear")?,
+        },
         Command::Build {
             path,
             output,

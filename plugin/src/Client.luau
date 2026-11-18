@@ -18,14 +18,14 @@ export type TokenStore = {
 }
 
 export type Client = typeof(setmetatable(
-	{} :: { baseUrl: string, placeId: number, http: any, token: string?, projectId: string?, store: TokenStore? },
+	{} :: { baseUrl: string, readPlaceId: () -> number, http: any, token: string?, projectId: string?, store: TokenStore? },
 	Client
 ))
 
-function Client.new(baseUrl: string, placeId: number, http: any?, store: TokenStore?): Client
+function Client.new(baseUrl: string, readPlaceId: () -> number, http: any?, store: TokenStore?): Client
 	return setmetatable({
 		baseUrl = baseUrl,
-		placeId = placeId,
+		readPlaceId = readPlaceId,
 		http = http or game:GetService("HttpService"),
 		store = store,
 	}, Client)
@@ -42,7 +42,7 @@ local function request(self: Client, options: { [string]: any }): { [string]: an
 	options.Url = self.baseUrl .. options.Url
 	local headers = options.Headers or {}
 	headers["x-naht-client"] = "plugin"
-	headers["x-naht-place-id"] = tostring(self.placeId)
+	headers["x-naht-place-id"] = tostring(self.readPlaceId())
 	if self.token ~= nil then
 		headers[Protocol.TOKEN_HEADER] = self.token
 	end

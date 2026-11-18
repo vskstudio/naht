@@ -14,6 +14,7 @@ mod release;
 mod rojo;
 mod serve;
 mod token;
+mod unbind;
 
 pub use build::{Built, build, build_watch, spawn_build_watcher};
 pub use error::CommandError;
@@ -24,3 +25,4 @@ pub use release::{check_release_version, package_plugin};
 pub use rojo::migrate_from_rojo;
 pub use serve::serve;
 pub use token::print_token;
+pub use unbind::unbind;

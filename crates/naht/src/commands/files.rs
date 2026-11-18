@@ -44,8 +44,12 @@ pub(super) fn create_parent_dirs(output: &Path) -> Result<(), CommandError> {
     }
 }
 
+pub(super) fn state_db_path(root: &Path) -> PathBuf {
+    root.join(INTERNAL_DIR).join("state.db")
+}
+
 pub(super) fn open_store(root: &Path) -> Result<StateStore, CommandError> {
-    let path = root.join(INTERNAL_DIR).join("state.db");
+    let path = state_db_path(root);
     StateStore::open(&path).map_err(|source| CommandError::StateOpen { path, source })
 }
 

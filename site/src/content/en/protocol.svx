@@ -38,7 +38,11 @@ The daemon checks every route before its handler runs. A request is refused with
 - it lacks the `x-naht-client` header. A browser cannot send a custom header to another origin without a
   preflight, and the daemon never answers one;
 - it lacks the `x-naht-token` header, or sends another value, on any route except `GET /info`; that refusal is `401`.
-- the project sets `[serve] place_id` and the `x-naht-place-id` header is missing or differs.
+- the project sets `[serve] place_id` and the `x-naht-place-id` header is missing or differs;
+- the project has no `[serve] place_id` and is bound to a place: a `POST` without the `x-naht-place-id` header, a
+  header naming another place, or a header naming place `0` (an unpublished place) is refused. An unbound project
+  accepts place `0` without recording it;
+- the `x-naht-place-id` header is malformed.
 
 These checks stop browsers and DNS rebinding. Every route except `GET /info` also needs the project token in
 `x-naht-token`. The daemon creates it in `.naht/token` with owner-only permissions, so other accounts on a shared

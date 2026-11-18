@@ -119,7 +119,7 @@ local function startDaemon(root, port, log)
 	table.insert(daemons, daemon)
 	for _ = 1, READY_ATTEMPTS do
 		if isAlive(base) then
-			daemon.client = Client.new(base, PLACE_ID, httpBridge())
+			daemon.client = Client.new(base, function(): number return PLACE_ID end, httpBridge())
 			daemon.client:setToken(readToken(root))
 			return daemon
 		end
@@ -361,7 +361,7 @@ local function otherPlaceRefused(root, port, log)
 	stopDaemon(bound)
 
 	local other = startDaemon(root, math.random(20000, 60000), log)
-	local otherClient = Client.new(other.base, OTHER_PLACE_ID, httpBridge())
+	local otherClient = Client.new(other.base, function(): number return OTHER_PLACE_ID end, httpBridge())
 	local infoOk, infoErr = pcall(otherClient.info, otherClient)
 	check(
 		"a session from a place the project is not bound to is refused at the handshake",
@@ -404,7 +404,7 @@ local function tokenRefused(root, port, log)
 	local daemon = startDaemon(root, port, log)
 	local info = daemon.client:info()
 
-	local bare = Client.new(daemon.base, PLACE_ID, httpBridge())
+	local bare = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
 	local missingOk, missingErr = pcall(bare.patches, bare, 0, info.session_id)
 	check(
 		"a request without the token is refused with a 401",
@@ -417,7 +417,7 @@ local function tokenRefused(root, port, log)
 		if type(missingErr) == "table" then tostring(missingErr.message) else tostring(missingErr)
 	)
 
-	local wrong = Client.new(daemon.base, PLACE_ID, httpBridge())
+	local wrong = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
 	wrong:setToken("not-the-project-token")
 	local wrongOk, wrongErr = pcall(wrong.postChanges, wrong, { Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") })
 	check(
