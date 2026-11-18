@@ -44,6 +44,34 @@ async fn info(state: &Arc<AppState>, place: Option<&str>) -> (StatusCode, String
     (status, String::from_utf8_lossy(&body).into_owned())
 }
 
+async fn tokenless_info(state: &Arc<AppState>, place: &str) -> StatusCode {
+    let request = Request::get("/info")
+        .header(CLIENT_HEADER, "plugin")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(PLACE_ID_HEADER, place)
+        .body(Body::empty())
+        .unwrap();
+    router(Arc::clone(state), PORT)
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn a_tokenless_info_binds_no_place() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+
+    assert_eq!(tokenless_info(&state, "666").await, StatusCode::OK);
+    assert!(state.bound_place.get().is_none());
+    assert_eq!(info(&state, Some("11")).await.0, StatusCode::OK);
+
+    let restarted = bound_state(root.path());
+    assert_eq!(info(&restarted, Some("22")).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(info(&restarted, Some("11")).await.0, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn an_unconfigured_project_accepts_the_place_it_was_bound_to() {
     let root = tempfile::tempdir().unwrap();

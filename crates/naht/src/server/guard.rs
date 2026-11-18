@@ -123,14 +123,17 @@ impl Gate {
                 protocol::CLIENT_HEADER
             )));
         }
-        if path != INFO_ROUTE {
-            self.check_token(headers)?;
-        }
+        let authenticated = match self.check_token(headers) {
+            Ok(()) => true,
+            Err(_) if path == INFO_ROUTE => false,
+            Err(refusal) => return Err(refusal),
+        };
         match self.serve_place_id {
             Some(expected) if !place_id_matches(headers, expected) => {
                 Err(Refusal::forbidden("place id mismatch"))
             }
             Some(_) => Ok(()),
+            None if !authenticated => Ok(()),
             None => {
                 if method == Method::POST
                     && !headers.contains_key(PLACE_ID_HEADER)
