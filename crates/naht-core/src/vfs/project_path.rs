@@ -1,5 +1,5 @@
-use crate::binary::BLOB_EXTENSION;
 use crate::mapper::{init_class, script_class};
+use crate::protocol::TERRAIN_PATH;
 
 /// Validate a path received from the Studio protocol as project-relative.
 ///
@@ -125,17 +125,16 @@ pub fn validate_directory_path(path: &str) -> Result<(), ProjectPathError> {
     reject_hidden_components(path)
 }
 
-/// Validate a path sent to `/blobs`: a project-relative, visible file with the blob extension.
+/// Validate a path sent to `/blobs`: only the synced terrain file, `Terrain.terrain` at the root.
 ///
 /// # Errors
 ///
-/// Returns [`ProjectPathError`] when the path is unsafe or is not a binary blob.
+/// Returns [`ProjectPathError::Unmapped`] for every other path.
 pub fn validate_blob_path(path: &str) -> Result<(), ProjectPathError> {
-    validate_project_path(path)?;
-    reject_hidden_components(path)?;
-    match last_component(path).rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() && extension == BLOB_EXTENSION => Ok(()),
-        _ => Err(ProjectPathError::Unmapped),
+    if path == TERRAIN_PATH {
+        Ok(())
+    } else {
+        Err(ProjectPathError::Unmapped)
     }
 }
 
