@@ -112,7 +112,12 @@ impl Gate {
         }
     }
 
-    async fn admit(&self, method: &Method, path: &str, headers: &HeaderMap) -> Result<bool, Refusal> {
+    async fn admit(
+        &self,
+        method: &Method,
+        path: &str,
+        headers: &HeaderMap,
+    ) -> Result<bool, Refusal> {
         if headers.contains_key(header::ORIGIN) {
             return Err(Refusal::forbidden("cross-origin requests are not allowed"));
         }
