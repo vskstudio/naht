@@ -23,6 +23,12 @@ fn remove_emptied_dirs_in<V: Vfs>(vfs: &mut V, journal: &mut Option<Journal>, di
     }
 }
 
+fn is_case_only_rename(from: &str, to: &str) -> bool {
+    from != to
+        && from.to_lowercase() == to.to_lowercase()
+        && Path::new(from).parent() == Path::new(to).parent()
+}
+
 impl<V: Vfs> Session<V> {
     /// Apply a batch of Studio-side edits to the mirror, then reconcile against the current
     /// filesystem. Filesystem writes (and conflict markers) are performed by the reconciler.
@@ -79,6 +85,8 @@ impl<V: Vfs> Session<V> {
                 }
             }
         }
+        let renamed = self.rename_case_only_pairs(&removals, &upserts)?;
+        removals.retain(|path| !renamed.contains(path));
         let upserted: BTreeSet<String> = upserts.iter().map(|(path, _, _)| path.clone()).collect();
         let deleted: BTreeSet<String> = removals.iter().cloned().collect();
         let mut resolved_upserts = BTreeSet::new();
@@ -100,6 +108,53 @@ impl<V: Vfs> Session<V> {
             emptied.push(path);
         }
         Ok(emptied)
+    }
+
+    fn rename_case_only_pairs(
+        &mut self,
+        removals: &[String],
+        upserts: &[(String, String, String)],
+    ) -> Result<BTreeSet<String>, SessionError> {
+        let mut renamed = BTreeSet::new();
+        for old in removals {
+            let target = upserts
+                .iter()
+                .map(|(path, _, _)| path.as_str())
+                .find(|new| is_case_only_rename(old, new));
+            if let Some(new) = target
+                && self.rename_case_only(old, new)?
+            {
+                renamed.insert(old.clone());
+            }
+        }
+        Ok(renamed)
+    }
+
+    fn rename_case_only(&mut self, from: &str, to: &str) -> Result<bool, SessionError> {
+        let frozen = self
+            .store
+            .get(from)?
+            .is_some_and(|record| record.conflicted);
+        if frozen || !self.vfs.exists(Path::new(from)) || self.has_entry_named(Path::new(to))? {
+            return Ok(false);
+        }
+        Journaled {
+            inner: &mut self.vfs,
+            journal: &mut self.journal,
+        }
+        .rename(Path::new(from), Path::new(to))?;
+        reconciler::move_base(&self.store, from, to)?;
+        self.write_studio(from.to_owned(), None);
+        Ok(true)
+    }
+
+    fn has_entry_named(&self, path: &Path) -> Result<bool, SessionError> {
+        let parent = path.parent().unwrap_or(Path::new(""));
+        Ok(self
+            .vfs
+            .list(parent)?
+            .iter()
+            .any(|entry| entry.path.as_path() == path))
     }
 
     fn batch_target(
