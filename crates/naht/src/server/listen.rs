@@ -23,7 +23,7 @@ pub(super) async fn accept_until_cancelled(
     router: Router,
     shutdown: CancellationToken,
 ) -> io::Result<()> {
-    let mut builder = Builder::new(TokioExecutor::new());
+    let mut builder = Builder::new(TokioExecutor::new()).http1_only();
     builder
         .http1()
         .timer(TokioTimer::new())
@@ -43,7 +43,7 @@ pub(super) async fn accept_until_cancelled(
             () = shutdown.cancelled() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    let connection = builder.serve_connection_with_upgrades(
+                    let connection = builder.serve_connection(
                         TokioIo::new(stream),
                         TowerToHyperService::new(router.clone()),
                     );

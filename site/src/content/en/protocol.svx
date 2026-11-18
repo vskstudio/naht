@@ -56,7 +56,7 @@ At most two POST requests read and handle a body at once, and a third waits for 
 its own. Each body is capped at 64 MiB and answered `413` when larger. The 15-second timer covers only the read
 of the body, which is answered `408` when it stalls, and a body that ends early or is malformed is answered
 `400`. A request head that stalls for ten seconds is dropped. The daemon serves at most 64 connections at once: a
-connection past that waits, not yet accepted, until one of them closes.
+connection past that waits, not yet accepted, until one of them closes. A connection that sends nothing, or that opens with an HTTP/2 preface, is closed within ten seconds and frees its slot. A local process that keeps reconnecting can still take the slots.
 
 ## The handshake (`GET /info`)
 

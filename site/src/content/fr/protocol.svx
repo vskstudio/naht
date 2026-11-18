@@ -56,7 +56,7 @@ temps propre. Chaque corps est plafonné à 64 MiB et reçoit `413` lorsqu'il es
 secondes ne couvre que la lecture du corps, qui reçoit `408` lorsqu'elle se bloque, et un corps qui se termine
 trop tôt ou qui est mal formé reçoit `400`. Une tête de requête qui reste bloquée pendant dix secondes est coupée.
 Le daemon sert au plus 64 connexions à la fois : une connexion au-delà attend, non encore acceptée, qu'une des
-autres se ferme.
+autres se ferme. Une connexion qui n'envoie rien, ou qui commence par le préambule HTTP/2, est coupée dans les dix secondes et libère donc son slot. Un processus local qui se reconnecte en boucle peut toujours prendre ces slots.
 
 ## Le handshake (`GET /info`)
 
