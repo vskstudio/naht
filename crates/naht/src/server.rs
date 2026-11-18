@@ -1,32 +1,31 @@
 //! The localhost HTTP server the Studio plugin talks to (architecture §7).
 //!
 //! All endpoints speak `MessagePack`: `GET /info` (handshake + `servePlaceId` guard + reconnect
-//! re-diff), `GET /patches` (text long-poll held open until a change or timeout), `POST /changes`
+//! re-diff when authenticated), `GET /patches` (text long-poll held open until a change or timeout), `POST /changes`
 //! (Studio → filesystem), `GET /blobs` + `POST /blobs` (the separate terrain blob channel),
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
 //! decisions are delegated to the [`Session`]; this layer is pure transport.
 
-use std::collections::BTreeSet;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::token::Token;
 use axum::Router;
 use axum::body::Bytes;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::DefaultBodyLimit;
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use cursor::{CursorQuery, SessionQuery};
-use naht_core::binary::BlobInstance;
+use naht_core::binary::{BlobInstance, TERRAIN_CLASS, terrain_voxel_count};
 use naht_core::protocol::{
-    self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, ServerInfo,
+    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong, ServerInfo,
 };
-use naht_core::vfs::{validate_blob_path, validate_directory_path, validate_source_path};
+use naht_core::vfs::validate_blob_path;
 use rejection::Rejection;
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify};
@@ -40,13 +39,16 @@ use tower::timeout::error::Elapsed;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::limit::RequestBodyLimitLayer;
 
+use crate::config::Limits;
 use crate::session::Session;
 
 mod guard;
 mod inventory;
 mod listen;
+mod refuse;
 
 use guard::{Gate, PostGate, guard, limit_post_bodies};
+use refuse::{refuse_directories, refused_text_paths};
 use std::io;
 use tokio::net::TcpListener;
 use tokio::sync::MutexGuard;
@@ -55,7 +57,11 @@ use tokio::time;
 
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
 
+const INVENTORY_ROUTE: &str = "/inventory";
+
 const MAX_IN_FLIGHT: usize = 64;
+
+const INFO_ROUTE: &str = "/info";
 
 const TIMEOUT_SLACK: Duration = Duration::from_secs(10);
 
@@ -74,6 +80,8 @@ pub struct AppState {
     blobs_ready: Notify,
     long_poll: Duration,
     post_wait: Duration,
+    limits: Limits,
+    token: Token,
     shutdown: CancellationToken,
     tasks: TaskTracker,
 }
@@ -84,14 +92,21 @@ impl AppState {
         self.blobs_ready.notify_waiters();
     }
 
-    /// Wrap a session, parking long-polls for at most `long_poll` before they return empty.
-    pub fn new(session: Session, long_poll: Duration) -> Arc<Self> {
-        Self::with_post_wait(session, long_poll, POST_WAIT)
+    /// Wrap a session, parking long-polls for at most `long_poll` before they return empty. Every
+    /// route except `GET /info` requires `token` in the `x-naht-token` header.
+    pub fn new(session: Session, long_poll: Duration, token: Token) -> Arc<Self> {
+        Self::with_post_wait(session, long_poll, POST_WAIT, token)
     }
 
     /// Like [`AppState::new`], but a mutating `POST` waits at most `post_wait` for a slot or the lock.
-    pub fn with_post_wait(session: Session, long_poll: Duration, post_wait: Duration) -> Arc<Self> {
+    pub fn with_post_wait(
+        session: Session,
+        long_poll: Duration,
+        post_wait: Duration,
+        token: Token,
+    ) -> Arc<Self> {
         let serve_place_id = session.serve_place_id();
+        let limits = session.limits();
         let bound_place = session
             .recorded_place_id()
             .map_or_else(OnceLock::new, OnceLock::from);
@@ -103,9 +118,16 @@ impl AppState {
             blobs_ready: Notify::new(),
             long_poll,
             post_wait,
+            limits,
+            token,
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
         })
+    }
+
+    /// The token every request but `GET /info` must present.
+    pub fn token(&self) -> &Token {
+        &self.token
     }
 
     /// The token that stops the server and every tracked task once cancelled.
@@ -152,17 +174,22 @@ impl AppState {
 /// Build the router over `state`, serving the loopback port `port`.
 pub fn router(state: Arc<AppState>, port: u16) -> Router {
     let gate = Arc::new(Gate::new(port, Arc::clone(&state)));
-    let posts = Arc::new(PostGate::new(state.post_wait, state.tasks.clone()));
+    let posts = Arc::new(PostGate::new(
+        state.post_wait,
+        state.tasks.clone(),
+        state.limits.inventory_body_bytes,
+    ));
+    let body_ceiling = BODY_LIMIT.max(state.limits.inventory_body_bytes);
     let read_deadline = ServiceBuilder::new()
         .layer(HandleErrorLayer::<_, ()>::new(overload))
         .layer(TimeoutLayer::new(
             state.long_poll.saturating_add(TIMEOUT_SLACK),
         ));
     Router::new()
-        .route("/info", get(info).layer(read_deadline.clone()))
+        .route(INFO_ROUTE, get(info).layer(read_deadline.clone()))
         .route("/patches", get(patches).layer(read_deadline.clone()))
         .route("/changes", post(changes))
-        .route("/inventory", post(inventory::inventory))
+        .route(INVENTORY_ROUTE, post(inventory::inventory))
         .route(
             "/blobs",
             get(blobs).layer(read_deadline.clone()).post(post_blobs),
@@ -176,8 +203,8 @@ pub fn router(state: Arc<AppState>, port: u16) -> Router {
                 .layer(HandleErrorLayer::<_, ()>::new(overload))
                 .layer(LoadShedLayer::new())
                 .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
-                .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
-                .layer(DefaultBodyLimit::max(BODY_LIMIT)),
+                .layer(RequestBodyLimitLayer::new(body_ceiling))
+                .layer(DefaultBodyLimit::max(body_ceiling)),
         )
         .layer(from_fn_with_state(gate, guard))
         .with_state(state)
@@ -217,24 +244,35 @@ where
 pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()> {
     let port = listener.local_addr()?.port();
     let shutdown = state.shutdown.clone();
-    listen::accept_until_cancelled(listener, router(state, port), shutdown).await
+    let connections = state.limits.connections;
+    listen::accept_until_cancelled(listener, router(state, port), shutdown, connections).await
 }
 
-async fn info(State(state): State<Arc<AppState>>) -> Response {
-    let outcome = state.with_session(handshake).await;
+async fn info(
+    State(state): State<Arc<AppState>>,
+    authenticated: Option<Extension<guard::Authenticated>>,
+) -> Response {
+    let authenticated = authenticated.is_some();
+    let outcome = state
+        .with_session(move |session| handshake(session, authenticated))
+        .await;
     let info = match outcome {
         Ok(Ok(info)) => info,
         Ok(Err(rejection)) => return rejection.into_response(),
         Err(error) => return Rejection::Blocking(error).into_response(),
     };
-    tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
-    state.patches_ready.notify_waiters();
-    state.blobs_ready.notify_waiters();
+    if authenticated {
+        tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
+        state.patches_ready.notify_waiters();
+        state.blobs_ready.notify_waiters();
+    }
     msgpack(&info)
 }
 
-fn handshake(session: &mut Session) -> Result<ServerInfo, Rejection> {
-    session.rescan()?;
+fn handshake(session: &mut Session, authenticated: bool) -> Result<ServerInfo, Rejection> {
+    if authenticated {
+        session.rescan()?;
+    }
     Ok(session.info())
 }
 
@@ -281,64 +319,6 @@ fn apply_text_batch(session: &mut Session, batch: ChangeBatch) -> Result<usize, 
     Ok(count)
 }
 
-fn refused_text_paths(session: &Session, changes: &[Change]) -> Vec<String> {
-    let deleted: BTreeSet<&Path> = changes.iter().filter_map(deleted_path).collect();
-    changes
-        .iter()
-        .filter(|change| is_refused_text_change(session, change, &deleted))
-        .map(|change| change_path(change).to_owned())
-        .collect()
-}
-
-fn is_refused_text_change(session: &Session, change: &Change, deleted: &BTreeSet<&Path>) -> bool {
-    let path = change_path(change);
-    if session.validate_path(path).is_err() {
-        return true;
-    }
-    if session.is_directory(path) {
-        return !removes_whole_directory(session, change, deleted);
-    }
-    validate_source_path(path).is_err()
-}
-
-fn removes_whole_directory(session: &Session, change: &Change, deleted: &BTreeSet<&Path>) -> bool {
-    match change {
-        Change::Delete { path } => {
-            validate_directory_path(path).is_ok()
-                && session.subtree_deleted_by(Path::new(path), deleted)
-        }
-        Change::Upsert { .. } => false,
-    }
-}
-
-fn deleted_path(change: &Change) -> Option<&Path> {
-    match change {
-        Change::Delete { path } => Some(Path::new(path)),
-        Change::Upsert { .. } => None,
-    }
-}
-
-fn change_path(change: &Change) -> &str {
-    match change {
-        Change::Upsert { path, .. } | Change::Delete { path } => path,
-    }
-}
-
-fn refuse_directories<'a>(
-    session: &Session,
-    paths: impl Iterator<Item = &'a str>,
-) -> Result<(), Rejection> {
-    let refused: Vec<String> = paths
-        .filter(|path| session.is_directory(path))
-        .map(str::to_owned)
-        .collect();
-    if refused.is_empty() {
-        Ok(())
-    } else {
-        Err(Rejection::RefusedPaths(refused))
-    }
-}
-
 async fn blobs(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {
     let cursor = query.cursor.unwrap_or(0);
 
@@ -363,7 +343,12 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
         Ok(batch) => batch,
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let count = match apply_within(&state, move |session| apply_blob_batch(session, batch)).await {
+    let terrain_voxels = state.limits.terrain_voxels;
+    let count = match apply_within(&state, move |session| {
+        apply_blob_batch(session, batch, terrain_voxels)
+    })
+    .await
+    {
         Ok(count) => count,
         Err(rejection) => return rejection.into_response(),
     };
@@ -372,8 +357,13 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
     StatusCode::OK.into_response()
 }
 
-fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usize, Rejection> {
+fn apply_blob_batch(
+    session: &mut Session,
+    batch: BlobChangeBatch,
+    terrain_voxels: usize,
+) -> Result<usize, Rejection> {
     refuse_other_blobs(&batch.changes)?;
+    refuse_oversized_terrain(&batch.changes, terrain_voxels)?;
     for change in &batch.changes {
         session.validate_path(&change.path)?;
     }
@@ -384,6 +374,20 @@ fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usi
     let count = batch.changes.len();
     session.apply_blob_changes(batch.changes)?;
     Ok(count)
+}
+
+fn refuse_oversized_terrain(changes: &[BlobInstance], limit: usize) -> Result<(), Rejection> {
+    for change in changes
+        .iter()
+        .filter(|change| change.class == TERRAIN_CLASS)
+    {
+        let voxels = terrain_voxel_count(&change.content)
+            .ok_or_else(|| Rejection::UnreadableTerrain(change.path.clone()))?;
+        if voxels > limit {
+            return Err(Rejection::TerrainTooLarge { voxels, limit });
+        }
+    }
+    Ok(())
 }
 
 fn refuse_other_blobs(changes: &[BlobInstance]) -> Result<(), Rejection> {
@@ -466,6 +470,8 @@ fn enrol_waiter(notify: &Notify) -> Pin<Box<impl Future<Output = ()> + '_>> {
 }
 
 mod cursor;
+#[cfg(test)]
+mod info_tests;
 mod rejection;
 #[cfg(test)]
 mod tests;

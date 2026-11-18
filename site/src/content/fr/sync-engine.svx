@@ -57,9 +57,11 @@ La résilience est une fonctionnalité phare, précisément parce que c'est ce q
 - **Reconnexion automatique avec backoff** : un lien tombé est réessayé, pas fatal.
 - **État de connexion visible** : le widget du plugin affiche `Connecting → Connected → Reconnecting →
   Conflict`, donc tu connais toujours le statut de la jonction.
-- **Re-diff à la reconnexion** : sur `GET /info` le daemon recompare à l'état persisté plutôt que de
-  re-pousser aveuglément. Combiné à l'ack-gating, une reconnexion ne peut jamais perdre ou dupliquer du
-  travail silencieusement.
+- **Re-diff à la reconnexion** : un `GET /info` qui porte le token du projet fait recomparer le daemon à l'état
+  persisté plutôt que de re-pousser aveuglément. Un `GET /info` sans token se contente de répondre. `naht serve`
+  recompare aussi une fois au démarrage, donc une modification faite pendant qu'il était arrêté est mise en file avant
+  que le plugin s'attache. Combiné à l'ack-gating, une reconnexion ne peut jamais perdre ou dupliquer du travail
+  silencieusement.
 
 <Callout type="note">
 

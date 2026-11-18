@@ -9,6 +9,7 @@ use crate::server;
 use crate::server::AppState;
 use crate::session::Session;
 use crate::shutdown;
+use crate::token;
 use crate::watcher;
 use naht_core::mapper;
 use naht_core::vfs::DiskVfs;
@@ -36,8 +37,10 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     out: &mut Output<Stdout, Stderr>,
 ) -> Result<(), CommandError> {
     checked_tree_paths(&config)?;
+    let limits = config.resolved_limits()?;
     let root = canonical(root)?;
     let _instance = take_instance_lock(&root)?;
+    let loaded = token::load_or_create(&root)?;
     let startup_snapshot = {
         let root = root.clone();
         task::spawn_blocking(move || mapper::snapshot_dir(&DiskVfs::new(), &root)).await
@@ -63,6 +66,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         config.serve.place_id,
         config.terrain_sync(),
     )?;
+    session.set_limits(limits);
     session.protect_source_roots(
         config
             .tree
@@ -71,12 +75,17 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
             .map(PathBuf::from),
     )?;
     let daemon_id = session.daemon_id().to_owned();
-    let state = AppState::new(session, LONG_POLL);
+    let state = AppState::new(session, LONG_POLL, loaded.token);
     state
         .tasks()
         .spawn(shutdown::cancel_on_signal(state.shutdown().clone()));
 
     let watcher = watcher::spawn(&root, Arc::clone(&state))?;
+    state
+        .with_session(Session::rescan)
+        .await
+        .map_err(CommandError::RescanInterrupted)?
+        .map_err(CommandError::Session)?;
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let listener = TcpListener::bind(addr)
@@ -86,6 +95,13 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         path: daemon_port::path(&root),
         source,
     })?;
+    if loaded.created {
+        out.say(format_args!(
+            "naht created the token at {}: run `naht token` to print it for the Studio plugin",
+            token::path(&root).display()
+        ))
+        .map_err(CommandError::Output)?;
+    }
     tracing::info!(target: "naht::server", %addr, root = %root.display(), "naht serving");
     out.say(format_args!(
         "naht serving {} on http://{addr}",
@@ -142,10 +158,11 @@ fn checked_tree_paths(config: &Config) -> Result<(), CommandError> {
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, TcpListener};
+    use std::path::Path;
     use std::time::Duration;
 
     use super::{CommandError, Config, Output, checked_tree_paths, serve};
-    use crate::config::TreeNode;
+    use crate::config::{ConfigError, LimitsConfig, TreeNode};
     use tokio::time;
 
     fn config_with_tree_path(path: &str) -> Config {
@@ -225,6 +242,36 @@ mod tests {
         }
     }
 
+    async fn serve_for_a_moment(root: &Path) -> String {
+        let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut stdout = Vec::new();
+        let mut out = Output::new(&mut stdout, Vec::new());
+        let outcome = time::timeout(
+            Duration::from_secs(3),
+            serve(Config::default(), root, port, &mut out),
+        )
+        .await;
+        assert!(outcome.is_err(), "serve returned early: {outcome:?}");
+        String::from_utf8(stdout).unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_first_serve_says_where_the_token_went_and_a_later_serve_stays_quiet() {
+        let root = tempfile::tempdir().unwrap();
+        let first = serve_for_a_moment(root.path()).await;
+        let later = serve_for_a_moment(root.path()).await;
+        assert_eq!(
+            first.matches("naht created the token").count(),
+            1,
+            "{first}"
+        );
+        assert!(!later.contains("naht created the token"), "{later}");
+    }
+
     #[tokio::test]
     async fn a_refused_tree_path_is_refused_before_the_instance_lock_is_taken() {
         let root = tempfile::tempdir().unwrap();
@@ -248,6 +295,41 @@ mod tests {
         assert!(
             !root.path().join(".naht").exists(),
             "serve wrote .naht before refusing the tree path"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_out_of_range_limit_is_refused_before_the_instance_lock_is_taken() {
+        let root = tempfile::tempdir().unwrap();
+        let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let config = Config {
+            limits: LimitsConfig {
+                connections: Some(0),
+                ..LimitsConfig::default()
+            },
+            ..Config::default()
+        };
+        let mut out = Output::new(Vec::new(), Vec::new());
+        let outcome = time::timeout(
+            Duration::from_secs(10),
+            serve(config, root.path(), port, &mut out),
+        )
+        .await;
+        assert!(
+            matches!(
+                outcome,
+                Ok(Err(CommandError::Config(ConfigError::LimitOutOfRange {
+                    key: "connections",
+                    value: 0,
+                    ..
+                })))
+            ),
+            "serve did not refuse the limit first: {outcome:?}"
+        );
+        assert!(
+            !root.path().join(".naht").exists(),
+            "serve wrote .naht before refusing the limit"
         );
     }
 

@@ -46,6 +46,16 @@ naht serve -v             # debug logs
 The daemon serves over `http://localhost:<port>`, watches the filesystem, and accepts the Studio
 plugin's connection. Leave it running while you work. Only one daemon runs per project: a second `naht serve` on the same project exits with an error and leaves the first one running.
 
+## `naht token [path]`
+
+Print the project's token, the value the Studio plugin asks for once. The token lives in `.naht/token`, which `naht serve` creates on its first run and reuses after. On Unix only the file's owner can read it. On Windows the file inherits the access rules of the `.naht` directory.
+
+```sh
+naht token                # print the token of the project in the current directory
+```
+
+Until `naht serve` has run in the project, `naht token` fails and says so.
+
 ## `naht pull [path]`
 
 Ask a **running** daemon to re-sync now, rather than waiting for the next filesystem event. It asks the

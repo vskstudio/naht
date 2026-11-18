@@ -19,6 +19,10 @@ local UNSAVED_NEW = "src/New.luau"
 local KEEP_FILE = "src/Keep.luau"
 local HIDDEN_FILE = "src/.Hidden.luau"
 local OTHER_FILE = "src/Other.luau"
+local REFUSED_FILE = "src/Refused.luau"
+local CHILDLESS_DIR = "src/Dir"
+local CHILDLESS_INIT = "src/Dir/init.luau"
+local CHILDLESS_FLAT = "src/Dir.luau"
 local OTHER_PLACE_ID = 999
 local READY_ATTEMPTS = 300
 local STOP_ATTEMPTS = 300
@@ -75,7 +79,11 @@ local function httpBridge()
 end
 
 local function isAlive(base)
-	return request("GET", base .. "/heartbeat", { ["x-naht-client"] = "plugin" }, nil).status == 200
+	return request("GET", base .. "/info", { ["x-naht-client"] = "plugin" }, nil).status == 200
+end
+
+local function readToken(root)
+	return string.match(fs.readFile(root .. "/.naht/token"), "^%s*(.-)%s*$") or ""
 end
 
 local function isRunning(pid)
@@ -112,6 +120,7 @@ local function startDaemon(root, port, log)
 	for _ = 1, READY_ATTEMPTS do
 		if isAlive(base) then
 			daemon.client = Client.new(base, function(): number return PLACE_ID end, httpBridge())
+			daemon.client:setToken(readToken(root))
 			return daemon
 		end
 		task.wait(TICK)
@@ -363,6 +372,72 @@ local function otherPlaceRefused(root, port, log)
 	stopDaemon(other)
 end
 
+local function childlessInitKept(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeDir(root .. "/" .. CHILDLESS_DIR)
+	fs.writeFile(root .. "/" .. CHILDLESS_INIT, "return 'dir'")
+
+	local daemon = startDaemon(root, port, log)
+	local info = daemon.client:info()
+	local accepted, err = pcall(daemon.client.postInventory, daemon.client, { entryOf(CHILDLESS_INIT, "return 'dir'") }, info.session_id)
+	check("the daemon accepts an inventory that lists a childless init folder under its init path", accepted, tostring(err))
+	check(
+		"the childless init file stays where the plugin wrote it",
+		fs.isFile(root .. "/" .. CHILDLESS_INIT) and fs.readFile(root .. "/" .. CHILDLESS_INIT) == "return 'dir'"
+	)
+	check("no flat sibling is created for the childless init folder", not fs.isFile(root .. "/" .. CHILDLESS_FLAT))
+	stopDaemon(daemon)
+end
+
+local function tokenRefused(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src")
+	fs.writeFile(root .. "/" .. KEEP_FILE, "return 1")
+
+	local daemon = startDaemon(root, port, log)
+	local info = daemon.client:info()
+
+	local bare = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
+	local missingOk, missingErr = pcall(bare.patches, bare, 0, info.session_id)
+	check(
+		"a request without the token is refused with a 401",
+		not missingOk and type(missingErr) == "table" and missingErr.tokenRefused == true and missingErr.status == 401,
+		tostring(if type(missingErr) == "table" then missingErr.status else missingErr)
+	)
+	check(
+		"a request without the token is told the daemon needs it",
+		not missingOk and type(missingErr) == "table" and missingErr.message == Client.TOKEN_REQUIRED,
+		if type(missingErr) == "table" then tostring(missingErr.message) else tostring(missingErr)
+	)
+
+	local wrong = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
+	wrong:setToken("not-the-project-token")
+	local wrongOk, wrongErr = pcall(wrong.postChanges, wrong, { Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") })
+	check(
+		"a request with a wrong token is refused with a 401",
+		not wrongOk and type(wrongErr) == "table" and wrongErr.tokenRefused == true and wrongErr.status == 401,
+		tostring(if type(wrongErr) == "table" then wrongErr.status else wrongErr)
+	)
+	check(
+		"a wrong token is told the daemon rejected it",
+		not wrongOk and type(wrongErr) == "table" and wrongErr.message == Client.TOKEN_REJECTED,
+		if type(wrongErr) == "table" then tostring(wrongErr.message) else tostring(wrongErr)
+	)
+	check("a refused write leaves no file on disk", not fs.isFile(root .. "/" .. REFUSED_FILE))
+
+	local accepted, acceptedErr = pcall(daemon.client.postChanges, daemon.client, { Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") })
+	check("the right token is still accepted after the refusals", accepted, tostring(acceptedErr))
+	check("the accepted write reaches disk", fs.isFile(root .. "/" .. REFUSED_FILE))
+	stopDaemon(daemon)
+end
+
 local function main()
 	local root = WORK .. "/demo"
 	local log = WORK .. "/naht.log"
@@ -382,6 +457,8 @@ local function main()
 		{ name = "unsaved", run = unsavedEdits },
 		{ name = "hidden", run = hiddenNameRefused },
 		{ name = "other-place", run = otherPlaceRefused },
+		{ name = "token", run = tokenRefused },
+		{ name = "childless-init", run = childlessInitKept },
 	}
 	for _, scenarioEntry in extra do
 		local scenarioOk, scenarioErr = pcall(scenarioEntry.run, WORK .. "/" .. scenarioEntry.name, math.random(20000, 60000), WORK .. "/" .. scenarioEntry.name .. ".log")

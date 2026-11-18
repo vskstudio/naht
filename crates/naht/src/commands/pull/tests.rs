@@ -1,6 +1,7 @@
 use super::{InfoFailure, Ownership, accept_verdict, decode_info, fetch_info, ownership};
 use crate::commands::error::CommandError;
 use crate::daemon_port::Recorded;
+use crate::token::Token;
 use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo, to_msgpack};
 use std::net::Ipv4Addr;
 use std::time::Duration;
@@ -14,11 +15,14 @@ fn info(project: &str, place: Option<u64>, daemon_id: &str) -> ServerInfo {
         protocol_version: PROTOCOL_VERSION,
         server_version: "test".to_owned(),
         project_name: project.to_owned(),
+        project_id: "p-1".to_owned(),
+        token_required: true,
         session_id: "test".to_owned(),
         daemon_id: daemon_id.to_owned(),
         serve_place_id: place,
         conflicted: Vec::new(),
         terrain_sync: false,
+        limits: None,
     }
 }
 
@@ -196,7 +200,7 @@ async fn serve_info_capturing_the_head(body: Vec<u8>) -> (u16, JoinHandle<String
 async fn fetch_info_names_the_cli_and_the_configured_place() {
     let body = to_msgpack(&info("demo", Some(7), "d-1")).unwrap();
     let (port, head) = serve_info_capturing_the_head(body).await;
-    assert!(fetch_info(port, Some(7)).await.is_ok());
+    assert!(fetch_info(port, Some(7), &Token::for_tests()).await.is_ok());
     let request = head.await.unwrap();
     assert!(request.contains("x-naht-client: cli"), "{request}");
     assert!(request.contains("x-naht-place-id: 7"), "{request}");
@@ -206,10 +210,21 @@ async fn fetch_info_names_the_cli_and_the_configured_place() {
 async fn fetch_info_sends_no_place_when_none_is_configured() {
     let body = to_msgpack(&info("demo", None, "d-1")).unwrap();
     let (port, head) = serve_info_capturing_the_head(body).await;
-    assert!(fetch_info(port, None).await.is_ok());
+    assert!(fetch_info(port, None, &Token::for_tests()).await.is_ok());
     let request = head.await.unwrap();
     assert!(request.contains("x-naht-client: cli"), "{request}");
     assert!(!request.contains("x-naht-place-id"), "{request}");
+}
+
+#[tokio::test]
+async fn fetch_info_sends_the_project_token() {
+    let body = to_msgpack(&info("demo", None, "d-1")).unwrap();
+    let (port, head) = serve_info_capturing_the_head(body).await;
+    let token = Token::for_tests();
+    assert!(fetch_info(port, None, &token).await.is_ok());
+    let request = head.await.unwrap();
+    let expected = format!("x-naht-token: {}", token.as_str().to_ascii_lowercase());
+    assert!(request.contains(&expected), "{request}");
 }
 
 #[derive(serde::Serialize)]
@@ -254,7 +269,7 @@ async fn an_info_body_past_the_cap_is_not_naht() {
     .unwrap();
     let port = serve_body_once(body).await;
     assert!(matches!(
-        fetch_info(port, None).await,
+        fetch_info(port, None, &Token::for_tests()).await,
         Err(InfoFailure::NotNaht)
     ));
 }
@@ -279,7 +294,7 @@ async fn serve_a_declared_body_that_stalls() -> u16 {
 async fn an_info_body_past_the_cap_is_refused_without_waiting_for_the_rest() {
     let port = serve_a_declared_body_that_stalls().await;
     assert!(matches!(
-        fetch_info(port, None).await,
+        fetch_info(port, None, &Token::for_tests()).await,
         Err(InfoFailure::NotNaht)
     ));
 }

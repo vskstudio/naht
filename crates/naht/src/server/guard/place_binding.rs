@@ -8,9 +8,10 @@ use axum::http::{Request, StatusCode, header};
 use naht_core::state::StateStore;
 use tower::ServiceExt;
 
-use super::{CLIENT_HEADER, PLACE_ID_HEADER};
+use super::{CLIENT_HEADER, PLACE_ID_HEADER, TOKEN_HEADER};
 use crate::server::{AppState, router};
 use crate::session::Session;
+use crate::token::{TEST_TOKEN, Token};
 
 const PORT: u16 = 34873;
 
@@ -18,12 +19,13 @@ fn bound_state(root: &Path) -> Arc<AppState> {
     fs::create_dir_all(root.join(".naht")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     let session = Session::new(root, store, "demo", None, false).unwrap();
-    AppState::new(session, Duration::from_secs(1))
+    AppState::new(session, Duration::from_secs(1), Token::for_tests())
 }
 
 fn info_request(place: Option<&str>) -> Request<Body> {
     let request = Request::get("/info")
         .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{PORT}"));
     let request = match place {
         Some(place) => request.header(PLACE_ID_HEADER, place),
@@ -40,6 +42,45 @@ async fn info(state: &Arc<AppState>, place: Option<&str>) -> (StatusCode, String
     let status = response.status();
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+async fn tokenless_info(state: &Arc<AppState>, place: &str) -> StatusCode {
+    let request = Request::get("/info")
+        .header(CLIENT_HEADER, "plugin")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(PLACE_ID_HEADER, place)
+        .body(Body::empty())
+        .unwrap();
+    router(Arc::clone(state), PORT)
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn a_tokenless_info_binds_no_place() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+
+    assert_eq!(tokenless_info(&state, "666").await, StatusCode::OK);
+    assert!(state.bound_place.get().is_none());
+    assert_eq!(info(&state, Some("11")).await.0, StatusCode::OK);
+
+    let restarted = bound_state(root.path());
+    assert_eq!(info(&restarted, Some("22")).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(info(&restarted, Some("11")).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_tokenless_info_from_another_place_is_refused_once_bound_and_binds_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let state = bound_state(root.path());
+    assert_eq!(info(&state, Some("11")).await.0, StatusCode::OK);
+
+    assert_eq!(tokenless_info(&state, "22").await, StatusCode::FORBIDDEN);
+    assert_eq!(tokenless_info(&state, "11").await, StatusCode::OK);
+    assert_eq!(state.bound_place.get(), Some(&11));
 }
 
 #[tokio::test]
@@ -124,6 +165,7 @@ async fn a_malformed_place_header_is_refused() {
 fn write_request(place: Option<&str>) -> Request<Body> {
     let request = Request::post("/changes")
         .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, TEST_TOKEN)
         .header(header::HOST, format!("127.0.0.1:{PORT}"));
     let request = match place {
         Some(place) => request.header(PLACE_ID_HEADER, place),

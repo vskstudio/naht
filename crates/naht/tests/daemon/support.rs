@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use naht::config::Limits;
 use naht::server;
 use naht::server::AppState;
 use naht::session::Session;
+use naht::token::{self, Token};
 use naht_core::binary::BlobInstance;
 use naht_core::protocol::{
     self, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, SyncActivity,
@@ -23,12 +25,14 @@ pub(crate) use crate::wire::decode;
 
 pub(crate) const CLIENT_HEADER: &str = "x-naht-client";
 pub(crate) const PLACE_ID_HEADER: &str = "x-naht-place-id";
+pub(crate) const TOKEN_HEADER: &str = protocol::TOKEN_HEADER;
 
 pub(crate) struct Harness {
     pub base: String,
     pub root: PathBuf,
     pub client: reqwest::Client,
     pub state: Arc<AppState>,
+    token: Token,
     place_id: Option<u64>,
     _dir: tempfile::TempDir,
 }
@@ -50,12 +54,23 @@ impl Harness {
         terrain_sync: bool,
         long_poll: Duration,
     ) -> Self {
+        Self::start_limited(serve_place_id, terrain_sync, long_poll, Limits::default()).await
+    }
+
+    pub(crate) async fn start_limited(
+        serve_place_id: Option<u64>,
+        terrain_sync: bool,
+        long_poll: Duration,
+        limits: Limits,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-        let session =
+        let mut session =
             Session::new(root.clone(), store, "demo", serve_place_id, terrain_sync).unwrap();
-        let state = AppState::new(session, long_poll);
+        session.set_limits(limits);
+        let token = token::load_or_create(&root).unwrap().token;
+        let state = AppState::new(session, long_poll, token.clone());
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -66,6 +81,7 @@ impl Harness {
             root,
             client: reqwest::Client::new(),
             state,
+            token,
             place_id: serve_place_id,
             _dir: dir,
         }
@@ -75,8 +91,14 @@ impl Harness {
         format!("{}{path}", self.base)
     }
 
+    pub(crate) fn token(&self) -> &str {
+        self.token.as_str()
+    }
+
     fn authed(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        let request = request.header(CLIENT_HEADER, "plugin");
+        let request = request
+            .header(CLIENT_HEADER, "plugin")
+            .header(TOKEN_HEADER, self.token());
         match self.place_id {
             Some(id) => request.header(PLACE_ID_HEADER, id.to_string()),
             None => request,
@@ -110,6 +132,30 @@ impl Harness {
         decode(resp).await
     }
 
+    pub(crate) async fn post_blobs_reply(
+        &self,
+        changes: Vec<BlobInstance>,
+    ) -> (reqwest::StatusCode, String) {
+        let body = protocol::to_msgpack(&BlobChangeBatch { changes }).unwrap();
+        let response = self
+            .authed(self.client.post(format!("{}/blobs", self.base)))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, response.text().await.unwrap())
+    }
+
+    pub(crate) async fn post_bytes(&self, path: &str, body: Vec<u8>) -> reqwest::StatusCode {
+        self.authed(self.client.post(self.url(path)))
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
     pub(crate) async fn post_blobs(&self, changes: Vec<BlobInstance>) -> reqwest::StatusCode {
         let body = protocol::to_msgpack(&BlobChangeBatch { changes }).unwrap();
         self.authed(self.client.post(format!("{}/blobs", self.base)))
@@ -121,7 +167,7 @@ impl Harness {
     }
 
     pub(crate) async fn info(&self, place_id: Option<u64>) -> reqwest::Response {
-        wire::info(&self.client, &self.base, place_id).await
+        wire::info(&self.client, &self.base, place_id, self.token()).await
     }
 
     pub(crate) async fn raw_reply(&self, request: &str) -> io::Result<String> {
@@ -195,7 +241,12 @@ impl Harness {
     }
 
     pub(crate) async fn heartbeat(&self) -> Pong {
-        decode(wire::heartbeat(&self.client, &self.base).await.unwrap()).await
+        decode(
+            wire::heartbeat(&self.client, &self.base, self.token())
+                .await
+                .unwrap(),
+        )
+        .await
     }
 
     pub(crate) async fn activity(&self, since: u64) -> SyncActivity {
@@ -210,7 +261,7 @@ impl Harness {
 
     pub(crate) async fn ack(&self, seqs: Vec<u64>) -> reqwest::StatusCode {
         let session = self.session_id().await;
-        wire::ack(&self.client, &self.base, &session, seqs).await
+        wire::ack(&self.client, &self.base, &session, seqs, self.token()).await
     }
 
     pub(crate) async fn ack_all(&self, batch: &PatchBatch) {

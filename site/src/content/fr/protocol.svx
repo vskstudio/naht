@@ -19,7 +19,7 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 
 | Méthode + chemin | Rôle |
 |---|---|
-| `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Déclenche un re-diff contre l'état persisté à la (re)connexion. |
+| `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Avec le token du projet, il déclenche un re-diff contre l'état persisté à la (re)connexion ; sans token, il répond seulement. |
 | `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. Exige le paramètre de requête `session`. |
 | `POST /changes` | Éditions Studio → système de fichiers (un lot d'upserts/deletes). |
 | `POST /inventory` | Liste complète des scripts du plugin, envoyée une fois par session à l'attachement. Le daemon retire les scripts miroir que la liste ne nomme pas et écrit ceux qu'il n'a pas, si bien qu'un renommage fait pendant l'arrêt du plugin ne laisse pas d'ancien fichier. Exige le paramètre de requête `session`. Additif : pas de hausse de version de protocole. |
@@ -30,22 +30,24 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 
 ## Contrôle d'accès
 
-Le daemon vérifie chaque route avant son handler. Une requête reçoit `403` quand :
+Le daemon vérifie chaque route avant son handler. Une requête reçoit `403`, ou `401` pour le token, quand :
 
 - elle porte un header `Origin`, que les navigateurs ajoutent aux requêtes inter-sites ;
 - son `Host` n'est pas `127.0.0.1:<port>`, `localhost:<port>` ou `[::1]:<port>`, ce qui bloque les pages qui
   rattachent un nom DNS à l'adresse de bouclage (DNS rebinding) ;
 - elle n'a pas le header `x-naht-client`. Un navigateur ne peut pas envoyer un header personnalisé à une autre
   origine sans preflight, et le daemon n'en répond jamais ;
+- elle n'a pas le header `x-naht-token`, ou en porte une autre valeur, sur toute route sauf `GET /info` ; le refus est alors un `401`.
 - le projet définit `[serve] place_id` et le header `x-naht-place-id` manque ou diffère ;
 - le projet n'a pas de `[serve] place_id` et il est rattaché à une place : un `POST` sans le header
   `x-naht-place-id`, un header qui nomme une autre place, ou un header qui nomme la place `0` (une place non
   publiée) est refusé. Un projet non rattaché accepte la place `0` sans l'enregistrer ;
 - le header `x-naht-place-id` est mal formé.
 
-Ces contrôles arrêtent les navigateurs et le DNS rebinding. Ce ne sont pas une authentification : tout processus
-de la machine qui atteint le port et envoie les headers est accepté. Sur une machine partagée, c'est donc le
-compte du système d'exploitation qui protège le projet. Le modèle de menace est dans `SECURITY.md`.
+Ces contrôles arrêtent les navigateurs et le DNS rebinding. Toutes les routes sauf `GET /info` exigent aussi le
+token du projet dans `x-naht-token`, que le daemon crée dans `.naht/token`, lisible sous Unix par son seul propriétaire :
+sous Unix, les autres comptes d'une machine partagée ne peuvent pas l'appeler. Sous Windows, le fichier hérite des droits du dossier `.naht`. Le token ne protège pas contre un processus du même
+compte, qui peut lire ce fichier. Le modèle de menace est dans `SECURITY.md`.
 
 Les écritures sont aussi contrôlées. `POST /changes` prend une map MessagePack `{changes: [...]}`, où chaque
 changement vaut `{Upsert: {path, class, content}}` ou `{Delete: {path}}`. Il n'accepte que des chemins visibles
@@ -119,3 +121,7 @@ Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur ch
 `GET /patches`, `GET /blobs` et `POST /ack` exigent aussi le paramètre `session`, et une requête périmée reçoit `409`.
 Un plugin qui ne correspond pas à la version de protocole du daemon est refusé au handshake. Mets à jour la CLI,
 le plugin et le daemon ensemble.
+
+La version `4` ajoute le token du projet. Toutes les routes sauf `GET /info` exigent `x-naht-token`, et une requête sans
+token correspondant reçoit `401`. Un plugin de version `3` s'arrête à son message de mise à jour. Mets à jour la CLI, le
+plugin et le daemon ensemble.

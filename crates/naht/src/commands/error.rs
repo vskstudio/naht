@@ -1,5 +1,6 @@
 use crate::config::ConfigError;
 use crate::session::SessionError;
+use crate::token::TokenError;
 use crate::uploader::UploaderError;
 use crate::watcher::WatchError;
 use naht_core::build::BuildError;
@@ -11,6 +12,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use thiserror::Error;
+use tokio::task::JoinError;
 use toml::ser;
 
 /// Why a CLI or daemon command failed, one variant per failure a caller may tell apart. The
@@ -121,6 +123,9 @@ pub enum CommandError {
     /// The sync session could not be opened from the persisted state.
     #[error(transparent)]
     Session(#[from] SessionError),
+    /// The startup rescan of the project's files was interrupted before it finished.
+    #[error("the startup rescan of the project was interrupted")]
+    RescanInterrupted(#[source] JoinError),
     /// The layered configuration is invalid.
     #[error(transparent)]
     Config(#[from] ConfigError),
@@ -133,6 +138,16 @@ pub enum CommandError {
     /// The filesystem watcher could not start.
     #[error(transparent)]
     Watch(#[from] WatchError),
+    /// The project's token file could not be read or created.
+    #[error(transparent)]
+    Token(#[from] TokenError),
+    /// A command that needs the project's token (`naht token`, `naht pull`, or the re-sync after a
+    /// resolve) found no token file, because `naht serve` has not run for this project.
+    #[error("no token file at `{}` for this project: run `naht serve` once to create it", path.display())]
+    NoToken {
+        /// The token file that is missing.
+        path: PathBuf,
+    },
     /// A running daemon could not be reached on its port.
     #[error("cannot reach the daemon at `{url}` (is `naht serve` running?)")]
     DaemonUnreachable {

@@ -2,6 +2,7 @@ use std::error::Error as StdError;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use axum::Json;
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
@@ -14,29 +15,78 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use super::{AppState, BODY_LIMIT};
+use super::{AppState, BODY_LIMIT, INFO_ROUTE, INVENTORY_ROUTE};
 use crate::session::SessionError;
 
 pub(super) const CLIENT_HEADER: HeaderName = HeaderName::from_static(protocol::CLIENT_HEADER);
+pub(super) const TOKEN_HEADER: HeaderName = HeaderName::from_static(protocol::TOKEN_HEADER);
 const PLACE_ID_HEADER: HeaderName = HeaderName::from_static(protocol::PLACE_ID_HEADER);
+
+const TOKEN_REQUIRED: &str = "token required";
+const TOKEN_REJECTED: &str = "token rejected";
 
 pub(super) const POST_BODY_SLOTS: usize = 2;
 
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Authenticated;
 
 #[derive(Debug)]
 pub(super) struct PostGate {
     slots: Arc<Semaphore>,
     wait: Duration,
     tasks: TaskTracker,
+    inventory_body: usize,
 }
 
 impl PostGate {
-    pub(super) fn new(wait: Duration, tasks: TaskTracker) -> Self {
+    pub(super) fn new(wait: Duration, tasks: TaskTracker, inventory_body: usize) -> Self {
         Self {
             slots: Arc::new(Semaphore::new(POST_BODY_SLOTS)),
             wait,
             tasks,
+            inventory_body,
+        }
+    }
+
+    fn body_limit(&self, path: &str) -> usize {
+        if path == INVENTORY_ROUTE {
+            self.inventory_body
+        } else {
+            BODY_LIMIT
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Refusal {
+    Forbidden(String),
+    Unauthorized(&'static str),
+}
+
+impl Refusal {
+    fn forbidden(reason: &str) -> Self {
+        Self::Forbidden(reason.to_owned())
+    }
+
+    fn reason(&self) -> &str {
+        match self {
+            Self::Forbidden(reason) => reason,
+            Self::Unauthorized(reason) => reason,
+        }
+    }
+}
+
+impl IntoResponse for Refusal {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Forbidden(reason) => (StatusCode::FORBIDDEN, reason).into_response(),
+            Self::Unauthorized(reason) => (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": reason })),
+            )
+                .into_response(),
         }
     }
 }
@@ -62,34 +112,74 @@ impl Gate {
         }
     }
 
-    async fn admit(&self, method: &Method, headers: &HeaderMap) -> Result<(), String> {
+    async fn admit(
+        &self,
+        method: &Method,
+        path: &str,
+        headers: &HeaderMap,
+    ) -> Result<bool, Refusal> {
         if headers.contains_key(header::ORIGIN) {
-            return Err("cross-origin requests are not allowed".to_owned());
+            return Err(Refusal::forbidden("cross-origin requests are not allowed"));
         }
         if !self.host_is_allowed(headers) {
-            return Err("host is not allowed".to_owned());
+            return Err(Refusal::forbidden("host is not allowed"));
         }
         if headers.get(CLIENT_HEADER).is_none_or(HeaderValue::is_empty) {
-            return Err(format!(
+            return Err(Refusal::Forbidden(format!(
                 "{}: missing {} header",
                 protocol::OUTDATED_PLUGIN_TOKEN,
                 protocol::CLIENT_HEADER
-            ));
+            )));
         }
+        let authenticated = match self.check_token(headers) {
+            Ok(()) => true,
+            Err(_) if path == INFO_ROUTE => false,
+            Err(refusal) => return Err(refusal),
+        };
         match self.serve_place_id {
             Some(expected) if !place_id_matches(headers, expected) => {
-                Err("place id mismatch".to_owned())
+                Err(Refusal::forbidden("place id mismatch"))
             }
-            Some(_) => Ok(()),
+            Some(_) => Ok(authenticated),
+            None if !authenticated => self
+                .refuse_other_bound_place(headers)
+                .map(|()| authenticated),
             None => {
                 if method == Method::POST
                     && !headers.contains_key(PLACE_ID_HEADER)
                     && let Some(bound) = self.state.bound_place.get()
                 {
-                    return Err(unplaced_write_refused(*bound));
+                    return Err(Refusal::Forbidden(unplaced_write_refused(*bound)));
                 }
-                self.bind_place(headers).await
+                self.bind_place(headers)
+                    .await
+                    .map_err(Refusal::Forbidden)
+                    .map(|()| authenticated)
             }
+        }
+    }
+
+    fn check_token(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+        match headers.get(TOKEN_HEADER) {
+            None => Err(Refusal::Unauthorized(TOKEN_REQUIRED)),
+            Some(presented) if self.state.token().matches(presented.as_bytes()) => Ok(()),
+            Some(_) => Err(Refusal::Unauthorized(TOKEN_REJECTED)),
+        }
+    }
+
+    fn refuse_other_bound_place(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+        let Some(bound) = self.state.bound_place.get() else {
+            return Ok(());
+        };
+        let Some(place_id) = requested_place_id(headers).map_err(Refusal::Forbidden)? else {
+            return Ok(());
+        };
+        if place_id == protocol::UNPUBLISHED_PLACE_ID {
+            Err(Refusal::Forbidden(unpublished_place_refused(*bound)))
+        } else if place_id == *bound {
+            Ok(())
+        } else {
+            Err(Refusal::Forbidden(place_bound_elsewhere(*bound, place_id)))
         }
     }
 
@@ -175,12 +265,24 @@ fn unplaced_write_refused(bound: u64) -> String {
     )
 }
 
-pub(super) async fn guard(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> Response {
-    match gate.admit(request.method(), request.headers()).await {
-        Ok(()) => next.run(request).await,
-        Err(reason) => {
-            tracing::warn!(target: "naht::server", reason = reason.as_str(), "request refused");
-            (StatusCode::FORBIDDEN, reason).into_response()
+pub(super) async fn guard(
+    State(gate): State<Arc<Gate>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let decision = gate
+        .admit(request.method(), request.uri().path(), request.headers())
+        .await;
+    match decision {
+        Ok(authenticated) => {
+            if authenticated {
+                request.extensions_mut().insert(Authenticated);
+            }
+            next.run(request).await
+        }
+        Err(refusal) => {
+            tracing::warn!(target: "naht::server", reason = refusal.reason(), "request refused");
+            refusal.into_response()
         }
     }
 }
@@ -197,8 +299,9 @@ pub(super) async fn limit_post_bodies(
     else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    let limit = gate.body_limit(request.uri().path());
     let (parts, body) = request.into_parts();
-    match time::timeout(BODY_READ_TIMEOUT, to_bytes(body, BODY_LIMIT)).await {
+    match time::timeout(BODY_READ_TIMEOUT, to_bytes(body, limit)).await {
         Ok(Ok(bytes)) => {
             let buffered = Request::from_parts(parts, Body::from(bytes));
             run_holding(permit, &gate.tasks, next, buffered).await

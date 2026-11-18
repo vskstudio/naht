@@ -19,7 +19,7 @@ it needs HTTP/2, which `HttpService` does not support.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /info` | Handshake: protocol/server version, project name, session id. Triggers a re-diff against persisted state on (re)connect. |
+| `GET /info` | Handshake: protocol/server version, project name, session id. With the project token, it re-diffs against persisted state on (re)connect; without it, it only answers. |
 | `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. Needs the `session` query parameter. |
 | `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
 | `POST /inventory` | The plugin's full listing of its scripts, posted once per session on attach. The daemon removes the mirrored scripts it does not name and writes the ones it lacks, so a rename made while the plugin was stopped leaves no old file. Needs the `session` query parameter. Additive: no protocol-version bump. |
@@ -30,22 +30,24 @@ it needs HTTP/2, which `HttpService` does not support.
 
 ## Access control
 
-The daemon checks every route before its handler runs. A request is refused with `403` when:
+The daemon checks every route before its handler runs. A request is refused with `403`, or with `401` for the token, when:
 
 - it carries an `Origin` header, which browsers add to cross-site requests;
 - its `Host` is not `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, which stops web pages that
   rebind a DNS name to the loopback address;
 - it lacks the `x-naht-client` header. A browser cannot send a custom header to another origin without a
   preflight, and the daemon never answers one;
+- it lacks the `x-naht-token` header, or sends another value, on any route except `GET /info`; that refusal is `401`.
 - the project sets `[serve] place_id` and the `x-naht-place-id` header is missing or differs;
 - the project has no `[serve] place_id` and is bound to a place: a `POST` without the `x-naht-place-id` header, a
   header naming another place, or a header naming place `0` (an unpublished place) is refused. An unbound project
   accepts place `0` without recording it;
 - the `x-naht-place-id` header is malformed.
 
-These checks stop browsers and DNS rebinding. They are not authentication: any process on the machine that
-reaches the port and sends the headers is accepted, so on a shared machine the operating system account is
-what protects the project. The threat model is in `SECURITY.md`.
+These checks stop browsers and DNS rebinding. Every route except `GET /info` also needs the project token in
+`x-naht-token`. On Unix the daemon creates it in `.naht/token` readable only by its owner, so other accounts on a shared
+machine cannot call it. On Windows the file inherits the access rules of the `.naht` directory. The token is no defence against a process of the same account, which can read the file.
+The threat model is in `SECURITY.md`.
 
 Writes are checked against what they may touch. `POST /changes` takes a MessagePack map `{changes: [...]}`,
 where each change is `{Upsert: {path, class, content}}` or `{Delete: {path}}`. It accepts only visible paths
@@ -122,3 +124,7 @@ and stops reconnecting. Upgrade the CLI and the plugin together.
 Protocol 3 changes the poll and ack routes. `GET /patches`, `GET /blobs` and `POST /ack` require the `session`
 query parameter, and a stale session is answered `409`. Upgrade the CLI, the daemon and the plugin
 together. A plugin built for another protocol version is refused at the handshake.
+
+Protocol 4 adds the project token. Every route except `GET /info` requires `x-naht-token`, and a request without a
+matching token is answered `401`. A plugin built for version `3` stops at the update message. Upgrade the CLI, the
+daemon and the plugin together.

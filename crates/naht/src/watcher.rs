@@ -101,6 +101,7 @@ mod tests {
     use super::*;
     use crate::commands;
     use crate::config::{Config, INTERNAL_DIR};
+    use crate::token::Token;
     use tokio::time;
 
     fn event_at(path: &str) -> DebouncedEvent {
@@ -136,7 +137,7 @@ mod tests {
             config.terrain_sync(),
         )
         .unwrap();
-        let state = AppState::new(session, Duration::from_secs(1));
+        let state = AppState::new(session, Duration::from_secs(1), Token::for_tests());
         state.session_lock().await.rescan().unwrap();
         let _watch = spawn(&root, Arc::clone(&state)).unwrap();
         state.session_lock().await.rescan().unwrap();

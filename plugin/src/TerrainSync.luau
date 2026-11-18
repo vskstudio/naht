@@ -42,6 +42,9 @@ function TerrainSync._serveBlobs(self, epoch: number, sessionId: string)
 			decodeFailures = 0
 			self:_applyBlobBatch(epoch, batch)
 		else
+			if self:_refuseToken(batch) then
+				return
+			end
 			if isUndecodableFailure(batch) then
 				decodeFailures += 1
 			else
@@ -115,6 +118,9 @@ function TerrainSync._pushTerrain(self, epoch: number)
 			return
 		end
 		if not ok then
+			if self:_refuseToken(posted) then
+				return
+			end
 			self:_setWarning("terrain", "terrain push failed: " .. tostring(posted))
 			task.wait(self.terrainBackoff)
 			self.terrainBackoff = math.min(self.terrainBackoff * 2, TERRAIN_BACKOFF_MAX)
@@ -132,7 +138,7 @@ end
 function TerrainSync._sendTerrain(self, epoch: number): boolean
 	local region = self:_terrainRegion()
 	local size = region.Size
-	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainBlob.MAX_VOXELS then
+	if self.terrainBlob.voxelCount(size.X, size.Y, size.Z, TERRAIN_RESOLUTION) > self.terrainVoxelLimit then
 		return false
 	end
 	while self.terrainInFlight do

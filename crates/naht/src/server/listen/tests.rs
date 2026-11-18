@@ -7,7 +7,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
-use super::{MAX_CONNECTIONS, accept_until_cancelled};
+use super::accept_until_cancelled;
+
+const DEFAULT_CAP: usize = 64;
 
 const PING: &[u8] = b"GET /ping HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n";
 
@@ -18,15 +20,29 @@ async fn read_to_close(stream: &mut TcpStream) -> String {
 }
 
 #[tokio::test]
-async fn a_connection_past_the_cap_waits_until_a_slot_frees_then_is_served() {
+async fn a_connection_past_the_default_cap_waits_until_a_slot_frees_then_is_served() {
+    a_connection_past_the_cap_waits_until_a_slot_frees_then_is_served(DEFAULT_CAP).await;
+}
+
+#[tokio::test]
+async fn a_connection_past_a_configured_cap_waits_until_a_slot_frees_then_is_served() {
+    a_connection_past_the_cap_waits_until_a_slot_frees_then_is_served(2).await;
+}
+
+async fn a_connection_past_the_cap_waits_until_a_slot_frees_then_is_served(cap: usize) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let shutdown = CancellationToken::new();
     let router = Router::new().route("/ping", get(|| async { "pong" }));
-    let server = tokio::spawn(accept_until_cancelled(listener, router, shutdown.clone()));
+    let server = tokio::spawn(accept_until_cancelled(
+        listener,
+        router,
+        shutdown.clone(),
+        cap,
+    ));
 
     let mut idle = Vec::new();
-    for _ in 0..MAX_CONNECTIONS {
+    for _ in 0..cap {
         idle.push(TcpStream::connect(address).await.unwrap());
     }
     sleep(Duration::from_millis(200)).await;
@@ -36,7 +52,7 @@ async fn a_connection_past_the_cap_waits_until_a_slot_frees_then_is_served() {
     let early = timeout(Duration::from_millis(500), read_to_close(&mut waiting)).await;
     assert!(
         early.is_err(),
-        "a connection past the {MAX_CONNECTIONS} cap was served while the cap was full"
+        "a connection past the {cap} cap was served while the cap was full"
     );
 
     idle.pop();
@@ -58,10 +74,15 @@ async fn a_connection_past_the_cap_is_served_once_the_held_connections_time_out(
     let address = listener.local_addr().unwrap();
     let shutdown = CancellationToken::new();
     let router = Router::new().route("/ping", get(|| async { "pong" }));
-    let server = tokio::spawn(accept_until_cancelled(listener, router, shutdown.clone()));
+    let server = tokio::spawn(accept_until_cancelled(
+        listener,
+        router,
+        shutdown.clone(),
+        DEFAULT_CAP,
+    ));
 
     let mut held = Vec::new();
-    for _ in 0..MAX_CONNECTIONS {
+    for _ in 0..DEFAULT_CAP {
         let mut stream = TcpStream::connect(address).await.unwrap();
         stream.write_all(opening).await.unwrap();
         held.push(stream);

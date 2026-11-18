@@ -35,7 +35,11 @@ fn slow_post_app(in_flight: &Arc<AtomicUsize>, peak: &Arc<AtomicUsize>) -> Route
             }),
         )
         .layer(from_fn_with_state(
-            Arc::new(PostGate::new(Duration::from_secs(30), TaskTracker::new())),
+            Arc::new(PostGate::new(
+                Duration::from_secs(30),
+                TaskTracker::new(),
+                64 * 1024 * 1024,
+            )),
             limit_post_bodies,
         ))
 }

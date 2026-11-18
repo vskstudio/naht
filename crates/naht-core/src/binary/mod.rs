@@ -12,6 +12,7 @@ mod scan;
 #[cfg(test)]
 mod scan_tests;
 mod sync;
+mod terrain;
 #[cfg(test)]
 mod tests;
 
@@ -19,3 +20,4 @@ pub use model::{BlobInstance, BlobPatch, TERRAIN_CLASS};
 pub use persist::{Keep, resolve};
 pub use scan::scan_blobs;
 pub use sync::reconcile_blobs;
+pub use terrain::terrain_voxel_count;

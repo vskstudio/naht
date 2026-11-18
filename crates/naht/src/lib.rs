@@ -19,5 +19,6 @@ pub mod session;
 pub mod shutdown;
 #[cfg(test)]
 mod test_logs;
+pub mod token;
 pub mod uploader;
 pub mod watcher;

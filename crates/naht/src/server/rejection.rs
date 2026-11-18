@@ -28,6 +28,12 @@ pub(super) enum Rejection {
     MissingSession,
     #[error("refused project paths: {0:?}")]
     RefusedPaths(Vec<String>),
+    #[error("terrain blob `{0}` has no readable voxel header")]
+    UnreadableTerrain(String),
+    #[error(
+        "terrain has {voxels} voxels, over the limit of {limit}: raise `[limits] terrain_voxels` or use naht build"
+    )]
+    TerrainTooLarge { voxels: usize, limit: usize },
 }
 
 impl Rejection {
@@ -37,7 +43,9 @@ impl Rejection {
             | Self::InvalidPath(_)
             | Self::Disallowed(_)
             | Self::RefusedPaths(_)
-            | Self::MissingSession => StatusCode::BAD_REQUEST,
+            | Self::MissingSession
+            | Self::UnreadableTerrain(_) => StatusCode::BAD_REQUEST,
+            Self::TerrainTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::SessionChanged => StatusCode::CONFLICT,
             Self::Encode(_) | Self::Session(_) | Self::Blocking(_) => {
@@ -59,7 +67,10 @@ impl IntoResponse for Rejection {
                 status,
                 &serde_json::json!({ "refused_paths": refused_paths }),
             ),
-            Self::InvalidPath(_) | Self::Malformed(_) => {
+            Self::InvalidPath(_)
+            | Self::Malformed(_)
+            | Self::UnreadableTerrain(_)
+            | Self::TerrainTooLarge { .. } => {
                 json_response(status, &serde_json::json!({ "error": self.to_string() }))
             }
             Self::Disallowed(_)

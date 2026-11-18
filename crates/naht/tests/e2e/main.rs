@@ -2,14 +2,15 @@
 
 #![cfg(test)]
 
-use std::fs;
+use std::fs::{self, File};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use naht::session::Session;
-use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, Pong, SequencedPatch};
+use naht::token;
+use naht_core::protocol::{CLIENT_HEADER, Change, PatchBatch, Pong, SequencedPatch, TOKEN_HEADER};
 use naht_core::reconciler::{Direction, Patch, PatchKind};
 use naht_core::state::StateStore;
 use reqwest::Client;
@@ -18,6 +19,9 @@ use tokio::time::sleep;
 
 mod adoption;
 mod instances;
+mod limits;
+mod offline;
+mod pull;
 #[cfg(test)]
 #[path = "../wire/mod.rs"]
 mod wire;
@@ -59,43 +63,71 @@ struct Daemon {
     base: String,
     port: u16,
     session: String,
+    token: String,
 }
 
 impl Daemon {
     async fn start(root: &Path) -> Self {
+        Self::start_logged(root, None).await
+    }
+
+    async fn start_logged(root: &Path, log: Option<&Path>) -> Self {
         for _ in 0..START_ATTEMPTS {
-            if let Some(daemon) = Self::try_start(root).await {
+            if let Some(daemon) = Self::try_start(root, log).await {
                 return daemon;
             }
         }
         panic!("naht serve did not start after {START_ATTEMPTS} attempts");
     }
 
-    async fn try_start(root: &Path) -> Option<Self> {
+    async fn try_start(root: &Path, log: Option<&Path>) -> Option<Self> {
         let _starting = DAEMON_STARTS.lock().await;
-        let mut daemon = Self::spawn(root, free_port());
+        let mut daemon = Self::spawn(root, free_port(), log);
+        daemon.token = daemon.wait_token(root).await?;
         let session = daemon.wait_ready(root).await?;
         daemon.session = session;
         Some(daemon)
     }
 
-    fn spawn(root: &Path, port: u16) -> Self {
+    fn spawn(root: &Path, port: u16, log: Option<&Path>) -> Self {
+        let stderr = match log {
+            Some(path) => Stdio::from(File::create(path).unwrap()),
+            None => Stdio::null(),
+        };
         let child = Command::new(env!("CARGO_BIN_EXE_naht"))
             .arg("serve")
             .arg(root)
             .arg("--port")
             .arg(port.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(stderr)
             .spawn()
             .unwrap();
         Self {
             child,
-            client: Client::new(),
+            client: Client::builder().pool_max_idle_per_host(0).build().unwrap(),
             quick: Client::builder().timeout(PENDING_WINDOW).build().unwrap(),
             base: format!("http://{}:{port}", Ipv4Addr::LOCALHOST),
             port,
             session: String::new(),
+            token: String::new(),
+        }
+    }
+
+    async fn wait_token(&mut self, root: &Path) -> Option<String> {
+        let started = Instant::now();
+        loop {
+            if self.child.try_wait().unwrap().is_some() {
+                return None;
+            }
+            if let Ok(token) = token::read(root) {
+                return Some(token.as_str().to_owned());
+            }
+            assert!(
+                started.elapsed() < READY_DEADLINE,
+                "naht serve did not write its token within {READY_DEADLINE:?}"
+            );
+            sleep(POLL_INTERVAL).await;
         }
     }
 
@@ -106,7 +138,7 @@ impl Daemon {
                 return None;
             }
             if adoption::names_port(root, self.port)
-                && let Ok(resp) = wire::heartbeat(&self.client, &self.base).await
+                && let Ok(resp) = wire::heartbeat(&self.client, &self.base, &self.token).await
                 && resp.status().is_success()
             {
                 let pong: Pong = wire::decode(resp).await;
@@ -121,7 +153,7 @@ impl Daemon {
     }
 
     async fn handshake(&self) {
-        let resp = wire::info(&self.client, &self.base, None).await;
+        let resp = wire::info(&self.client, &self.base, None, &self.token).await;
         assert!(resp.status().is_success(), "GET /info: {}", resp.status());
     }
 
@@ -130,6 +162,7 @@ impl Daemon {
             .quick
             .get(format!("{}/patches", self.base))
             .header(CLIENT_HEADER, "plugin")
+            .header(TOKEN_HEADER, self.token.as_str())
             .query(&[("cursor", "0"), ("session", self.session.as_str())])
             .send()
             .await
@@ -141,7 +174,7 @@ impl Daemon {
     }
 
     async fn ack(&self, seqs: Vec<u64>) {
-        let status = wire::ack(&self.client, &self.base, &self.session, seqs).await;
+        let status = wire::ack(&self.client, &self.base, &self.session, seqs, &self.token).await;
         assert!(status.is_success(), "POST /ack: {status}");
     }
 }
@@ -205,12 +238,12 @@ fn write_config_port(root: &Path, port: u16) {
 }
 
 fn write_port_file(root: &Path, port: u16) {
-    fs::create_dir_all(root.join(".naht")).unwrap();
+    token::load_or_create(root).unwrap();
     fs::write(root.join(".naht").join("daemon.port"), port.to_string()).unwrap();
 }
 
 fn write_recorded_port(root: &Path, port: u16, daemon_id: &str) {
-    fs::create_dir_all(root.join(".naht")).unwrap();
+    token::load_or_create(root).unwrap();
     fs::write(
         root.join(".naht").join("daemon.port"),
         format!("{port}\n{daemon_id}\n"),
@@ -384,113 +417,5 @@ async fn a_resolve_with_a_dead_daemon_port_says_only_that_the_file_is_resolved()
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
         "resolved src/A.luau\n"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_silent_daemon_does_not_hang_the_pull() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("demo");
-    init(&root);
-    let silent = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let silent_port = silent.local_addr().unwrap().port();
-    write_config_port(&root, free_port());
-    write_port_file(&root, silent_port);
-
-    let started = Instant::now();
-    let out = run_pull(&root).await;
-    let elapsed = started.elapsed();
-    drop(silent);
-
-    assert!(!out.status.success(), "a silent daemon must fail the pull");
-    assert!(
-        elapsed < Duration::from_secs(5),
-        "the pull waited {elapsed:?} for a silent daemon"
-    );
-    let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(
-        stderr.contains(&format!("http://127.0.0.1:{silent_port}/info")),
-        "the pull did not use the daemon.port file: {stderr}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_pull_follows_the_daemon_port_file_over_the_config_port() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("demo");
-    init(&root);
-    write_config_port(&root, free_port());
-
-    let daemon = Daemon::start(&root).await;
-    let out = run_pull(&root).await;
-
-    assert!(
-        out.status.success(),
-        "naht pull failed: {:?} {}",
-        out.status,
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        String::from_utf8(out.stdout).unwrap(),
-        "pulled, daemon re-synced\n"
-    );
-    drop(daemon);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_pull_refuses_a_daemon_on_the_config_port_when_no_port_file_records_its_id() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("demo");
-    init(&root);
-
-    let daemon = Daemon::start(&root).await;
-    let port: u16 = daemon.base.rsplit(':').next().unwrap().parse().unwrap();
-    drop(fs::remove_file(root.join(".naht").join("daemon.port")));
-    write_config_port(&root, port);
-    let out = run_pull(&root).await;
-
-    assert!(
-        !out.status.success(),
-        "pull must not trust an unrecorded daemon"
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("`.naht/daemon.port` is missing"),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    drop(daemon);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_stopped_daemon_removes_its_port_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("demo");
-    init(&root);
-
-    let mut daemon = Daemon::start(&root).await;
-    let port_file = root.join(".naht").join("daemon.port");
-    assert!(port_file.exists(), "a running daemon must record its port");
-
-    let pid = daemon.child.id().to_string();
-    let signalled = Command::new("sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {pid}"))
-        .status()
-        .unwrap();
-    assert!(
-        signalled.success(),
-        "could not signal the daemon: {signalled}"
-    );
-    let started = Instant::now();
-    while daemon.child.try_wait().unwrap().is_none() {
-        assert!(
-            started.elapsed() < READY_DEADLINE,
-            "the daemon did not stop within {READY_DEADLINE:?}"
-        );
-        sleep(POLL_INTERVAL).await;
-    }
-    assert!(
-        !port_file.exists(),
-        "a stopped daemon left its port file behind"
     );
 }

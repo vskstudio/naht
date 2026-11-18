@@ -19,6 +19,7 @@ mod rescan;
 mod state;
 mod transaction;
 
+use crate::config::Limits;
 use getrandom::{Error as RandomError, fill};
 use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::SyncEvent;
@@ -42,9 +43,9 @@ pub enum SessionError {
     /// A path from the protocol was refused by the rooted filesystem.
     #[error(transparent)]
     Vfs(#[from] VfsError),
-    /// The operating system could not supply the random daemon id.
-    #[error("cannot generate a daemon id: {0}")]
-    DaemonId(#[from] RandomError),
+    /// The operating system could not supply a random id.
+    #[error("cannot generate a random id: {0}")]
+    RandomId(#[from] RandomError),
     /// A configured source root has a `..`, a root or a drive prefix, so it cannot name a folder
     /// inside the project.
     #[error("source root `{}` must stay inside the project root", path.display())]
@@ -74,8 +75,6 @@ pub enum SessionError {
 }
 
 const PROJECT_ROOT: &str = "";
-
-const MASS_DELETE_WARN: usize = 25;
 
 const ACTIVITY_CAP: usize = 256;
 
@@ -109,9 +108,11 @@ pub struct Session<V: Vfs = DiskVfs> {
     project_name: String,
     id: String,
     daemon_id: String,
+    project_id: String,
     serve_place_id: Option<u64>,
     recorded_place: Option<u64>,
     terrain_sync: bool,
+    limits: Limits,
 }
 
 fn new_session_id() -> String {
@@ -121,7 +122,7 @@ fn new_session_id() -> String {
     format!("{nanos:x}")
 }
 
-fn new_daemon_id() -> Result<String, RandomError> {
+fn random_id() -> Result<String, RandomError> {
     let mut bytes = [0_u8; 16];
     fill(&mut bytes)?;
     Ok(bytes

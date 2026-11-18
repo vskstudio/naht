@@ -87,6 +87,7 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		terrainInFlight = false,
 		terrainBaseline = nil,
 		terrainSync = false,
+		terrainVoxelLimit = deps.terrainBlob.MAX_VOXELS,
 		terrainTicket = 0,
 		cursor = 0,
 		blobCursor = 0,
@@ -163,7 +164,7 @@ function Connection.start(self)
 	end)
 end
 
-function Connection._terminate(self, detail: string?)
+function Connection._halt(self, state: State, detail: string?)
 	self.running = false
 	self.session += 1
 	self.epoch += 1
@@ -175,7 +176,24 @@ function Connection._terminate(self, detail: string?)
 	self.warnings = {}
 	self.conflicts = {}
 	self:_detachStudio()
-	self.onState("Disconnected", detail)
+	self.onState(state, detail)
+end
+
+function Connection._terminate(self, detail: string?)
+	self:_halt("Disconnected", detail)
+end
+
+function Connection._refuseToken(self, err: any): boolean
+	if not Support.isTokenRefusal(err) then
+		return false
+	end
+	self:_halt("TokenRequired", failureMessage(err))
+	return true
+end
+
+function Connection.submitToken(self, token: string)
+	self.client:setToken(token)
+	self:start()
 end
 
 function Connection.stop(self)
@@ -201,6 +219,19 @@ function Connection._echo(self)
 	}
 end
 
+function Connection._applyPatch(self, applier: any, patch: any): (boolean, any)
+	local ok, written, node = pcall(function()
+		return applier:apply(patch)
+	end)
+	if not ok then
+		return false, written
+	end
+	if written ~= nil then
+		self:_recordApplied(written, node)
+	end
+	return true, nil
+end
+
 function Connection._run(self, session: number)
 	while self:_isCurrent(session) do
 		self.onState("Connecting", nil)
@@ -211,6 +242,7 @@ function Connection._run(self, session: number)
 			end
 			self.projectName = info.project_name
 			self.terrainSync = info.terrain_sync == true
+			self.terrainVoxelLimit = if info.limits then info.limits.terrain_voxels else self.terrainBlob.MAX_VOXELS
 			self.conflicts = {}
 			for _, path in info.conflicted or {} do
 				self.conflicts[path] = true
@@ -241,6 +273,9 @@ function Connection._run(self, session: number)
 			break
 		end
 		if not ok then
+			if self:_refuseToken(err) then
+				break
+			end
 			if Client.isTerminalError(tostring(err)) then
 				self:_terminate(tostring(err))
 				break
@@ -276,9 +311,7 @@ function Connection._serve(self, session: number, sessionId: string)
 			if not self:_isCurrent(session) then
 				break
 			end
-			local ok, err = pcall(function()
-				applier:apply(patch)
-			end)
+			local ok, err = self:_applyPatch(applier, patch)
 			local source = "patch:" .. patch.path
 			if ok then
 				if not table.find(self.pendingAcks, patch.seq) then
@@ -339,6 +372,9 @@ function Connection._ack(self, session: number, seqs: { number }, sessionId: str
 		self.ackBackoff = ACK_BACKOFF_START
 		self:_clearWarning("ack")
 		return {}
+	end
+	if self:_refuseToken(err) then
+		return seqs
 	end
 	if Client.isSessionChanged(tostring(err)) then
 		error(err, 0)

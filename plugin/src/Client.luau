@@ -7,15 +7,35 @@ Client.__index = Client
 
 Client.OUTDATED_PLUGIN = "naht: this plugin is outdated, update the naht plugin to match the daemon"
 Client.SESSION_CHANGED = "naht: the daemon restarted, re-syncing from its new session"
+Client.TOKEN_REQUIRED = "the daemon needs the project token: enter the token printed by `naht token`"
+Client.TOKEN_REJECTED = "the daemon rejected the token: enter the token printed by `naht token`"
 
-export type Client = typeof(setmetatable({} :: { baseUrl: string, readPlaceId: () -> number, http: any }, Client))
+local TOKEN_REQUIRED_BODY = "token required"
 
-function Client.new(baseUrl: string, readPlaceId: () -> number, http: any?): Client
+export type TokenStore = {
+	load: (projectId: string) -> string?,
+	save: (projectId: string, token: string) -> (),
+}
+
+export type Client = typeof(setmetatable(
+	{} :: { baseUrl: string, readPlaceId: () -> number, http: any, token: string?, projectId: string?, store: TokenStore? },
+	Client
+))
+
+function Client.new(baseUrl: string, readPlaceId: () -> number, http: any?, store: TokenStore?): Client
 	return setmetatable({
 		baseUrl = baseUrl,
 		readPlaceId = readPlaceId,
 		http = http or game:GetService("HttpService"),
+		store = store,
 	}, Client)
+end
+
+local function tokenRefusal(body: string): { status: number, message: string, tokenRefused: boolean }
+	local message = if string.find(body, TOKEN_REQUIRED_BODY, 1, true) ~= nil
+		then Client.TOKEN_REQUIRED
+		else Client.TOKEN_REJECTED
+	return { status = 401, message = message, tokenRefused = true }
 end
 
 local function request(self: Client, options: { [string]: any }): { [string]: any }
@@ -23,6 +43,9 @@ local function request(self: Client, options: { [string]: any }): { [string]: an
 	local headers = options.Headers or {}
 	headers["x-naht-client"] = "plugin"
 	headers["x-naht-place-id"] = tostring(self.readPlaceId())
+	if self.token ~= nil then
+		headers[Protocol.TOKEN_HEADER] = self.token
+	end
 	options.Headers = headers
 	local ok, response = pcall(function()
 		return self.http:RequestAsync(options)
@@ -30,7 +53,17 @@ local function request(self: Client, options: { [string]: any }): { [string]: an
 	if not ok then
 		error("naht: request failed: " .. tostring(response))
 	end
+	if response.StatusCode == 401 then
+		error(tokenRefusal(response.Body))
+	end
 	return response
+end
+
+function Client.setToken(self: Client, token: string)
+	self.token = token
+	if self.store ~= nil and self.projectId ~= nil then
+		self.store.save(self.projectId, token)
+	end
 end
 
 function Client.isOutdatedPluginError(err: string): boolean
@@ -63,7 +96,13 @@ function Client.info(self: Client): any
 	if not response.Success then
 		error("naht: /info returned " .. tostring(response.StatusCode))
 	end
-	return Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
+	local info = Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
+	local switched = self.projectId ~= info.project_id
+	self.projectId = info.project_id
+	if self.store ~= nil and (self.token == nil or switched) then
+		self.token = self.store.load(info.project_id)
+	end
+	return info
 end
 
 local function checkPoll(response: any, route: string)

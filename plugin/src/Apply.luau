@@ -199,7 +199,7 @@ function Applier._write(self, path: string, node: Node, content: string)
 	end
 end
 
-function Applier._applyInit(self, segments: { string }, class: string, patch: Patch)
+function Applier._applyInit(self, segments: { string }, class: string, patch: Patch): (string?, Node?)
 	local tree = self.tree
 	table.remove(segments)
 	local dirName = segments[#segments]
@@ -208,7 +208,7 @@ function Applier._applyInit(self, segments: { string }, class: string, patch: Pa
 		if parent ~= nil then
 			self:_demoteInit(parent, dirName, class)
 		end
-		return
+		return nil, nil
 	end
 	local parent = self:_ensureParent(segments)
 	local node = self:_initNode(parent, dirName, class)
@@ -216,26 +216,26 @@ function Applier._applyInit(self, segments: { string }, class: string, patch: Pa
 	if content ~= nil and tree.getSource(node) ~= content then
 		self:_write(patch.path, node, content)
 	end
+	return patch.path, node
 end
 
-function Applier.apply(self, patch: Patch)
+function Applier.apply(self, patch: Patch): (string?, Node?)
 	local tree = self.tree
 	local segments = splitPath(patch.path)
 	if #segments == 0 then
-		return
+		return nil, nil
 	end
 	local fileName = segments[#segments]
 	local initClass = INIT_CLASSES[fileName]
 	if initClass ~= nil and #segments >= 2 then
-		self:_applyInit(segments, initClass, patch)
-		return
+		return self:_applyInit(segments, initClass, patch)
 	end
 	local leafName = instanceName(fileName)
 
 	if patch.kind == "Delete" then
 		local parent = self:_findParent(segments)
 		if parent == nil then
-			return
+			return nil, nil
 		end
 		local class = expectedClass(fileName, patch.class)
 		for _, child in tree.children(parent) do
@@ -243,7 +243,7 @@ function Applier.apply(self, patch: Patch)
 				tree.destroy(child)
 			end
 		end
-		return
+		return nil, nil
 	end
 
 	local parent = self:_ensureParent(segments)
@@ -252,6 +252,7 @@ function Applier.apply(self, patch: Patch)
 	if content ~= nil and tree.getSource(node) ~= content then
 		self:_write(patch.path, node, content)
 	end
+	return patch.path, node
 end
 
 function Applier.applyBatch(self, patches: { Patch })

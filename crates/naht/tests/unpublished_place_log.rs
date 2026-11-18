@@ -12,7 +12,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use naht::server::{AppState, router};
 use naht::session::Session;
-use naht_core::protocol::{CLIENT_HEADER, PLACE_ID_HEADER};
+use naht::token;
+use naht_core::protocol::{CLIENT_HEADER, PLACE_ID_HEADER, TOKEN_HEADER};
 use naht_core::state::StateStore;
 use tower::ServiceExt;
 use tracing::subscriber::set_default;
@@ -39,16 +40,19 @@ impl LogBuffer {
     }
 }
 
-fn bound_state(root: &Path) -> Arc<AppState> {
+fn bound_state(root: &Path) -> (Arc<AppState>, String) {
     fs::create_dir_all(root.join(".naht")).unwrap();
     let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
     let session = Session::new(root, store, "demo", None, false).unwrap();
-    AppState::new(session, Duration::from_secs(1))
+    let token = token::load_or_create(root).unwrap().token;
+    let text = token.as_str().to_owned();
+    (AppState::new(session, Duration::from_secs(1), token), text)
 }
 
-fn info_request(place: &str) -> Request<Body> {
+fn info_request(place: &str, token: &str) -> Request<Body> {
     Request::get("/info")
         .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, token)
         .header(header::HOST, format!("127.0.0.1:{PORT}"))
         .header(PLACE_ID_HEADER, place)
         .body(Body::empty())
@@ -58,7 +62,7 @@ fn info_request(place: &str) -> Request<Body> {
 #[tokio::test]
 async fn an_unpublished_place_is_logged_once_per_session() {
     let root = tempfile::tempdir().unwrap();
-    let state = bound_state(root.path());
+    let (state, token) = bound_state(root.path());
     let logs = LogBuffer::default();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
@@ -71,7 +75,11 @@ async fn an_unpublished_place_is_logged_once_per_session() {
     let app = router(Arc::clone(&state), PORT);
 
     for _ in 0..3 {
-        let response = app.clone().oneshot(info_request("0")).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(info_request("0", &token))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 

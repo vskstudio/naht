@@ -4,7 +4,7 @@ use naht_core::protocol::{self, Change, ChangeBatch, ServerInfo};
 use reqwest::{Method, StatusCode};
 use std::fs;
 
-use super::support::{CLIENT_HEADER, Harness, PLACE_ID_HEADER, decode};
+use super::support::{CLIENT_HEADER, Harness, PLACE_ID_HEADER, TOKEN_HEADER, decode};
 
 const ROUTES: [(Method, &str); 8] = [
     (Method::GET, "/info"),
@@ -101,7 +101,8 @@ async fn a_foreign_host_is_refused_on_every_route() {
 async fn a_missing_place_id_is_refused_on_every_route() {
     let harness = Harness::start(Some(999)).await;
     for (method, path) in &ROUTES {
-        let status = status_of(&harness, method.clone(), path, &[(CLIENT_HEADER, "plugin")])
+        let headers = [(CLIENT_HEADER, "plugin"), (TOKEN_HEADER, harness.token())];
+        let status = status_of(&harness, method.clone(), path, &headers)
             .await
             .unwrap();
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
@@ -148,6 +149,7 @@ async fn a_cross_origin_text_post_is_refused_and_writes_nothing() {
     let accepted = bare
         .post(harness.url("/changes"))
         .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, harness.token())
         .body(change_body("Ok.luau").unwrap())
         .send()
         .await
@@ -188,6 +190,7 @@ async fn the_loopback_host_names_are_accepted() {
         let response = bare
             .get(harness.url("/heartbeat"))
             .header(CLIENT_HEADER, "plugin")
+            .header(TOKEN_HEADER, harness.token())
             .header("host", host.as_str())
             .send()
             .await
@@ -226,6 +229,7 @@ async fn a_wrong_place_id_on_changes_is_refused_and_writes_nothing() {
         .post(harness.url("/changes"))
         .header(CLIENT_HEADER, "plugin")
         .header(PLACE_ID_HEADER, "123")
+        .header(TOKEN_HEADER, harness.token())
         .body(change_body("Wrong.luau").unwrap())
         .send()
         .await
@@ -235,6 +239,7 @@ async fn a_wrong_place_id_on_changes_is_refused_and_writes_nothing() {
     let missing = bare
         .post(harness.url("/changes"))
         .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, harness.token())
         .body(change_body("Missing.luau").unwrap())
         .send()
         .await
@@ -262,4 +267,57 @@ async fn naht_pull_passes_the_place_guard_of_a_guarded_daemon() {
 
     config.serve.place_id = Some(123);
     assert!(commands::pull(&harness.root, &config).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_gated_route_without_the_token_is_refused_with_401() {
+    let harness = Harness::start(None).await;
+    for (method, path) in ROUTES.iter().filter(|(_, path)| *path != "/info") {
+        let response = reqwest::Client::new()
+            .request(method.clone(), harness.url(path))
+            .header(CLIENT_HEADER, "plugin")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {path}"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+        assert_eq!(body["error"], "token required", "{method} {path}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_wrong_token_is_refused_with_401_and_writes_nothing() {
+    let harness = Harness::start(None).await;
+    let response = reqwest::Client::new()
+        .post(harness.url("/changes"))
+        .header(CLIENT_HEADER, "plugin")
+        .header(TOKEN_HEADER, "0".repeat(64))
+        .body(change_body("Forged.luau").unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body: serde_json::Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(body["error"], "token rejected");
+    assert!(!harness.root.join("Forged.luau").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn info_stays_open_and_reports_that_a_token_is_required() {
+    let harness = Harness::start(None).await;
+    let response = reqwest::Client::new()
+        .get(harness.url("/info"))
+        .header(CLIENT_HEADER, "plugin")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let info: ServerInfo = decode(response).await;
+    assert!(info.token_required);
+    assert_ne!(info.project_id, "");
 }

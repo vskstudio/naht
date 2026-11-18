@@ -13,6 +13,16 @@ for code = 0, 31 do
 end
 local UNSAFE_NAMES = { [""] = true, ["."] = true, [".."] = true }
 local SCRIPT_SUFFIXES = { ".server", ".client", ".luau" }
+local INIT_SUFFIXES = { "/init.luau", "/init.server.luau", "/init.client.luau" }
+
+local function isInitPath(path: string): boolean
+	for _, suffix in INIT_SUFFIXES do
+		if string.sub(path, -#suffix) == suffix then
+			return true
+		end
+	end
+	return false
+end
 
 local function isSafeName(name: string): boolean
 	if UNSAFE_NAMES[name] or string.sub(name, 1, 1) == "." then
@@ -66,7 +76,16 @@ function Placement._unsafeReason(_self, instance: Instance, segments: { string }
 end
 
 function Placement._pathOf(self, instance: Instance): string?
-	return self:_shapePath(instance, #instance:GetChildren() > 0)
+	return self:_shapePath(instance, #instance:GetChildren() > 0 or self:_isInitPlaced(instance))
+end
+
+function Placement._isInitPlaced(self, instance: Instance): boolean
+	local previous = self.placed[instance]
+	return previous ~= nil and isInitPath(previous)
+end
+
+function Placement._recordApplied(self, path: string, node: Instance)
+	self.placed[node] = path
 end
 
 function Placement._shapePath(self, instance: Instance, hasChildren: boolean): string?
@@ -302,7 +321,7 @@ function Placement._postInventory(self, sessionId: string)
 	end
 	local ok, posted = pcall(self.client.postInventory, self.client, scripts, sessionId)
 	if not ok then
-		if Support.isTransientFailure(posted) then
+		if Support.isTransientFailure(posted) or Support.isTokenRefusal(posted) then
 			error(posted, 0)
 		end
 		self.inventorySession = sessionId

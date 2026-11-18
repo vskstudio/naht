@@ -21,9 +21,9 @@ fn warn_skipped<T>(scan: &Scan<T>) {
 }
 
 impl<V: Vfs> Session<V> {
-    /// Re-read the filesystem and reconcile it against the Studio mirror and persisted base. Used on
-    /// a filesystem event and on reconnect (`GET /info`), the latter is the re-diff that replaces a
-    /// blind re-push.
+    /// Re-read the filesystem and reconcile it against the Studio mirror and persisted base. Used at
+    /// startup, on a filesystem event, and on an authenticated reconnect (`GET /info`), which is the
+    /// re-diff that replaces a blind re-push.
     ///
     /// # Errors
     ///

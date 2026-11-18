@@ -18,6 +18,10 @@ use std::fs;
 use thiserror::Error;
 use toml::de;
 
+mod limits;
+
+pub use limits::{Limits, LimitsConfig};
+
 /// The project's config file name, read from the project root.
 pub const PROJECT_FILE: &str = "naht.toml";
 /// The directory under the project root that holds the daemon state.
@@ -50,6 +54,16 @@ pub enum ConfigError {
     /// Port 0 asks the OS for an arbitrary port, which a daemon cannot advertise.
     #[error("port must be between 1 and 65535, got 0")]
     PortZero,
+    /// A `[limits]` key is zero or above the ceiling the daemon can enforce.
+    #[error("limit `{key}` must be between 1 and {ceiling}, got {value}")]
+    LimitOutOfRange {
+        /// The key as written in `[limits]`.
+        key: &'static str,
+        /// The configured value, or the default when the key is unset.
+        value: usize,
+        /// The highest value the key accepts.
+        ceiling: usize,
+    },
     /// Place 0 is the id of an unpublished place, which a project cannot be pinned to.
     #[error("place_id must name a published Studio place, got 0")]
     PlaceIdZero,
@@ -66,6 +80,8 @@ pub struct Config {
     pub serve: ServeConfig,
     /// `[assets]` settings.
     pub assets: AssetsConfig,
+    /// `[limits]` settings: the caps the daemon enforces, each with a built-in default.
+    pub limits: LimitsConfig,
     /// `[[tree]]` entries: instance-tree mappings that convention alone cannot express, recorded by
     /// `init --from-rojo` when migrating a Rojo project. Empty for a convention-first project.
     pub tree: Vec<TreeNode>,
@@ -170,6 +186,7 @@ impl Config {
         if other.serve.terrain_sync.is_some() {
             self.serve.terrain_sync = other.serve.terrain_sync;
         }
+        self.limits.overlay(&other.limits);
         if other.assets.enabled.is_some() {
             self.assets.enabled = other.assets.enabled;
         }
@@ -194,6 +211,15 @@ impl Config {
     /// The resolved serve port.
     pub fn port(&self) -> u16 {
         self.serve.port.unwrap_or(DEFAULT_PORT)
+    }
+
+    /// The limits the daemon enforces, validated against their ceilings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::LimitOutOfRange`] when a `[limits]` key is zero or above its ceiling.
+    pub fn resolved_limits(&self) -> Result<Limits, ConfigError> {
+        self.limits.resolve()
     }
 
     /// Whether live terrain blob sync is enabled (off by default).
@@ -329,6 +355,41 @@ mod tests {
             config.assets.api_key_env.as_deref(),
             Some("NAHT_OPENCLOUD_KEY")
         );
+    }
+
+    #[test]
+    fn the_limits_table_is_layered_and_validated_on_resolve() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home-config.toml");
+        fs::write(&home, "[limits]\nconnections = 8\n").unwrap();
+        fs::write(
+            dir.path().join(PROJECT_FILE),
+            "[limits]\nterrain_voxels = 2048\n",
+        )
+        .unwrap();
+
+        let limits = Config::load_from(Some(&home), dir.path())
+            .unwrap()
+            .resolved_limits()
+            .unwrap();
+        assert_eq!(limits.connections, 8);
+        assert_eq!(limits.terrain_voxels, 2048);
+        assert_eq!(limits.mass_delete_warn, Limits::default().mass_delete_warn);
+    }
+
+    #[test]
+    fn a_zero_limit_in_the_project_file_fails_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(PROJECT_FILE), "[limits]\nconnections = 0\n").unwrap();
+        let config = Config::load_from(None, dir.path()).unwrap();
+        assert!(matches!(
+            config.resolved_limits(),
+            Err(ConfigError::LimitOutOfRange {
+                key: "connections",
+                value: 0,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -56,8 +56,10 @@ Resilience is a headline feature, precisely because it is what Rojo and Argon ge
 - **Automatic reconnect with backoff**: a dropped link is retried, not fatal.
 - **Visible connection state**: the plugin widget shows `Connecting → Connected → Reconnecting →
   Conflict`, so you always know the seam's status.
-- **Re-diff on reconnect**: on `GET /info` the daemon re-diffs against persisted state rather than
-  blindly re-pushing. Combined with ack-gating, a reconnect can never silently lose or duplicate work.
+- **Re-diff on reconnect**: a `GET /info` that carries the project token makes the daemon re-diff against persisted
+  state rather than blindly re-pushing. A tokenless `GET /info` only answers. `naht serve` also re-diffs once at
+  startup, so an edit made while it was stopped is queued before the plugin attaches. Combined with ack-gating, a
+  reconnect can never silently lose or duplicate work.
 
 <Callout type="note">
 
