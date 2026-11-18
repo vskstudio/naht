@@ -18,8 +18,9 @@ These come from the Roblox Studio plugin API and shape every decision:
    plugin only speaks HTTP to `localhost`.
 3. **`HttpService` is request/response only**: no server push, no WebSocket client. The plugin must
    *initiate* every exchange (long-poll). The daemon can never spontaneously push to Studio.
-4. **Property/type coverage is incomplete**: terrain, CSG geometry, `MeshPart.MeshId` binary data,
-   and security-locked properties like `HttpService.HttpEnabled` cannot round-trip live. See
+4. **Property/type coverage is incomplete**: CSG geometry, `MeshPart.MeshId` binary data,
+   and security-locked properties like `HttpService.HttpEnabled` cannot round-trip live. Terrain is the
+   exception: it crosses as an opaque voxel blob on its own channel. See
    [§9 Limits & workarounds](#9-limits--workarounds).
 5. **Assets (meshes, images, audio) are cloud uploads, not files**: a sync tool references an asset
    id; it does not sync pixels.
@@ -220,7 +221,7 @@ lives in the final stage of [`spec.md`](spec.md).
 | Case | Status | Approach |
 |---|---|---|
 | **`MeshId` / images** | 🟢 upload (post-v1) | The asset-id string syncs like any property; with `[assets]` enabled, `naht build` alone uploads a *local* mesh/image file once via **Open Cloud**, caches it by the BLAKE3 digest of its bytes, and rewrites its property to `rbxassetid://…`; `sync` and `serve` never upload and leave references as written. Only properties that Roblox reflection types as Content are uploaded; a local file named by any other property is reported and left as written. Off by default. Stage 12. |
-| **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob: hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on. Stages 11, 13. |
+| **Terrain** | 🟢 syncable (post-v1) | Read/written via `ReadVoxels`/`WriteVoxels` and synced as an opaque binary voxel blob: hash-compared, last-writer-wins, a both-sides change **freezes** (no diff/merge). Driven end to end through the daemon's `/blobs` channel when `[serve] terrain_sync` is on. A sculpt is pushed live on the next `ChangeHistoryService` waypoint after a 1 s debounce; an unchanged blob is never pushed, and a blob just applied from the daemon is never pushed back. Stages 11, 13. |
 | **CSG / Unions** | 🟡 binary round-trip | Engine-generated binary geometry can't be rebuilt from text, but round-trips inside `rbxm` model files (opaque, file-level). |
 | **`HttpEnabled` & security-locked props** | 🔴 hard block | Not settable by scripts/plugins by design. Naht warns and points to Game Settings; offers a place-file fallback. |
 
@@ -253,6 +254,8 @@ not a v1 blocker.
 - **The place guard is a safety check (open).** `servePlaceId` stops a session bound to the wrong place
   from syncing, but the place id is a value the client sends, so it is not a credential.
 - **The daemon e2e job is not a required check (open).** The `daemon e2e (naht serve + plugin client)` job in `.github/workflows/ci.yml` drives the plugin client against a real `naht serve`, but it is not in the required status checks of ruleset 27350364, so a pull request can merge while it fails. Follow-up, not implemented: add that job to the ruleset's required checks.
+- **A rename made while the plugin is stopped may leave the old file (open).** The plugin knows the path the daemon holds for each instance only while it runs. A fresh plugin process has no such record, so a rename made while Studio's plugin is not running can leave the old file behind. Follow-up, not implemented: persist the instance-to-path map with the plugin's sync state, or match instances by GUID when the plugin attaches.
+- **The connect-time terrain snapshot is posted even when `terrain_sync` is off (open).** The daemon accepts and drops it, so it costs one request and changes no file. Follow-up, not implemented: gate the initial push on the handshake's `terrain_sync`, as the live push already is.
 - **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
 - **File modes (N7c).** A write goes to a temp file that is renamed over the target, and only the permission bits of the old file are copied. Owner, group, extended attributes and hard links are not preserved.
 - **Upgrading (N4).** Asset cache rows keyed by the pre-BLAKE3 64-bit hash are deleted when the state store opens. An asset whose row was dropped is uploaded once more on its next `naht build`.

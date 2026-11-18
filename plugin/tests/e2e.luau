@@ -11,6 +11,8 @@ local PLACE_ID = 1
 local FILE = "src/A.luau"
 local STUDIO_FILE = "src/B.luau"
 local CREATED_FILE = "src/C.luau"
+local RENAME_FROM = "src/RenameOld.luau"
+local RENAME_TO = "src/RenameNew.luau"
 local READY_ATTEMPTS = 300
 local STOP_ATTEMPTS = 300
 local EDIT_ATTEMPTS = 3
@@ -211,6 +213,19 @@ local function scenario(root, port, log)
 	check("a file the plugin pushed is not sent back after a restart", findPatch(replay, STUDIO_FILE, nil) == nil)
 	check("a restart emits no delete", countDeletes(replay) == 0)
 	ackAll(second.client, restarted.session_id, replay)
+
+	second.client:postChanges({ Protocol.upsert(RENAME_FROM, "ModuleScript", "return 5") })
+	check("the file to rename is written to disk", fs.isFile(root .. "/" .. RENAME_FROM))
+
+	second.client:postChanges({
+		Protocol.delete(RENAME_FROM),
+		Protocol.upsert(RENAME_TO, "ModuleScript", "return 5"),
+	})
+	check("a rename batch removes the old file from disk", not fs.isFile(root .. "/" .. RENAME_FROM))
+	check(
+		"a rename batch writes the new file to disk",
+		fs.isFile(root .. "/" .. RENAME_TO) and fs.readFile(root .. "/" .. RENAME_TO) == "return 5"
+	)
 
 	stopDaemon(second)
 end

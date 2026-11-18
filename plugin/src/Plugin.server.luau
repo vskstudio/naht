@@ -69,6 +69,7 @@ local function connect()
 		apply = Apply,
 		protocol = Protocol,
 		terrainBlob = Terrain,
+		history = game:GetService("ChangeHistoryService"),
 	})
 	connection:start()
 	widget.Enabled = true

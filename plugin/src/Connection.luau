@@ -13,6 +13,7 @@ local PUSH_DEBOUNCE = 0.3
 local PUSH_RETRY = 2
 local TERRAIN_BACKOFF_START = 1
 local TERRAIN_BACKOFF_MAX = 60
+local TERRAIN_DEBOUNCE = 1
 local TERRAIN_RESOLUTION = 4
 local TERRAIN_PATH = "Terrain.terrain"
 local TERRAIN_TOO_LARGE = "terrain too large for live push, use naht build"
@@ -91,6 +92,10 @@ local function countKeys(map: { [string]: any }): number
 	return count
 end
 
+local function weakMap(): { [any]: any }
+	return setmetatable({}, { __mode = "k" }) :: any
+end
+
 local function isSafeName(name: string): boolean
 	if UNSAFE_NAMES[name] then
 		return false
@@ -138,6 +143,7 @@ export type Deps = {
 	warn: ((string) -> ())?,
 	pushGate: PushGate?,
 	delay: ((number, () -> ()) -> ())?,
+	history: any?,
 }
 
 function Connection.new(client: any, root: Instance, onState: (State, string?) -> (), deps: Deps)
@@ -150,6 +156,7 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		apply = deps.apply,
 		protocol = deps.protocol,
 		terrainBlob = deps.terrainBlob,
+		history = deps.history,
 		warn = deps.warn or warn,
 		running = false,
 		session = 0,
@@ -162,6 +169,9 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		ackBackoff = ACK_BACKOFF_START,
 		rejectedBackoff = REJECTED_PATCH_START,
 		terrainInFlight = false,
+		terrainBaseline = nil,
+		terrainSync = false,
+		terrainTicket = 0,
 		cursor = 0,
 		blobCursor = 0,
 		pendingAcks = {},
@@ -173,6 +183,9 @@ function Connection.new(client: any, root: Instance, onState: (State, string?) -
 		pushGate = deps.pushGate or sharedPushGate,
 		delay = deps.delay or task.delay,
 		studioConnections = nil,
+		placed = weakMap(),
+		groupOf = weakMap(),
+		moves = weakMap(),
 		skippedPaths = {},
 		warnings = {},
 		conflicts = {},
@@ -250,6 +263,7 @@ function Connection._terminate(self, detail: string?)
 	self.running = false
 	self.session += 1
 	self.epoch += 1
+	self:_revertPending()
 	self.pendingPush = {}
 	self.pushScheduled = false
 	self.pushServerErrors = 0
@@ -334,6 +348,7 @@ function Connection._run(self, session: number)
 				return
 			end
 			self.projectName = info.project_name
+			self.terrainSync = info.terrain_sync == true
 			self.conflicts = {}
 			for _, path in info.conflicted or {} do
 				self.conflicts[path] = true
@@ -348,6 +363,7 @@ function Connection._run(self, session: number)
 			end
 			self.epoch += 1
 			local epoch = self.epoch
+			self.terrainBaseline = nil
 			task.spawn(function()
 				self:_pushTerrain(epoch)
 			end)
@@ -420,6 +436,9 @@ function Connection._serve(self, session: number, sessionId: string)
 		self.applying = false
 		if not self:_isCurrent(session) then
 			return
+		end
+		if #batch.patches > 0 then
+			self:_adoptPlacement()
 		end
 		self.cursor = nextCursor
 		self.backoff = BACKOFF_START
@@ -512,6 +531,8 @@ function Connection._applyBlobBatch(self, epoch: number, batch: any)
 		end
 		if patch.kind == "Conflict" then
 			self:_setConflict(patch.path)
+		elseif patch.direction == "ToStudio" and patch.content ~= nil and patch.path ~= TERRAIN_PATH then
+			self:_setWarning("blob:" .. patch.path, "terrain blob for " .. patch.path .. " skipped, only " .. TERRAIN_PATH .. " is synced")
 		elseif patch.direction == "ToStudio" and patch.content ~= nil then
 			local applied, err = pcall(function()
 				self:_applyBlob(patch.content)
@@ -543,7 +564,9 @@ function Connection._terrainRegion(self): any
 end
 
 function Connection._applyBlob(self, blob: string)
-	self.terrainBlob.write(self.terrain, self:_terrainRegion(), blob)
+	local region = self:_terrainRegion()
+	self.terrainBlob.write(self.terrain, region, blob)
+	self.terrainBaseline = self.terrainBlob.read(self.terrain, region, TERRAIN_RESOLUTION)
 end
 
 function Connection._pushTerrain(self, epoch: number)
@@ -583,6 +606,9 @@ function Connection._sendTerrain(self, epoch: number): boolean
 	if not self:_isBlobCurrent(epoch) then
 		return true
 	end
+	if blob == self.terrainBaseline then
+		return true
+	end
 	self.terrainInFlight = true
 	local ok, err = pcall(function()
 		self.client:postBlobs({ { path = TERRAIN_PATH, class = "Terrain", content = blob } })
@@ -591,7 +617,160 @@ function Connection._sendTerrain(self, epoch: number): boolean
 	if not ok then
 		error(err, 0)
 	end
+	self.terrainBaseline = blob
 	return true
+end
+
+function Connection._onWaypoint(self)
+	if not self.running or not self.terrainSync then
+		return
+	end
+	self.terrainTicket += 1
+	local ticket = self.terrainTicket
+	local epoch = self.epoch
+	self.delay(TERRAIN_DEBOUNCE, function()
+		if ticket ~= self.terrainTicket or not self:_isBlobCurrent(epoch) or not self.terrainSync then
+			return
+		end
+		self:_pushTerrain(epoch)
+	end)
+end
+
+function Connection._revertGroup(self, group: any)
+	if group.script ~= nil and self.placed[group.script] == group.to then
+		self.placed[group.script] = group.from
+	end
+end
+
+function Connection._revertPending(self)
+	for _, change in self.pendingPush do
+		local group = self.groupOf[change]
+		if group ~= nil then
+			self:_revertGroup(group)
+		end
+	end
+end
+
+function Connection._queue(self, path: string, change: any, group: any?)
+	self.pendingPush[path] = change
+	if group ~= nil then
+		self.groupOf[change] = group
+	end
+end
+
+function Connection._queueMove(self, script: Instance, from: string, to: string)
+	local group = { script = script, from = from, to = to }
+	self.lastApplied[from] = nil
+	self:_queue(from, self.protocol.delete(from), group)
+	self:_queue(to, self.protocol.upsert(to, script.ClassName, (script :: any).Source), group)
+	self.placed[script] = to
+end
+
+function Connection._pushInstance(self, instance: Instance, path: string)
+	local source = (instance :: any).Source
+	local expected = self.lastApplied[path]
+	if expected ~= nil and expected == source then
+		self.lastApplied[path] = nil
+		return
+	end
+	if self.applying then
+		return
+	end
+	self.lastApplied[path] = nil
+	self.placed[instance] = path
+	self.pendingPush[path] = self.protocol.upsert(path, instance.ClassName, source)
+	self:_schedulePush()
+end
+
+function Connection._onSourceChanged(self, instance: Instance)
+	local path = self:_pathOf(instance)
+	if path == nil then
+		return
+	end
+	self:_pushInstance(instance, path)
+end
+
+function Connection._relocate(self, script: Instance)
+	local from = self.placed[script]
+	local to = self:_pathOf(script)
+	if to == nil or to == from then
+		return
+	end
+	if from == nil then
+		self:_pushInstance(script, to)
+		return
+	end
+	self:_queueMove(script, from, to)
+	self:_schedulePush()
+end
+
+function Connection._relocateSubtree(self, instance: Instance)
+	if CLASS_SUFFIX[instance.ClassName] ~= nil then
+		self:_relocate(instance)
+	end
+	for _, descendant in instance:GetDescendants() do
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			self:_relocate(descendant)
+		end
+	end
+end
+
+function Connection._reconcilePlacement(self)
+	for _, descendant in self.root:GetDescendants() do
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			local from = self.placed[descendant]
+			local to = self:_pathOf(descendant)
+			if to ~= nil then
+				if from == nil then
+					self.placed[descendant] = to
+				elseif to ~= from then
+					self:_queueMove(descendant, from, to)
+				end
+			end
+		end
+	end
+end
+
+function Connection._adoptPlacement(self)
+	for _, descendant in self.root:GetDescendants() do
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			local path = self:_pathOf(descendant)
+			if path ~= nil then
+				self.placed[descendant] = path
+			end
+		end
+	end
+end
+
+function Connection._removeScript(self, script: Instance)
+	local from = self.placed[script] or self:_pathOf(script)
+	if from == nil then
+		return
+	end
+	local group = { script = script, from = from, previous = self.pendingPush[from] }
+	self.lastApplied[from] = nil
+	self:_queue(from, self.protocol.delete(from), group)
+	self.moves[script] = group
+	task.defer(function()
+		if self.moves[script] == group then
+			self.moves[script] = nil
+			self.placed[script] = nil
+		end
+	end)
+	self:_schedulePush()
+end
+
+function Connection._finishMove(self, script: Instance, group: any)
+	local to = self:_pathOf(script)
+	if to == nil then
+		self.pendingPush[group.from] = group.previous
+		self.placed[script] = group.from
+		return
+	end
+	group.to = to
+	self:_queue(to, self.protocol.upsert(to, script.ClassName, (script :: any).Source), group)
+	self.placed[script] = to
+	self:_schedulePush()
 end
 
 function Connection._attachStudio(self)
@@ -605,29 +784,6 @@ function Connection._attachStudio(self)
 		table.insert(connections, signal:Connect(handler))
 	end
 
-	local function pushInstance(instance: Instance, path: string)
-		local source = (instance :: any).Source
-		local expected = self.lastApplied[path]
-		if expected ~= nil and expected == source then
-			self.lastApplied[path] = nil
-			return
-		end
-		if self.applying then
-			return
-		end
-		self.lastApplied[path] = nil
-		self.pendingPush[path] = self.protocol.upsert(path, instance.ClassName, source)
-		self:_schedulePush()
-	end
-
-	local function onChanged(instance: Instance)
-		local path = self:_pathOf(instance)
-		if path == nil then
-			return
-		end
-		pushInstance(instance, path)
-	end
-
 	local function reshape(parent: Instance, hadChildren: boolean, hasChildren: boolean)
 		if self.applying then
 			return
@@ -637,12 +793,14 @@ function Connection._attachStudio(self)
 		if previous == current then
 			return
 		end
-		if previous ~= nil then
+		if previous ~= nil and current ~= nil then
+			self:_queueMove(parent, previous, current)
+		elseif previous ~= nil then
 			self.lastApplied[previous] = nil
-			self.pendingPush[previous] = self.protocol.delete(previous)
-		end
-		if current ~= nil then
-			pushInstance(parent, current)
+			self:_queue(previous, self.protocol.delete(previous))
+			self.placed[parent] = nil
+		elseif current ~= nil then
+			self:_pushInstance(parent, current)
 		end
 		self:_schedulePush()
 	end
@@ -657,9 +815,14 @@ function Connection._attachStudio(self)
 	end
 
 	local function track(instance: Instance)
+		listen(instance:GetPropertyChangedSignal("Name"), function()
+			if not self.applying then
+				self:_relocateSubtree(instance)
+			end
+		end)
 		if CLASS_SUFFIX[instance.ClassName] ~= nil then
 			listen(instance:GetPropertyChangedSignal("Source"), function()
-				onChanged(instance)
+				self:_onSourceChanged(instance)
 			end)
 		end
 	end
@@ -667,9 +830,18 @@ function Connection._attachStudio(self)
 	for _, descendant in self.root:GetDescendants() do
 		track(descendant)
 	end
+	self:_reconcilePlacement()
 	listen(self.root.DescendantAdded, function(descendant: Instance)
 		track(descendant)
-		onChanged(descendant)
+		if not self.applying then
+			local group = self.moves[descendant]
+			if group ~= nil then
+				self.moves[descendant] = nil
+				self:_finishMove(descendant, group)
+			else
+				self:_onSourceChanged(descendant)
+			end
+		end
 		local parent = descendant.Parent
 		if parent ~= nil then
 			reshape(parent, #parent:GetChildren() > 1, true)
@@ -679,16 +851,19 @@ function Connection._attachStudio(self)
 		if self.applying then
 			return
 		end
-		local path = self:_pathOf(descendant)
-		if path ~= nil then
-			self.pendingPush[path] = self.protocol.delete(path)
-			self:_schedulePush()
+		if CLASS_SUFFIX[descendant.ClassName] ~= nil then
+			self:_removeScript(descendant)
 		end
 		local parent = descendant.Parent
 		if parent ~= nil then
 			reshapeAfterRemoval(parent)
 		end
 	end)
+	if self.history ~= nil then
+		listen(self.history.OnWaypointAdded, function()
+			self:_onWaypoint()
+		end)
+	end
 end
 
 function Connection._detachStudio(self)
@@ -845,43 +1020,89 @@ function Connection._postChanges(self, batch: { [string]: any }): (boolean, any,
 	return ok, err, owns
 end
 
-function Connection._postEach(self, session: number, remaining: { [string]: any }): boolean
+function Connection._units(self, remaining: { [string]: any }): { { [string]: any } }
+	local units = {}
+	local unitOf = weakMap()
 	for _, path in Connection._sortedKeys(remaining) do
 		local change = remaining[path]
-		local ok, err, owns = self:_postChanges({ [path] = change })
+		local group = self.groupOf[change]
+		local unit = if group ~= nil then unitOf[group] else nil
+		if unit == nil then
+			unit = {}
+			table.insert(units, unit)
+			if group ~= nil then
+				unitOf[group] = unit
+			end
+		end
+		unit[path] = change
+	end
+	return units
+end
+
+function Connection._postEach(self, session: number, remaining: { [string]: any }): boolean
+	for _, unit in self:_units(remaining) do
+		local ok, err, owns = self:_postChanges(unit)
 		if not owns or not self:_isCurrent(session) then
 			return false
 		end
 		if ok then
-			remaining[path] = nil
+			for path in unit do
+				remaining[path] = nil
+				self:_clearRefused(path)
+			end
 			self.pushServerErrors = 0
 			self:_clearWarning("push")
-			self:_clearRefused(path)
 		elseif isTransientFailure(err) then
 			self:_retryPush(remaining, err)
 			return false
 		else
-			remaining[path] = nil
-			self:_dropRefused({ [path] = change }, err)
+			for path in unit do
+				remaining[path] = nil
+			end
+			self:_dropRefused(unit, err)
 		end
 	end
 	return true
 end
 
-function Connection._dropRefused(self, remaining: { [string]: any }, err: any): { [string]: any }
-	local named = namedInBatch(remaining, err)
-	if next(named) == nil then
-		for path in remaining do
-			named[path] = true
+function Connection._withGroupMates(self, remaining: { [string]: any }, paths: { [string]: true }): { [string]: true }
+	local expanded = table.clone(paths)
+	local groups = weakMap()
+	for path in paths do
+		local group = self.groupOf[remaining[path]]
+		if group ~= nil then
+			groups[group] = true
 		end
 	end
+	for path, change in remaining do
+		local group = self.groupOf[change]
+		if group ~= nil and groups[group] then
+			expanded[path] = true
+		end
+	end
+	return expanded
+end
+
+function Connection._dropRefused(self, remaining: { [string]: any }, err: any): { [string]: any }
+	local refused = namedInBatch(remaining, err)
+	if next(refused) == nil then
+		for path in remaining do
+			refused[path] = true
+		end
+	end
+	local dropped = self:_withGroupMates(remaining, refused)
 	local kept = {}
 	for path, change in remaining do
-		if named[path] == nil then
+		if dropped[path] == nil then
 			kept[path] = change
+		else
+			local group = self.groupOf[change]
+			if group ~= nil then
+				self:_revertGroup(group)
+			end
 		end
 	end
-	for path in named do
+	for path in refused do
 		self:_setWarning("refused:" .. path, "not synced, the daemon refused " .. path .. ": " .. failureMessage(err))
 	end
 	return kept

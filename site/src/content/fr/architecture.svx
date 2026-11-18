@@ -26,9 +26,9 @@ Elles viennent de l'API plugin de Roblox Studio et façonnent chaque décision :
    ne parle qu'en HTTP vers `localhost`.
 3. **`HttpService` ne fait que requête/réponse** : pas de push serveur, pas de client WebSocket. Le plugin doit
    *initier* chaque échange (long-poll). Le daemon ne peut jamais pousser spontanément vers Studio.
-4. **La couverture des propriétés/types est incomplète** : le terrain, la géométrie CSG, les données binaires `MeshPart.MeshId` et
-   les propriétés verrouillées pour la sécurité comme `HttpService.HttpEnabled` ne peuvent pas faire l'aller-retour à chaud. Voir
-   [Terrain & assets](#/docs/terrain-assets).
+4. **La couverture des propriétés/types est incomplète** : la géométrie CSG, les données binaires `MeshPart.MeshId` et
+   les propriétés verrouillées pour la sécurité comme `HttpService.HttpEnabled` ne peuvent pas faire l'aller-retour à chaud. Le terrain fait exception :
+   il passe comme un blob voxel opaque. Voir [Terrain & assets](#/docs/terrain-assets).
 5. **Les assets (meshes, images, audio) sont des uploads cloud, pas des fichiers** : un outil de synchro référence un id
    d'asset ; il ne synchronise pas des pixels.
 6. **Le conflit est inévitable** : deux éditeurs vivants (FS + Studio) signifient qu'une politique de merge/conflit est

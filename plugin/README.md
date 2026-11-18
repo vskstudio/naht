@@ -43,6 +43,18 @@ Behaviour notes:
   `ModuleScript`) and never creates folders to hold it. A delete for a missing parent does nothing.
 - An applied patch is not echoed back. Only a Studio edit that changes a script's source is pushed, and
   reverting a source to the value the daemon last sent is pushed as a real edit.
+- A rename of an instance, or a move of it to another parent inside the synced tree, is sent as one batch: a
+  `Delete` of the old path and an `Upsert` of the new path. Renaming a folder sends that pair for every script
+  under it, in the same batch. The plugin records the path the daemon holds for each instance, so a second
+  rename deletes the file the daemon actually has. If the daemon refuses the new path, the old file is kept and
+  the whole move is dropped, never half-applied.
+- With `[serve] terrain_sync = true`, a sculpt in Studio is pushed when a `ChangeHistoryService` waypoint is
+  added. The push waits one second after the last waypoint, so a burst of strokes sends one blob. A voxel blob
+  equal to the last one pushed or read back is never sent, and a blob the plugin has just applied from the daemon
+  is never pushed back. Failures, backoff and the 1,048,576 voxel cap are the same as for the initial snapshot.
+- A terrain blob for any path other than `Terrain.terrain` is skipped with a `Warning`,
+  `terrain blob for <path> skipped, only Terrain.terrain is synced`. Its content is never written over the
+  terrain, and the blob cursor advances past it.
 - An upsert matches an existing child by name and expected class. A same-named script of another class
   is replaced (its children move to the new script). A same-named non-script (a `Folder`, for example)
   is a sibling and never blocks the patch: `Foo/` and `Foo.luau` coexist, the way the daemon writes them.
@@ -163,8 +175,12 @@ Setup: `naht init demo`, `naht serve` in the project, install the plugin, enable
 5. **Terrain sync** (with `[serve] terrain_sync = true` in `naht.toml`). Sculpt terrain in Studio,
    then change the synced `.terrain` blob on disk.
    - *Expected:* terrain changes propagate each way as an opaque voxel blob; a change on both sides
-     freezes the blob path like any binary conflict (no silent overwrite).
+     freezes the blob path like any binary conflict (no silent overwrite). A sculpt reaches the `.terrain`
+     file on disk about a second after the last stroke, without a reconnect.
 6. **Reconnect re-diff.** Kill `naht serve` (the widget shows `Reconnecting`), edit a file on disk
    while it is down, then restart `naht serve`.
    - *Expected:* the plugin reconnects with backoff and the daemon re-diffs against its persisted
      state: the offline edit syncs, and nothing already in sync is re-clobbered.
+7. **Rename in Studio.** Rename a synced `ModuleScript`, then rename it again.
+   - *Expected:* after each rename the old file is gone from disk and the new file holds the same source. Only
+     one file exists for the script at any time, and a folder rename moves every script under it.

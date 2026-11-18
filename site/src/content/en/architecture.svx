@@ -26,9 +26,9 @@ These come from the Roblox Studio plugin API and shape every decision:
    only speaks HTTP to `localhost`.
 3. **`HttpService` is request/response only**: no server push, no WebSocket client. The plugin must
    *initiate* every exchange (long-poll). The daemon can never spontaneously push to Studio.
-4. **Property/type coverage is incomplete**: terrain, CSG geometry, `MeshPart.MeshId` binary data, and
-   security-locked properties like `HttpService.HttpEnabled` cannot round-trip live. See
-   [Terrain & assets](#/docs/terrain-assets).
+4. **Property/type coverage is incomplete**: CSG geometry, `MeshPart.MeshId` binary data, and
+   security-locked properties like `HttpService.HttpEnabled` cannot round-trip live. Terrain is the
+   exception: it crosses as an opaque voxel blob. See [Terrain & assets](#/docs/terrain-assets).
 5. **Assets (meshes, images, audio) are cloud uploads, not files**: a sync tool references an asset
    id; it does not sync pixels.
 6. **Conflict is inevitable**: two live editors (FS + Studio) means a merge/conflict policy is

@@ -307,19 +307,47 @@ end
 local SCRIPT_CLASSES = { Script = true, LocalScript = true, ModuleScript = true }
 
 local function newNode(className: string, name: string): any
+	local signals = { Name = signal(), Source = signal() }
+	local properties = { Name = name }
 	local node: any = {
 		ClassName = className,
-		Name = name,
 		Source = "",
 		Parent = nil,
 		children = {},
-		sourceChanged = signal(),
+		sourceChanged = signals.Source,
 	}
-	node.GetPropertyChangedSignal = function(_, _property)
-		return node.sourceChanged
+	setmetatable(node, {
+		__index = function(_, key)
+			if key == "Name" then
+				return properties.Name
+			end
+			return nil
+		end,
+		__newindex = function(target, key, value)
+			if key == "Name" then
+				properties.Name = value
+				signals.Name:Fire()
+			else
+				rawset(target, key, value)
+			end
+		end,
+	})
+	node.GetPropertyChangedSignal = function(_, property)
+		return signals[property] or signal()
 	end
 	node.GetChildren = function(self)
 		return table.clone(self.children)
+	end
+	node.GetDescendants = function(self)
+		local list = {}
+		local function visit(current)
+			for _, child in current.children do
+				table.insert(list, child)
+				visit(child)
+			end
+		end
+		visit(self)
+		return list
 	end
 	return node
 end
@@ -328,17 +356,6 @@ local function studioWorld(syncEcho: boolean)
 	local root: any = newNode("Folder", "root")
 	root.DescendantAdded = signal()
 	root.DescendantRemoving = signal()
-	root.GetDescendants = function(self)
-		local list = {}
-		local function visit(node)
-			for _, child in node.children do
-				table.insert(list, child)
-				visit(child)
-			end
-		end
-		visit(self)
-		return list
-	end
 	local queued: { any } = {}
 	local function detach(node)
 		local parent = node.Parent
@@ -351,6 +368,18 @@ local function studioWorld(syncEcho: boolean)
 			end
 		end
 		node.Parent = nil
+	end
+	local function fireRemoving(current: any)
+		root.DescendantRemoving:Fire(current)
+		for _, child in current.children do
+			fireRemoving(child)
+		end
+	end
+	local function fireAdded(current: any)
+		root.DescendantAdded:Fire(current)
+		for _, child in current.children do
+			fireAdded(child)
+		end
 	end
 	local tree = {
 		root = root,
@@ -382,10 +411,13 @@ local function studioWorld(syncEcho: boolean)
 			return node.Source
 		end,
 		setParent = function(node: any, parent: any)
+			if node.Parent ~= nil then
+				fireRemoving(node)
+			end
 			detach(node)
 			node.Parent = parent
 			table.insert(parent.children, node)
-			root.DescendantAdded:Fire(node)
+			fireAdded(node)
 		end,
 		setSource = function(node: any, content: string)
 			if not SCRIPT_CLASSES[node.ClassName] then
@@ -399,12 +431,6 @@ local function studioWorld(syncEcho: boolean)
 			end
 		end,
 		destroy = function(node: any)
-			local function fireRemoving(current: any)
-				root.DescendantRemoving:Fire(current)
-				for _, child in current.children do
-					fireRemoving(child)
-				end
-			end
 			fireRemoving(node)
 			detach(node)
 		end,
@@ -697,11 +723,30 @@ local function extentsTerrainWith(region: any, onRead: ((any) -> ())?, onWrite: 
 	}
 end
 
+local function memoryTerrain(initial: number, region: any?)
+	local state = { value = initial }
+	local terrain = {
+		state = state,
+		MaxExtents = {
+			ExpandToGrid = function(_, _resolution)
+				return region or extentsRegion
+			end,
+		},
+		ReadVoxels = function(_, _readRegion, _resolution)
+			return { { { { Value = state.value } } } }, { { { 0.5 } } }
+		end,
+		WriteVoxels = function(_, _writeRegion, _resolution, materials, _occupancies)
+			state.value = materials[1][1][1]
+		end,
+	}
+	return terrain
+end
+
 local function blobPatchOf(content: string)
 	return { kind = "Upsert", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain", content = content }
 end
 
-local function deps(terrain: any, tree: any?)
+local function deps(terrain: any, tree: any?, history: any?)
 	return {
 		terrain = terrain,
 		tree = tree,
@@ -709,6 +754,7 @@ local function deps(terrain: any, tree: any?)
 		protocol = Protocol,
 		terrainBlob = Terrain,
 		delay = function(_, _fire) end,
+		history = history,
 	}
 end
 
@@ -1796,13 +1842,15 @@ suite("the newest terrain snapshot arrives last across an epoch change", functio
 			end,
 			postAck = function() end,
 		}
-		local connection = Connection.new(client, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		local terrain = memoryTerrain(1)
+		local connection = Connection.new(client, root, noop, deps(terrain, tree))
 		connection.running = true
 		connection.epoch = 1
 		task.spawn(function()
 			connection:_pushTerrain(1)
 		end)
 		task.wait(0.01)
+		terrain.state.value = 2
 		connection.epoch = 2
 		task.spawn(function()
 			connection:_pushTerrain(2)
@@ -2494,6 +2542,436 @@ suite("a script with children is named by its init file, the way the daemon writ
 				"made " .. tostring(made and made.ClassName)
 			)
 		end
+end)
+
+local TOO_LARGE = "terrain too large for live push, use naht build"
+
+local function recordingClient(refuse: ((any) -> ())?)
+	local posts: { { any } } = {}
+	local attempts: { { any } } = {}
+	local client = {
+		postChanges = function(_, changes)
+			table.insert(attempts, changes)
+			if refuse ~= nil then
+				refuse(changes)
+			end
+			table.insert(posts, changes)
+		end,
+		postAck = noop,
+	}
+	return client, posts, attempts
+end
+
+local function hasChange(batch: { any }, kind: string, path: string): boolean
+	for _, change in batch do
+		if change.kind == kind and change.path == path then
+			return true
+		end
+	end
+	return false
+end
+
+local function anyChange(posts: { { any } }, kind: string, path: string): boolean
+	for _, batch in posts do
+		if hasChange(batch, kind, path) then
+			return true
+		end
+	end
+	return false
+end
+
+local function renameWorld(client: any)
+	local tree, root = studioWorld(true)
+	local connection = Connection.new(client, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection:_attachStudio()
+	return connection, tree, root
+end
+
+suite("renaming a tracked script sends its old path's Delete and its new path's Upsert in one batch", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "New"
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"renaming a script deletes its old file and upserts its new file in one batch",
+			#attempts == 2 and hasChange(batch, "Delete", "Old.luau") and hasChange(batch, "Upsert", "New.luau"),
+			tostring(#attempts) .. " batches"
+		)
+		connection:stop()
+end)
+
+suite("renaming a folder sends each child script's old-path Delete and new-path Upsert in one batch", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local pack = place(tree, "Folder", "Pack", root)
+		place(tree, "ModuleScript", "A", pack)
+		place(tree, "ModuleScript", "B", pack)
+		waitFor(function() return #attempts >= 1 end)
+		pack.Name = "Box"
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"renaming a folder moves every child script in one batch",
+			hasChange(batch, "Delete", "Pack/A.luau")
+				and hasChange(batch, "Upsert", "Box/A.luau")
+				and hasChange(batch, "Delete", "Pack/B.luau")
+				and hasChange(batch, "Upsert", "Box/B.luau"),
+			tostring(#attempts) .. " batches"
+		)
+		connection:stop()
+end)
+
+suite("a rename the daemon refuses by its new path leaves the old file in place", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden.luau") then
+				error({ status = 400, message = "refused", refused = { ".Hidden.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = ".Hidden"
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(0.6)
+		check("a refused rename never sends the old file's Delete", not anyChange(posts, "Delete", "Old.luau"))
+		check(
+			"a refused rename restores the old path as the placed path",
+			connection.placed[script] == "Old.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("a rename refused without a named path sends its Delete only alongside its Upsert", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden.luau") then
+				error({ status = 400, message = "refused" })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		place(tree, "ModuleScript", "Old", root)
+		local script = findByClass(root, "Old", "ModuleScript")
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = ".Hidden"
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(0.6)
+		check(
+			"a 400 that names no path never sends the old file's Delete alone",
+			not anyChange(posts, "Delete", "Old.luau"),
+			tostring(#attempts) .. " attempts"
+		)
+		connection:stop()
+end)
+
+suite("moving a script into a folder sends its old Delete and its new Upsert in one batch", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		place(tree, "Folder", "Dir", root)
+		local dir = findByClass(root, "Dir", "Folder")
+		waitFor(function() return #attempts >= 1 end)
+		tree.setParent(script, dir)
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"moving a script deletes its old file and upserts its new file in one batch",
+			#attempts == 2 and hasChange(batch, "Delete", "A.luau") and hasChange(batch, "Upsert", "Dir/A.luau"),
+			tostring(#attempts) .. " batches"
+		)
+		connection:stop()
+end)
+
+suite("a reparent the daemon refuses leaves the old file in place", function()
+		local client, posts, attempts = recordingClient(function(changes)
+			if hasChange(changes, "Upsert", ".Hidden/A.luau") then
+				error({ status = 400, message = "refused", refused = { ".Hidden/A.luau" } })
+			end
+		end)
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		place(tree, "Folder", ".Hidden", root)
+		local hidden = findByClass(root, ".Hidden", "Folder")
+		waitFor(function() return #attempts >= 1 end)
+		tree.setParent(script, hidden)
+		waitFor(function() return #attempts >= 2 end)
+		task.wait(0.6)
+		check("a refused reparent never sends the old file's Delete", not anyChange(posts, "Delete", "A.luau"))
+		check(
+			"a refused reparent restores the old path as the placed path",
+			connection.placed[script] == "A.luau",
+			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("the daemon's answer to a rename queues nothing back", function()
+		local tree, root = studioWorld(true)
+		place(tree, "ModuleScript", "Old", root)
+		local polls = 0
+		local client = {
+			patches = function(_, _cursor)
+				polls += 1
+				if polls == 1 then
+					return {
+						cursor = 2,
+						patches = {
+							{ seq = 1, kind = "Upsert", direction = "ToStudio", path = "New.luau", class = "ModuleScript", content = "" },
+							{ seq = 2, kind = "Delete", direction = "ToStudio", path = "Old.luau", class = "ModuleScript" },
+						},
+					}
+				end
+				error("stop")
+			end,
+			postAck = noop,
+		}
+		local connection = Connection.new(client, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
+		connection.running = true
+		connection.session = 1
+		connection:_attachStudio()
+		pcall(connection._serve, connection, 1, "s-1")
+		check(
+			"the daemon's rename answer queues no push",
+			next(connection.pendingPush) == nil,
+			tostring(next(connection.pendingPush))
+		)
+		check("the daemon's rename answer creates the new name", tree.findChild(root, "New") ~= nil)
+		connection:stop()
+end)
+
+suite("a second rename of a script deletes the path its first rename produced", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "B"
+		waitFor(function() return #attempts >= 2 end)
+		script.Name = "C"
+		waitFor(function() return #attempts >= 3 end)
+		local batch = attempts[3] or {}
+		check(
+			"the second rename deletes the B file the first rename produced",
+			hasChange(batch, "Delete", "B.luau") and hasChange(batch, "Upsert", "C.luau")
+		)
+		check("the second rename does not repeat the first rename's Delete", not hasChange(batch, "Delete", "A.luau"))
+		connection:stop()
+end)
+
+suite("renaming a script to a name the plugin cannot write sends nothing", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "Old", root)
+		waitFor(function() return #attempts >= 1 end)
+		script.Name = "Bad/Name"
+		task.wait(0.6)
+		check("a rename to an unwritable name sends no batch", #attempts == 1, tostring(#attempts))
+		check("a rename to an unwritable name does not delete the old file", not anyChange(posts, "Delete", "Old.luau"))
+		connection:stop()
+end)
+
+local function liveTerrainWorld(terrain: any, client: any, history: any, onState: ((string, string?) -> ())?)
+	local tree, root = studioWorld(true)
+	local settings = deps(terrain, tree, history)
+	settings.delay = task.delay
+	local connection = Connection.new(client, root, onState or noop, settings)
+	connection.running = true
+	connection.session = 1
+	connection.epoch = 1
+	connection.terrainSync = true
+	connection:_attachStudio()
+	return connection
+end
+
+local function blobRecorder()
+	local blobs: { string } = {}
+	local client = {
+		postBlobs = function(_, batch)
+			table.insert(blobs, batch[1].content)
+		end,
+		postAck = noop,
+		postChanges = noop,
+	}
+	return client, blobs
+end
+
+suite("a waypoint that changes the terrain pushes the blob during the session", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		waitFor(function() return #blobs >= 2 end)
+		check(
+			"a sculpted waypoint pushes the new terrain",
+			#blobs == 2 and blobs[2] == Terrain.read(terrain, extentsRegion, 4),
+			tostring(#blobs) .. " blobs"
+		)
+		connection:stop()
+end)
+
+suite("a burst of waypoints pushes the terrain once, after the last one", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		for value = 2, 4 do
+			terrain.state.value = value
+			history.OnWaypointAdded:Fire("sculpt")
+			task.wait(0.3)
+		end
+		check("no push lands while the burst is still within its debounce", #blobs == 1, tostring(#blobs))
+		waitFor(function() return #blobs >= 2 end)
+		task.wait(1.2)
+		check(
+			"the burst pushes once, with the terrain as it was after the last waypoint",
+			#blobs == 2 and blobs[2] == Terrain.read(terrain, extentsRegion, 4),
+			tostring(#blobs) .. " blobs"
+		)
+		connection:stop()
+end)
+
+suite("a waypoint that leaves the terrain unchanged pushes nothing", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		history.OnWaypointAdded:Fire("select")
+		task.wait(1.5)
+		check("an unchanged terrain is not pushed again", #blobs == 1, tostring(#blobs))
+		connection:stop()
+end)
+
+suite("a terrain blob applied from the daemon is not pushed back", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		terrain.state.value = 5
+		local incoming = Terrain.read(terrain, extentsRegion, 4)
+		terrain.state.value = 1
+		connection:_applyBlob(incoming)
+		history.OnWaypointAdded:Fire("apply")
+		task.wait(1.5)
+		check("a blob written from the daemon is not echoed on the next waypoint", #blobs == 1, tostring(#blobs))
+		connection:stop()
+end)
+
+suite("a waypoint pushes no terrain while terrain_sync is off", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection.terrainSync = false
+		connection:_pushTerrain(1)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		task.wait(1.5)
+		check("a changed terrain is not pushed while the daemon disables terrain_sync", #blobs == 1, tostring(#blobs))
+		connection:stop()
+end)
+
+suite("stopping the connection cancels a terrain push waiting on its debounce", function()
+		local terrain = memoryTerrain(1)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local connection = liveTerrainWorld(terrain, client, history)
+		connection:_pushTerrain(1)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		connection:stop()
+		task.wait(1.5)
+		check("a stopped connection pushes no terrain from its pending debounce", #blobs == 1, tostring(#blobs))
+end)
+
+suite("a live terrain change over the size cap warns instead of pushing", function()
+		local huge = { CFrame = extentsRegion.CFrame, Size = { X = 2048, Y = 2048, Z = 2048 } }
+		local terrain = memoryTerrain(1, huge)
+		local history = { OnWaypointAdded = signal() }
+		local client, blobs = blobRecorder()
+		local log, onState = stateLog()
+		local connection = liveTerrainWorld(terrain, client, history, onState)
+		terrain.state.value = 2
+		history.OnWaypointAdded:Fire("sculpt")
+		waitFor(function() return #warningsOf(log) > 0 end)
+		check(
+			"an oversized live push is refused with the build hint",
+			#blobs == 0 and warningsOf(log)[1] == TOO_LARGE,
+			tostring(warningsOf(log)[1])
+		)
+		connection:stop()
+end)
+
+suite("the connection takes live terrain sync from the daemon's handshake", function()
+		local terrain = memoryTerrain(1)
+		local tree, root = studioWorld(true)
+		local client = {
+			info = function(_)
+				return { project_name = "demo", session_id = "s-1", conflicted = {}, terrain_sync = true }
+			end,
+			patches = function(_, _cursor)
+				error("stop")
+			end,
+			blobs = function(_, _cursor)
+				error("stop")
+			end,
+			postBlobs = noop,
+			postChanges = noop,
+			postAck = noop,
+		}
+		local connection = Connection.new(client, root, noop, deps(terrain, tree))
+		connection.running = true
+		connection.session = 1
+		task.spawn(function()
+			connection:_run(1)
+		end)
+		local synced = waitFor(function() return connection.terrainSync end)
+		check("a handshake with terrain_sync enables live terrain sync", synced)
+		connection:stop()
+end)
+
+suite("a terrain blob for another path is skipped with a Warning and never written over the terrain", function()
+		local terrain = memoryTerrain(1)
+		local tree, root = studioWorld(true)
+		local client = { postAck = noop, postBlobs = noop, postChanges = noop }
+		local log, onState = stateLog()
+		local connection = Connection.new(client, root, onState, deps(terrain, tree))
+		connection.running = true
+		connection.session = 1
+		connection.epoch = 1
+		terrain.state.value = 9
+		local terrainBlob = Terrain.read(terrain, extentsRegion, 4)
+		terrain.state.value = 7
+		local otherBlob = Terrain.read(terrain, extentsRegion, 4)
+		terrain.state.value = 1
+		connection:_applyBlobBatch(1, {
+			cursor = 3,
+			patches = {
+				{ kind = "Upsert", direction = "ToStudio", path = "Terrain.terrain", class = "Terrain", content = terrainBlob },
+				{ kind = "Upsert", direction = "ToStudio", path = "Other.terrain", class = "Terrain", content = otherBlob },
+			},
+		})
+		check(
+			"the Terrain.terrain blob is applied and the other path's blob is not written",
+			terrain.state.value == 9,
+			tostring(terrain.state.value)
+		)
+		local found = warningsOf(log)
+		check(
+			"the skipped path is named in a Warning",
+			#found == 1 and string.find(found[1], "Other.terrain", 1, true) ~= nil,
+			tostring(found[1])
+		)
+		check("the skipped blob still advances the blob cursor", connection.blobCursor == 3, tostring(connection.blobCursor))
 end)
 
 suite("a script that gains its first child moves from its file to init, and back", function()

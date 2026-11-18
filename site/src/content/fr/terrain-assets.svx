@@ -37,6 +37,10 @@ last-writer-wins. Si les **deux** côtés ont changé le terrain depuis la base,
 deviner. Le même principe « ne jamais écraser » que pour les [conflits](#/docs/conflicts) de texte, appliqué au binaire.
 
 Pour libérer un terrain gelé, garde un côté avec `naht resolve --keep disk|studio` (voir [Conflits](#/docs/conflicts)).
+
+Pendant que Studio est connecté, un sculptage part en direct, pas seulement à la connexion. Le plugin pousse le terrain
+quand Studio ajoute un point d'annulation, dès qu'aucun nouveau point n'est arrivé depuis une seconde, et seulement si
+les voxels diffèrent du dernier blob envoyé ou reçu. Un blob venu du daemon n'est jamais renvoyé.
 <Callout type="note">
 
 Quand `terrain_sync` est **désactivé** (le défaut), le terrain est simplement signalé comme non synchronisé : rapporté, pas
