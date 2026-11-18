@@ -20,7 +20,7 @@ async fn a_daemon_that_does_not_serve_this_project_is_not_adopted() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("demo");
     init(&root);
-    let mut impostor = Daemon::spawn(&root, foreign.port);
+    let mut impostor = Daemon::spawn(&root, foreign.port, None);
 
     assert!(impostor.wait_ready(&root).await.is_none());
 }

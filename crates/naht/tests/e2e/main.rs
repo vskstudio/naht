@@ -2,7 +2,7 @@
 
 #![cfg(test)]
 
-use std::fs;
+use std::fs::{self, File};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
@@ -19,6 +19,7 @@ use tokio::time::sleep;
 
 mod adoption;
 mod instances;
+mod limits;
 mod pull;
 #[cfg(test)]
 #[path = "../wire/mod.rs"]
@@ -66,36 +67,44 @@ struct Daemon {
 
 impl Daemon {
     async fn start(root: &Path) -> Self {
+        Self::start_logged(root, None).await
+    }
+
+    async fn start_logged(root: &Path, log: Option<&Path>) -> Self {
         for _ in 0..START_ATTEMPTS {
-            if let Some(daemon) = Self::try_start(root).await {
+            if let Some(daemon) = Self::try_start(root, log).await {
                 return daemon;
             }
         }
         panic!("naht serve did not start after {START_ATTEMPTS} attempts");
     }
 
-    async fn try_start(root: &Path) -> Option<Self> {
+    async fn try_start(root: &Path, log: Option<&Path>) -> Option<Self> {
         let _starting = DAEMON_STARTS.lock().await;
-        let mut daemon = Self::spawn(root, free_port());
+        let mut daemon = Self::spawn(root, free_port(), log);
         daemon.token = daemon.wait_token(root).await?;
         let session = daemon.wait_ready(root).await?;
         daemon.session = session;
         Some(daemon)
     }
 
-    fn spawn(root: &Path, port: u16) -> Self {
+    fn spawn(root: &Path, port: u16, log: Option<&Path>) -> Self {
+        let stderr = match log {
+            Some(path) => Stdio::from(File::create(path).unwrap()),
+            None => Stdio::null(),
+        };
         let child = Command::new(env!("CARGO_BIN_EXE_naht"))
             .arg("serve")
             .arg(root)
             .arg("--port")
             .arg(port.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(stderr)
             .spawn()
             .unwrap();
         Self {
             child,
-            client: Client::new(),
+            client: Client::builder().pool_max_idle_per_host(0).build().unwrap(),
             quick: Client::builder().timeout(PENDING_WINDOW).build().unwrap(),
             base: format!("http://{}:{port}", Ipv4Addr::LOCALHOST),
             port,
