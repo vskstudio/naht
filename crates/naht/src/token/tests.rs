@@ -68,8 +68,7 @@ fn the_token_file_is_readable_only_by_its_owner() {
 }
 
 #[cfg(unix)]
-#[test]
-fn a_token_file_readable_by_others_is_tightened_with_one_warning() {
+fn tightened_from(before: u32) {
     use std::os::unix::fs::PermissionsExt;
     use tracing::subscriber::with_default;
 
@@ -77,7 +76,7 @@ fn a_token_file_readable_by_others_is_tightened_with_one_warning() {
     let token = Token::generate().unwrap();
     fs::create_dir_all(root.path().join(".naht")).unwrap();
     fs::write(path(root.path()), token.as_str()).unwrap();
-    fs::set_permissions(path(root.path()), fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(path(root.path()), fs::Permissions::from_mode(before)).unwrap();
     let logs = LogBuffer::default();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
@@ -100,6 +99,18 @@ fn a_token_file_readable_by_others_is_tightened_with_one_warning() {
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.contains("WARN"), "{text}");
     assert!(!text.contains(token.as_str()), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_token_file_readable_by_others_is_tightened_with_one_warning() {
+    tightened_from(0o644);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_token_file_readable_by_the_group_alone_is_tightened_with_one_warning() {
+    tightened_from(0o640);
 }
 
 #[cfg(unix)]
