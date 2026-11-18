@@ -1,4 +1,6 @@
 use super::*;
+use naht_core::hash::source_fingerprint;
+use naht_core::inventory::InventoryEntry;
 
 struct CaseFoldingVfs {
     inner: MemoryVfs,
@@ -97,28 +99,32 @@ fn root_names<V: Vfs>(session: &Session<V>) -> Vec<String> {
         .collect()
 }
 
-fn inventory_script(path: &str, content: &str) -> TextInstance {
-    TextInstance::new(
-        path.to_owned(),
-        "ModuleScript".to_owned(),
-        content.to_owned(),
-    )
+fn inventory_entry(path: &str, class: &str, content: &str) -> InventoryEntry {
+    InventoryEntry {
+        path: path.to_owned(),
+        class: class.to_owned(),
+        hash: source_fingerprint(content.as_bytes()),
+    }
 }
 
-fn session_with_synced_old_script(root: &Path) -> Session {
-    fs::write(root.join("Old.luau"), "return 1").unwrap();
+fn session_with_synced_scripts(root: &Path, scripts: &[(&str, &str)]) -> Session {
     let store = StateStore::open_in_memory().unwrap();
-    set_base(&store, "Old.luau", "ModuleScript", "return 1").unwrap();
+    for (path, content) in scripts {
+        let file = root.join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, content).unwrap();
+        set_base(&store, path, "ModuleScript", content).unwrap();
+    }
     Session::new(root, store, "demo", None, false).unwrap()
 }
 
 #[test]
 fn an_inventory_removes_the_old_file_of_a_rename_made_while_stopped() {
     let root = tempfile::tempdir().unwrap();
-    let mut session = session_with_synced_old_script(root.path());
+    let mut session = session_with_synced_scripts(root.path(), &[("Old.luau", "return 1")]);
 
     session
-        .apply_inventory(&[inventory_script("New.luau", "return 1")])
+        .apply_inventory(&[inventory_entry("New.luau", "ModuleScript", "return 1")])
         .unwrap();
 
     assert_eq!(root_names(&session), ["New.luau"]);
@@ -129,22 +135,79 @@ fn an_inventory_removes_the_old_file_of_a_rename_made_while_stopped() {
 }
 
 #[test]
-fn an_inventory_writes_a_script_studio_has_that_the_daemon_lacks() {
+fn an_inventory_leaves_a_script_studio_created_alone() {
     let root = tempfile::tempdir().unwrap();
-    let mut session = session_in(root.path());
-    session.rescan().unwrap();
+    let mut session = session_with_synced_scripts(root.path(), &[]);
 
     session
-        .apply_inventory(&[inventory_script("Fresh.luau", "return 2")])
+        .apply_inventory(&[inventory_entry("Fresh.luau", "ModuleScript", "return 2")])
         .unwrap();
 
-    assert_eq!(root_names(&session), ["Fresh.luau"]);
+    assert_eq!(root_names(&session), Vec::<String>::new());
+}
+
+#[test]
+fn an_inventory_leaves_a_script_studio_deleted_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_with_synced_scripts(
+        root.path(),
+        &[("Keep.luau", "return 1"), ("Gone.luau", "return 2")],
+    );
+
+    session
+        .apply_inventory(&[inventory_entry("Keep.luau", "ModuleScript", "return 1")])
+        .unwrap();
+
+    assert_eq!(root_names(&session), ["Gone.luau", "Keep.luau"]);
+}
+
+#[test]
+fn an_inventory_leaves_a_content_edit_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_with_synced_scripts(root.path(), &[("Old.luau", "return 1")]);
+
+    session
+        .apply_inventory(&[inventory_entry("Old.luau", "ModuleScript", "return 2")])
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(root.path().join("Old.luau")).unwrap(),
+        "return 1"
+    );
+}
+
+#[test]
+fn an_inventory_does_not_pair_scripts_of_different_classes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_with_synced_scripts(root.path(), &[("Old.luau", "return 1")]);
+
+    session
+        .apply_inventory(&[inventory_entry("New.luau", "Script", "return 1")])
+        .unwrap();
+
+    assert_eq!(root_names(&session), ["Old.luau"]);
+}
+
+#[test]
+fn an_inventory_keeps_a_lone_init_folder_in_its_layout() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_with_synced_scripts(root.path(), &[("Dir/init.luau", "return 3")]);
+
+    session
+        .apply_inventory(&[inventory_entry("Dir.luau", "ModuleScript", "return 3")])
+        .unwrap();
+
+    assert_eq!(root_names(&session), ["Dir"]);
+    assert_eq!(
+        fs::read_to_string(root.path().join("Dir/init.luau")).unwrap(),
+        "return 3"
+    );
 }
 
 #[test]
 fn an_empty_inventory_removes_nothing() {
     let root = tempfile::tempdir().unwrap();
-    let mut session = session_with_synced_old_script(root.path());
+    let mut session = session_with_synced_scripts(root.path(), &[("Old.luau", "return 1")]);
 
     session.apply_inventory(&[]).unwrap();
 
@@ -207,4 +270,64 @@ fn a_case_only_pair_over_two_distinct_files_keeps_both_apart() {
 
     assert_eq!(root_names(&session), ["Foo.luau"]);
     assert_eq!(session.vfs.read(Path::new("Foo.luau")).unwrap(), b"new");
+}
+
+#[test]
+fn a_case_only_folder_rename_moves_the_folder_on_disk() {
+    let mut inner = MemoryVfs::new();
+    inner.create_dir(Path::new("Utils")).unwrap();
+    inner.write(Path::new("Utils/a.luau"), b"old").unwrap();
+    let store = StateStore::open_in_memory().unwrap();
+    set_base(&store, "Utils/a.luau", "ModuleScript", "old").unwrap();
+    let mut session = Session::assemble(
+        RootedVfs::new(
+            "",
+            CaseFoldingVfs {
+                inner,
+                refused_write: None,
+            },
+        ),
+        store,
+        "demo",
+        None,
+        false,
+    )
+    .unwrap();
+
+    session
+        .apply_changes(vec![
+            Change::Delete {
+                path: "Utils/a.luau".to_owned(),
+            },
+            upsert("utils/a.luau", "new"),
+        ])
+        .unwrap();
+
+    assert_eq!(root_names(&session), ["utils"]);
+    assert_eq!(session.vfs.read(Path::new("utils/a.luau")).unwrap(), b"new");
+}
+
+#[test]
+fn a_case_only_folder_rename_onto_another_folder_is_refused() {
+    let mut inner = MemoryVfs::new();
+    inner.create_dir(Path::new("Utils")).unwrap();
+    inner.write(Path::new("Utils/a.luau"), b"old").unwrap();
+    inner.create_dir(Path::new("utils")).unwrap();
+    let store = StateStore::open_in_memory().unwrap();
+    set_base(&store, "Utils/a.luau", "ModuleScript", "old").unwrap();
+    let mut session =
+        Session::assemble(RootedVfs::new("", inner), store, "demo", None, false).unwrap();
+
+    let outcome = session.apply_changes(vec![
+        Change::Delete {
+            path: "Utils/a.luau".to_owned(),
+        },
+        upsert("utils/a.luau", "new"),
+    ]);
+
+    assert!(matches!(
+        outcome,
+        Err(SessionError::FolderRenameBlocked { .. })
+    ));
+    assert_eq!(root_names(&session), ["Utils", "utils"]);
 }

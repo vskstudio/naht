@@ -1,5 +1,5 @@
 use std::error::Error as StdError;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -13,7 +13,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use super::BODY_LIMIT;
+use super::{AppState, BODY_LIMIT};
+use crate::session::SessionError;
 
 pub(super) const CLIENT_HEADER: HeaderName = HeaderName::from_static(protocol::CLIENT_HEADER);
 const PLACE_ID_HEADER: HeaderName = HeaderName::from_static(protocol::PLACE_ID_HEADER);
@@ -39,25 +40,28 @@ impl PostGate {
     }
 }
 
-#[derive(Debug)]
 pub(super) struct Gate {
     hosts: [String; 3],
     serve_place_id: Option<u64>,
+    state: Arc<AppState>,
+    bound: OnceLock<u64>,
 }
 
 impl Gate {
-    pub(super) fn new(port: u16, serve_place_id: Option<u64>) -> Self {
+    pub(super) fn new(port: u16, state: Arc<AppState>) -> Self {
         Self {
             hosts: [
                 format!("127.0.0.1:{port}"),
                 format!("localhost:{port}"),
                 format!("[::1]:{port}"),
             ],
-            serve_place_id,
+            serve_place_id: state.serve_place_id,
+            state,
+            bound: OnceLock::new(),
         }
     }
 
-    fn admit(&self, headers: &HeaderMap) -> Result<(), String> {
+    async fn admit(&self, headers: &HeaderMap) -> Result<(), String> {
         if headers.contains_key(header::ORIGIN) {
             return Err("cross-origin requests are not allowed".to_owned());
         }
@@ -71,11 +75,32 @@ impl Gate {
                 protocol::CLIENT_HEADER
             ));
         }
-        if let Some(expected) = self.serve_place_id
-            && !place_id_matches(headers, expected)
-        {
-            return Err("place id mismatch".to_owned());
+        match self.serve_place_id {
+            Some(expected) if !place_id_matches(headers, expected) => {
+                Err("place id mismatch".to_owned())
+            }
+            Some(_) => Ok(()),
+            None => self.bind_place(headers).await,
         }
+    }
+
+    async fn bind_place(&self, headers: &HeaderMap) -> Result<(), String> {
+        let Some(place_id) = requested_place_id(headers)? else {
+            return Ok(());
+        };
+        if let Some(bound) = self.bound.get() {
+            return if *bound == place_id {
+                Ok(())
+            } else {
+                Err(place_bound_elsewhere(*bound, place_id))
+            };
+        }
+        self.state
+            .session_lock()
+            .await
+            .bind_place(place_id)
+            .map_err(|error| error.to_string())?;
+        self.bound.get_or_init(|| place_id);
         Ok(())
     }
 
@@ -91,15 +116,28 @@ impl Gate {
 }
 
 fn place_id_matches(headers: &HeaderMap, expected: u64) -> bool {
+    requested_place_id(headers).is_ok_and(|requested| requested == Some(expected))
+}
+
+fn requested_place_id(headers: &HeaderMap) -> Result<Option<u64>, String> {
     headers
         .get(PLACE_ID_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        == Some(expected)
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .and_then(|text| text.parse::<u64>().ok())
+                .ok_or_else(|| "malformed place id header".to_owned())
+        })
+        .transpose()
+}
+
+fn place_bound_elsewhere(bound: u64, requested: u64) -> String {
+    SessionError::PlaceBoundElsewhere { bound, requested }.to_string()
 }
 
 pub(super) async fn guard(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> Response {
-    match gate.admit(request.headers()) {
+    match gate.admit(request.headers()).await {
         Ok(()) => next.run(request).await,
         Err(reason) => {
             tracing::warn!(target: "naht::server", reason = reason.as_str(), "request refused");
@@ -157,5 +195,7 @@ fn body_error_status(error: &axum::Error) -> StatusCode {
     StatusCode::BAD_REQUEST
 }
 
+#[cfg(test)]
+mod place_binding;
 #[cfg(test)]
 mod tests;

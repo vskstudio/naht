@@ -13,6 +13,7 @@
 //! performed) advance the base immediately, since they are already durable.
 
 mod inbound;
+mod inventory;
 mod queue;
 mod rescan;
 mod state;
@@ -50,6 +51,25 @@ pub enum SessionError {
     SourceRootOutsideRoot {
         /// The source root as configured.
         path: PathBuf,
+    },
+    /// This project's state is bound to another Studio place, so attaching `requested` is refused.
+    #[error(
+        "this project is bound to place {bound}, not {requested}: set [serve] place_id = {requested} in naht.toml to accept place {requested}, or delete .naht/state.db to reset the binding"
+    )]
+    PlaceBoundElsewhere {
+        /// The place the project state was first attached to.
+        bound: u64,
+        /// The place that tried to attach.
+        requested: u64,
+    },
+    /// A folder case-only rename cannot move `from` to `to`, because the target or its scratch name
+    /// is already taken. The batch is rolled back.
+    #[error("cannot rename folder `{from}` to `{to}`: the target is already taken")]
+    FolderRenameBlocked {
+        /// The folder as it is on disk.
+        from: String,
+        /// The spelling the folder should take.
+        to: String,
     },
 }
 

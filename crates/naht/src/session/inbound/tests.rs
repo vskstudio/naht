@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
 use naht_core::protocol::Change;
-use naht_core::reconciler::{TextInstance, set_base};
+use naht_core::reconciler::set_base;
 use naht_core::state::{InstanceRecord, StateStore};
 use naht_core::vfs::{DirEntry, EntryKind, MemoryVfs, RootedVfs, Vfs, VfsError};
 use tracing::subscriber::with_default;

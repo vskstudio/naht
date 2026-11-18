@@ -146,7 +146,7 @@ impl AppState {
 
 /// Build the router over `state`, serving the loopback port `port`.
 pub fn router(state: Arc<AppState>, port: u16) -> Router {
-    let gate = Arc::new(Gate::new(port, state.serve_place_id));
+    let gate = Arc::new(Gate::new(port, Arc::clone(&state)));
     let posts = Arc::new(PostGate::new(state.post_wait, state.tasks.clone()));
     let read_deadline = ServiceBuilder::new()
         .layer(HandleErrorLayer::<_, ()>::new(overload))

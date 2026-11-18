@@ -4,12 +4,13 @@ use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use naht_core::protocol::{self, Change, ChangeBatch};
-use naht_core::reconciler::TextInstance;
+use naht_core::inventory::{InventoryBatch, InventoryEntry};
+use naht_core::protocol;
+use naht_core::vfs::validate_source_path;
 
 use super::cursor::SessionQuery;
 use super::rejection::Rejection;
-use super::{AppState, apply_within, refused_text_paths};
+use super::{AppState, apply_within};
 use crate::session::Session;
 
 pub(super) async fn inventory(
@@ -17,14 +18,14 @@ pub(super) async fn inventory(
     Query(query): Query<SessionQuery>,
     body: Bytes,
 ) -> Response {
-    let batch: ChangeBatch = match protocol::from_msgpack(&body) {
+    let batch: InventoryBatch = match protocol::from_msgpack(&body) {
         Ok(batch) => batch,
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let count = batch.changes.len();
+    let count = batch.scripts.len();
     match apply_within(&state, move |session| {
         query.check(session)?;
-        apply_inventory_batch(session, batch.changes)
+        apply_inventory_batch(session, &batch.scripts)
     })
     .await
     {
@@ -37,21 +38,23 @@ pub(super) async fn inventory(
     }
 }
 
-fn apply_inventory_batch(session: &mut Session, changes: Vec<Change>) -> Result<(), Rejection> {
-    let refused = refused_text_paths(session, &changes);
+fn apply_inventory_batch(
+    session: &mut Session,
+    scripts: &[InventoryEntry],
+) -> Result<(), Rejection> {
+    let refused: Vec<String> = scripts
+        .iter()
+        .filter(|script| is_refused_script(session, &script.path))
+        .map(|script| script.path.clone())
+        .collect();
     if !refused.is_empty() {
         return Err(Rejection::RefusedPaths(refused));
     }
-    let mut instances = Vec::with_capacity(changes.len());
-    for change in changes {
-        match change {
-            Change::Upsert {
-                path,
-                class,
-                content,
-            } => instances.push(TextInstance::new(path, class, content)),
-            Change::Delete { path } => return Err(Rejection::RefusedPaths(vec![path])),
-        }
-    }
-    session.apply_inventory(&instances).map_err(Rejection::from)
+    session.apply_inventory(scripts).map_err(Rejection::from)
+}
+
+fn is_refused_script(session: &Session, path: &str) -> bool {
+    session.validate_path(path).is_err()
+        || validate_source_path(path).is_err()
+        || session.is_directory(path)
 }
