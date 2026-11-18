@@ -9,13 +9,8 @@ pub(crate) fn stays_inside_project(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
-pub(crate) fn has_portable_names(path: &Path) -> bool {
-    path.components().all(|component| match component {
-        Component::Normal(name) => name.to_str().is_some_and(is_portable_name),
-        Component::CurDir | Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-            true
-        }
-    })
+pub(crate) fn has_portable_tree_path(path: &str) -> bool {
+    !path.contains('\\') && path.split(['/', '\\']).all(is_portable_name)
 }
 
 fn is_portable_name(name: &str) -> bool {
