@@ -55,6 +55,8 @@ Au plus deux requêtes POST lisent et traitent un corps à la fois, et une trois
 temps propre. Chaque corps est plafonné à 64 MiB et reçoit `413` lorsqu'il est plus grand. Le délai de 15
 secondes ne couvre que la lecture du corps, qui reçoit `408` lorsqu'elle se bloque, et un corps qui se termine
 trop tôt ou qui est mal formé reçoit `400`. Une tête de requête qui reste bloquée pendant dix secondes est coupée.
+Le daemon sert au plus 64 connexions à la fois : une connexion au-delà attend, non encore acceptée, qu'une des
+autres se ferme.
 
 ## Le handshake (`GET /info`)
 
