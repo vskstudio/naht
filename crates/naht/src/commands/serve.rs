@@ -146,6 +146,7 @@ mod tests {
 
     use super::{CommandError, Config, Output, checked_tree_paths, serve};
     use crate::config::TreeNode;
+    use tokio::time;
 
     fn config_with_tree_path(path: &str) -> Config {
         Config {
@@ -191,8 +192,6 @@ mod tests {
             );
         }
     }
-    use tokio::time;
-
     #[tokio::test]
     async fn a_dot_tree_path_is_accepted_and_serve_reaches_the_bind() {
         for path in [".", "./"] {
@@ -210,6 +209,32 @@ mod tests {
                 "serve refused the tree path `{path}`: {outcome:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_refused_tree_path_is_refused_before_the_instance_lock_is_taken() {
+        let root = tempfile::tempdir().unwrap();
+        let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let mut out = Output::new(Vec::new(), Vec::new());
+        let outcome = time::timeout(
+            Duration::from_secs(10),
+            serve(
+                config_with_tree_path("a/../src"),
+                root.path(),
+                port,
+                &mut out,
+            ),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Ok(Err(CommandError::TreePathOutsideRoot { .. }))),
+            "serve did not refuse the tree path first: {outcome:?}"
+        );
+        assert!(
+            !root.path().join(".naht").exists(),
+            "serve wrote .naht before refusing the tree path"
+        );
     }
 
     #[tokio::test]
