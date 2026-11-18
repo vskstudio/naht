@@ -77,7 +77,8 @@ const WINDOWS_DEVICE_NAMES: [&str; 33] = [
     "LPT\u{b3}",
 ];
 
-fn is_windows_device_name(component: &str) -> bool {
+/// Whether `component` names a Windows device, with or without an extension: `CON`, `lpt9.txt`.
+pub fn is_windows_device_name(component: &str) -> bool {
     let stem = component
         .split_once('.')
         .map_or(component, |(stem, _)| stem)
