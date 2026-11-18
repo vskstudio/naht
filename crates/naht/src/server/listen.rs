@@ -16,12 +16,11 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
-const MAX_CONNECTIONS: usize = 64;
-
 pub(super) async fn accept_until_cancelled(
     listener: TcpListener,
     router: Router,
     shutdown: CancellationToken,
+    connections: usize,
 ) -> io::Result<()> {
     let mut builder = Builder::new(TokioExecutor::new()).http1_only();
     builder
@@ -29,7 +28,7 @@ pub(super) async fn accept_until_cancelled(
         .timer(TokioTimer::new())
         .header_read_timeout(HEADER_READ_TIMEOUT);
     let graceful = GracefulShutdown::new();
-    let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let slots = Arc::new(Semaphore::new(connections));
 
     loop {
         let slot = tokio::select! {

@@ -19,6 +19,7 @@ mod rescan;
 mod state;
 mod transaction;
 
+use crate::config::Limits;
 use getrandom::{Error as RandomError, fill};
 use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::protocol::SyncEvent;
@@ -75,8 +76,6 @@ pub enum SessionError {
 
 const PROJECT_ROOT: &str = "";
 
-const MASS_DELETE_WARN: usize = 25;
-
 const ACTIVITY_CAP: usize = 256;
 
 /// One running sync session.
@@ -112,6 +111,7 @@ pub struct Session<V: Vfs = DiskVfs> {
     serve_place_id: Option<u64>,
     recorded_place: Option<u64>,
     terrain_sync: bool,
+    limits: Limits,
 }
 
 fn new_session_id() -> String {

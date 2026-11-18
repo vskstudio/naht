@@ -2,6 +2,9 @@ use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
+use naht::config::Limits;
+use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
+use naht_core::protocol::TERRAIN_PATH;
 use reqwest::StatusCode;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net;
@@ -9,6 +12,15 @@ use tokio::task;
 use tokio::time;
 
 use super::support::{CLIENT_HEADER, Harness};
+
+fn terrain_blob(nx: i32, ny: i32, nz: i32) -> BlobInstance {
+    let mut content = Vec::new();
+    for dimension in [nx, ny, nz] {
+        content.extend_from_slice(&dimension.to_le_bytes());
+    }
+    content.resize(40, 0);
+    BlobInstance::new(TERRAIN_PATH, TERRAIN_CLASS, content)
+}
 
 const PRODUCTION_LIKE_LONG_POLL: Duration = Duration::from_secs(25);
 
@@ -110,4 +122,60 @@ async fn a_truncated_post_body_is_refused_with_400() {
         .unwrap();
 
     assert!(reply.starts_with("HTTP/1.1 400"), "{reply}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_inventory_body_over_the_configured_limit_is_refused_with_413() {
+    let limits = Limits {
+        inventory_body_bytes: 1024,
+        ..Limits::default()
+    };
+    let harness = Harness::start_limited(None, true, Duration::from_millis(300), limits).await;
+
+    assert_eq!(
+        harness.post_bytes("/inventory", vec![0_u8; 2048]).await,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_ne!(
+        harness.post_bytes("/inventory", vec![0_u8; 512]).await,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "a body within the configured limit was refused as too large"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terrain_blob_over_the_configured_voxel_cap_is_refused_with_413_and_json() {
+    let limits = Limits {
+        terrain_voxels: 10,
+        ..Limits::default()
+    };
+    let harness = Harness::start_limited(None, true, Duration::from_millis(300), limits).await;
+
+    let (status, body) = harness.post_blobs_reply(vec![terrain_blob(4, 4, 4)]).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+    let reply: serde_json::Value = serde_json::from_str(&body).expect("the refusal is JSON");
+    assert!(
+        reply["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("64 voxels"),
+        "{body}"
+    );
+
+    assert_eq!(
+        harness.post_blobs(vec![terrain_blob(2, 2, 2)]).await,
+        StatusCode::OK,
+        "a terrain within the cap was refused"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terrain_blob_without_a_readable_header_is_refused_with_400() {
+    let harness = Harness::start_with_terrain(None, true).await;
+    let truncated = BlobInstance::new(TERRAIN_PATH, TERRAIN_CLASS, vec![1_u8; 12]);
+
+    let (status, body) = harness.post_blobs_reply(vec![truncated]).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("voxel header"), "{body}");
 }

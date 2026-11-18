@@ -1,7 +1,8 @@
 use super::Session;
 use super::{SessionError, new_daemon_id, new_session_id};
+use crate::config::Limits;
 use crate::project_path::stays_inside_project;
-use naht_core::protocol::{PROTOCOL_VERSION, ServerInfo};
+use naht_core::protocol::{PROTOCOL_VERSION, ReportedLimits, ServerInfo};
 use naht_core::reconciler;
 use naht_core::state::{InstanceRecord, StateStore};
 use naht_core::vfs::{DiskVfs, EntryKind, RootedVfs, Vfs, VfsError, remove_stale_temp_files};
@@ -71,7 +72,18 @@ impl<V: Vfs> Session<V> {
             serve_place_id,
             recorded_place,
             terrain_sync,
+            limits: Limits::default(),
         })
+    }
+
+    /// Set the limits this session enforces, as `[limits]` resolved at startup.
+    pub fn set_limits(&mut self, limits: Limits) {
+        self.limits = limits;
+    }
+
+    /// The limits this session enforces.
+    pub fn limits(&self) -> Limits {
+        self.limits
     }
 
     /// The id a new daemon session mints at start, which changes on every daemon restart.
@@ -90,6 +102,9 @@ impl<V: Vfs> Session<V> {
             serve_place_id: self.serve_place_id,
             conflicted: Vec::new(),
             terrain_sync: self.terrain_sync,
+            limits: Some(ReportedLimits {
+                terrain_voxels: self.limits.terrain_voxels,
+            }),
         }
     }
 

@@ -2,7 +2,9 @@ use super::error::CommandError;
 use super::files::canonical;
 use crate::config::Config;
 use crate::daemon_port::{self, Recorded};
-use naht_core::protocol::{CLIENT_HEADER, PLACE_ID_HEADER, ServerInfo, from_msgpack};
+use naht_core::protocol::{
+    CLIENT_HEADER, PLACE_ID_HEADER, ReportedLimits, ServerInfo, from_msgpack,
+};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use std::net::Ipv4Addr;
@@ -155,6 +157,8 @@ struct Answer {
     conflicted: Vec<String>,
     #[serde(default)]
     terrain_sync: bool,
+    #[serde(default)]
+    limits: Option<ReportedLimits>,
 }
 
 impl Answer {
@@ -168,6 +172,7 @@ impl Answer {
             serve_place_id: self.serve_place_id,
             conflicted: self.conflicted,
             terrain_sync: self.terrain_sync,
+            limits: self.limits,
         })
     }
 }

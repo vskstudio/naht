@@ -51,6 +51,17 @@ pub struct ServerInfo {
     /// Whether the daemon synchronizes terrain blobs live, as `[serve] terrain_sync` says.
     #[serde(default)]
     pub terrain_sync: bool,
+    /// The limits the daemon enforces that the plugin must respect; absent from daemons that predate
+    /// the field, which the plugin reads as its built-in defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<ReportedLimits>,
+}
+
+/// The limits a plugin must stay within, as `[limits]` configures them on the daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportedLimits {
+    /// The most voxels one live terrain push may carry.
+    pub terrain_voxels: usize,
 }
 
 /// The long-poll response from `GET /patches`: every queued patch past the client's cursor, plus the
@@ -261,6 +272,7 @@ mod tests {
             serve_place_id: Some(123),
             conflicted: vec!["Frozen.luau".to_owned()],
             terrain_sync: true,
+            limits: None,
         };
         let bytes = to_msgpack(&info).unwrap();
         assert_eq!(from_msgpack::<ServerInfo>(&bytes).unwrap(), info);
@@ -396,6 +408,7 @@ mod tests {
             serve_place_id: Some(123),
             conflicted: Vec::new(),
             terrain_sync: false,
+            limits: None,
         };
         assert_eq!(hex(&to_msgpack(&info).unwrap()), pinned_hex("server_info"));
     }

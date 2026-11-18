@@ -13,7 +13,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use super::{AppState, BODY_LIMIT};
+use super::{AppState, BODY_LIMIT, INVENTORY_ROUTE};
 use crate::session::SessionError;
 
 pub(super) const CLIENT_HEADER: HeaderName = HeaderName::from_static(protocol::CLIENT_HEADER);
@@ -28,14 +28,24 @@ pub(super) struct PostGate {
     slots: Arc<Semaphore>,
     wait: Duration,
     tasks: TaskTracker,
+    inventory_body: usize,
 }
 
 impl PostGate {
-    pub(super) fn new(wait: Duration, tasks: TaskTracker) -> Self {
+    pub(super) fn new(wait: Duration, tasks: TaskTracker, inventory_body: usize) -> Self {
         Self {
             slots: Arc::new(Semaphore::new(POST_BODY_SLOTS)),
             wait,
             tasks,
+            inventory_body,
+        }
+    }
+
+    fn body_limit(&self, path: &str) -> usize {
+        if path == INVENTORY_ROUTE {
+            self.inventory_body
+        } else {
+            BODY_LIMIT
         }
     }
 }
@@ -171,8 +181,9 @@ pub(super) async fn limit_post_bodies(
     else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    let limit = gate.body_limit(request.uri().path());
     let (parts, body) = request.into_parts();
-    match time::timeout(BODY_READ_TIMEOUT, to_bytes(body, BODY_LIMIT)).await {
+    match time::timeout(BODY_READ_TIMEOUT, to_bytes(body, limit)).await {
         Ok(Ok(bytes)) => {
             let buffered = Request::from_parts(parts, Body::from(bytes));
             run_holding(permit, &gate.tasks, next, buffered).await

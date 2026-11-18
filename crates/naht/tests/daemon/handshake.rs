@@ -1,6 +1,20 @@
-use naht_core::protocol::ServerInfo;
+use std::time::Duration;
+
+use naht::config::Limits;
+use naht_core::protocol::{ReportedLimits, ServerInfo};
 
 use super::support::{Harness, decode};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn info_reports_the_terrain_cap_the_plugin_must_respect() {
+    let limits = Limits {
+        terrain_voxels: 10,
+        ..Limits::default()
+    };
+    let harness = Harness::start_limited(None, true, Duration::from_millis(300), limits).await;
+    let info: ServerInfo = decode(harness.info(None).await).await;
+    assert_eq!(info.limits, Some(ReportedLimits { terrain_voxels: 10 }));
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handshake_enforces_the_serve_place_guard() {

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use naht::config::Limits;
 use naht::server;
 use naht::server::AppState;
 use naht::session::Session;
@@ -50,11 +51,21 @@ impl Harness {
         terrain_sync: bool,
         long_poll: Duration,
     ) -> Self {
+        Self::start_limited(serve_place_id, terrain_sync, long_poll, Limits::default()).await
+    }
+
+    pub(crate) async fn start_limited(
+        serve_place_id: Option<u64>,
+        terrain_sync: bool,
+        long_poll: Duration,
+        limits: Limits,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let store = StateStore::open(&root.join(".naht").join("state.db")).unwrap();
-        let session =
+        let mut session =
             Session::new(root.clone(), store, "demo", serve_place_id, terrain_sync).unwrap();
+        session.set_limits(limits);
         let state = AppState::new(session, long_poll);
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -108,6 +119,30 @@ impl Harness {
             .await
             .unwrap();
         decode(resp).await
+    }
+
+    pub(crate) async fn post_blobs_reply(
+        &self,
+        changes: Vec<BlobInstance>,
+    ) -> (reqwest::StatusCode, String) {
+        let body = protocol::to_msgpack(&BlobChangeBatch { changes }).unwrap();
+        let response = self
+            .authed(self.client.post(format!("{}/blobs", self.base)))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, response.text().await.unwrap())
+    }
+
+    pub(crate) async fn post_bytes(&self, path: &str, body: Vec<u8>) -> reqwest::StatusCode {
+        self.authed(self.client.post(self.url(path)))
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .status()
     }
 
     pub(crate) async fn post_blobs(&self, changes: Vec<BlobInstance>) -> reqwest::StatusCode {

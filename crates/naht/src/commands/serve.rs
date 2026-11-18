@@ -36,6 +36,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     out: &mut Output<Stdout, Stderr>,
 ) -> Result<(), CommandError> {
     checked_tree_paths(&config)?;
+    let limits = config.resolved_limits()?;
     let root = canonical(root)?;
     let _instance = take_instance_lock(&root)?;
     let startup_snapshot = {
@@ -63,6 +64,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
         config.serve.place_id,
         config.terrain_sync(),
     )?;
+    session.set_limits(limits);
     session.protect_source_roots(
         config
             .tree
@@ -145,7 +147,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{CommandError, Config, Output, checked_tree_paths, serve};
-    use crate::config::TreeNode;
+    use crate::config::{ConfigError, LimitsConfig, TreeNode};
     use tokio::time;
 
     fn config_with_tree_path(path: &str) -> Config {
@@ -248,6 +250,41 @@ mod tests {
         assert!(
             !root.path().join(".naht").exists(),
             "serve wrote .naht before refusing the tree path"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_out_of_range_limit_is_refused_before_the_instance_lock_is_taken() {
+        let root = tempfile::tempdir().unwrap();
+        let taken = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let config = Config {
+            limits: LimitsConfig {
+                connections: Some(0),
+                ..LimitsConfig::default()
+            },
+            ..Config::default()
+        };
+        let mut out = Output::new(Vec::new(), Vec::new());
+        let outcome = time::timeout(
+            Duration::from_secs(10),
+            serve(config, root.path(), port, &mut out),
+        )
+        .await;
+        assert!(
+            matches!(
+                outcome,
+                Ok(Err(CommandError::Config(ConfigError::LimitOutOfRange {
+                    key: "connections",
+                    value: 0,
+                    ..
+                })))
+            ),
+            "serve did not refuse the limit first: {outcome:?}"
+        );
+        assert!(
+            !root.path().join(".naht").exists(),
+            "serve wrote .naht before refusing the limit"
         );
     }
 

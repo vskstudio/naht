@@ -1,6 +1,6 @@
 use super::Session;
+use super::SessionError;
 use super::transaction::{BlobsJournal, Journal, Journaled, Transaction};
-use super::{MASS_DELETE_WARN, SessionError};
 use naht_core::binary::{BlobInstance, BlobPatch};
 use naht_core::mapper::{flat_init_path, init_flat_path, init_folder};
 use naht_core::protocol::{Change, EventKind, Outcome};
@@ -375,7 +375,7 @@ impl<V: Vfs> Session<V> {
             .iter()
             .filter(|patch| patch.kind == PatchKind::Delete)
             .count();
-        if deletions >= MASS_DELETE_WARN {
+        if self.limits.is_mass_deletion(deletions) {
             tracing::warn!(
                 target: "naht::sync",
                 count = deletions,

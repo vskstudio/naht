@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
-use naht_core::binary::TERRAIN_CLASS;
 use naht_core::state::StateStore;
 use tokio::io::{DuplexStream, duplex};
 use tokio_util::io::ReaderStream;

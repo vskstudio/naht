@@ -5,6 +5,16 @@ use reqwest::StatusCode;
 
 use super::support::Harness;
 
+fn terrain_content(tail: &[u8]) -> Vec<u8> {
+    let mut content: Vec<u8> = [1_i32, 1, 1]
+        .into_iter()
+        .flat_map(i32::to_le_bytes)
+        .collect();
+    content.resize(40, 0);
+    content.extend_from_slice(tail);
+    content
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn post_blobs_rejects_paths_that_escape_the_project_root() {
     let harness = Harness::start(None).await;
@@ -37,7 +47,7 @@ async fn terrain_sync_disabled_does_not_read_or_write_blobs() {
         .post_blobs(vec![BlobInstance::new(
             "Terrain.terrain",
             "Terrain",
-            b"studio-terrain".to_vec(),
+            terrain_content(b"studio-terrain"),
         )])
         .await;
     assert!(status.is_success());
@@ -60,7 +70,7 @@ async fn terrain_blob_syncs_both_ways_byte_for_byte() {
     assert_eq!(patch.direction, Direction::ToStudio);
     assert_eq!(patch.content.as_deref(), Some(blob.as_slice()));
 
-    let other: Vec<u8> = (u8::MIN..=u8::MAX).rev().collect();
+    let other = terrain_content(&(u8::MIN..=u8::MAX).rev().collect::<Vec<u8>>());
     let status = harness
         .post_blobs(vec![BlobInstance::new(
             "Terrain.terrain",
@@ -101,7 +111,7 @@ async fn a_both_sides_blob_change_freezes_through_the_live_daemon() {
         .post_blobs(vec![BlobInstance::new(
             "Terrain.terrain",
             "Terrain",
-            b"studio-edit".to_vec(),
+            terrain_content(b"studio-edit"),
         )])
         .await;
     assert!(status.is_success());

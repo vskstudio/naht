@@ -22,7 +22,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use cursor::{CursorQuery, SessionQuery};
-use naht_core::binary::BlobInstance;
+use naht_core::binary::{BlobInstance, TERRAIN_CLASS, terrain_voxel_count};
 use naht_core::protocol::{
     self, Ack, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, ServerInfo,
 };
@@ -40,6 +40,7 @@ use tower::timeout::error::Elapsed;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::limit::RequestBodyLimitLayer;
 
+use crate::config::Limits;
 use crate::session::Session;
 
 mod guard;
@@ -54,6 +55,8 @@ use tokio::task;
 use tokio::time;
 
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
+
+const INVENTORY_ROUTE: &str = "/inventory";
 
 const MAX_IN_FLIGHT: usize = 64;
 
@@ -74,6 +77,7 @@ pub struct AppState {
     blobs_ready: Notify,
     long_poll: Duration,
     post_wait: Duration,
+    limits: Limits,
     shutdown: CancellationToken,
     tasks: TaskTracker,
 }
@@ -92,6 +96,7 @@ impl AppState {
     /// Like [`AppState::new`], but a mutating `POST` waits at most `post_wait` for a slot or the lock.
     pub fn with_post_wait(session: Session, long_poll: Duration, post_wait: Duration) -> Arc<Self> {
         let serve_place_id = session.serve_place_id();
+        let limits = session.limits();
         let bound_place = session
             .recorded_place_id()
             .map_or_else(OnceLock::new, OnceLock::from);
@@ -103,6 +108,7 @@ impl AppState {
             blobs_ready: Notify::new(),
             long_poll,
             post_wait,
+            limits,
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
         })
@@ -152,7 +158,12 @@ impl AppState {
 /// Build the router over `state`, serving the loopback port `port`.
 pub fn router(state: Arc<AppState>, port: u16) -> Router {
     let gate = Arc::new(Gate::new(port, Arc::clone(&state)));
-    let posts = Arc::new(PostGate::new(state.post_wait, state.tasks.clone()));
+    let posts = Arc::new(PostGate::new(
+        state.post_wait,
+        state.tasks.clone(),
+        state.limits.inventory_body_bytes,
+    ));
+    let body_ceiling = BODY_LIMIT.max(state.limits.inventory_body_bytes);
     let read_deadline = ServiceBuilder::new()
         .layer(HandleErrorLayer::<_, ()>::new(overload))
         .layer(TimeoutLayer::new(
@@ -162,7 +173,7 @@ pub fn router(state: Arc<AppState>, port: u16) -> Router {
         .route("/info", get(info).layer(read_deadline.clone()))
         .route("/patches", get(patches).layer(read_deadline.clone()))
         .route("/changes", post(changes))
-        .route("/inventory", post(inventory::inventory))
+        .route(INVENTORY_ROUTE, post(inventory::inventory))
         .route(
             "/blobs",
             get(blobs).layer(read_deadline.clone()).post(post_blobs),
@@ -176,8 +187,8 @@ pub fn router(state: Arc<AppState>, port: u16) -> Router {
                 .layer(HandleErrorLayer::<_, ()>::new(overload))
                 .layer(LoadShedLayer::new())
                 .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
-                .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
-                .layer(DefaultBodyLimit::max(BODY_LIMIT)),
+                .layer(RequestBodyLimitLayer::new(body_ceiling))
+                .layer(DefaultBodyLimit::max(body_ceiling)),
         )
         .layer(from_fn_with_state(gate, guard))
         .with_state(state)
@@ -217,7 +228,8 @@ where
 pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()> {
     let port = listener.local_addr()?.port();
     let shutdown = state.shutdown.clone();
-    listen::accept_until_cancelled(listener, router(state, port), shutdown).await
+    let connections = state.limits.connections;
+    listen::accept_until_cancelled(listener, router(state, port), shutdown, connections).await
 }
 
 async fn info(State(state): State<Arc<AppState>>) -> Response {
@@ -363,7 +375,12 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
         Ok(batch) => batch,
         Err(error) => return Rejection::Malformed(error).into_response(),
     };
-    let count = match apply_within(&state, move |session| apply_blob_batch(session, batch)).await {
+    let terrain_voxels = state.limits.terrain_voxels;
+    let count = match apply_within(&state, move |session| {
+        apply_blob_batch(session, batch, terrain_voxels)
+    })
+    .await
+    {
         Ok(count) => count,
         Err(rejection) => return rejection.into_response(),
     };
@@ -372,8 +389,13 @@ async fn post_blobs(State(state): State<Arc<AppState>>, body: Bytes) -> Response
     StatusCode::OK.into_response()
 }
 
-fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usize, Rejection> {
+fn apply_blob_batch(
+    session: &mut Session,
+    batch: BlobChangeBatch,
+    terrain_voxels: usize,
+) -> Result<usize, Rejection> {
     refuse_other_blobs(&batch.changes)?;
+    refuse_oversized_terrain(&batch.changes, terrain_voxels)?;
     for change in &batch.changes {
         session.validate_path(&change.path)?;
     }
@@ -384,6 +406,20 @@ fn apply_blob_batch(session: &mut Session, batch: BlobChangeBatch) -> Result<usi
     let count = batch.changes.len();
     session.apply_blob_changes(batch.changes)?;
     Ok(count)
+}
+
+fn refuse_oversized_terrain(changes: &[BlobInstance], limit: usize) -> Result<(), Rejection> {
+    for change in changes
+        .iter()
+        .filter(|change| change.class == TERRAIN_CLASS)
+    {
+        let voxels = terrain_voxel_count(&change.content)
+            .ok_or_else(|| Rejection::UnreadableTerrain(change.path.clone()))?;
+        if voxels > limit {
+            return Err(Rejection::TerrainTooLarge { voxels, limit });
+        }
+    }
+    Ok(())
 }
 
 fn refuse_other_blobs(changes: &[BlobInstance]) -> Result<(), Rejection> {
