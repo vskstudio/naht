@@ -264,5 +264,6 @@ fn file_name(path: &Path) -> Result<String, MapError> {
         .map(str::to_owned)
         .ok_or_else(|| MapError::NoFileName(path.to_path_buf()))
 }
+
 #[cfg(test)]
 mod tests;
