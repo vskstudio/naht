@@ -55,5 +55,8 @@ mod tests {
         let mut out = Output::new(Vec::new(), Vec::new());
         let error = print_token(root.path(), &mut out).unwrap_err();
         assert!(matches!(error, CommandError::NoToken { .. }), "{error:?}");
+        let message = error.to_string();
+        assert!(message.contains("run `naht serve` once"), "{message}");
+        assert!(message.contains(".naht"), "{message}");
     }
 }

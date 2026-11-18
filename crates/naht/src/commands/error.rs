@@ -137,8 +137,9 @@ pub enum CommandError {
     /// The project's token file could not be read or created.
     #[error(transparent)]
     Token(#[from] TokenError),
-    /// `naht token` found no token file, because `naht serve` has not run for this project.
-    #[error("no token at `{}`: run `naht serve` once to create it", path.display())]
+    /// A command that needs the project's token (`naht token`, `naht pull`, or the re-sync after a
+    /// resolve) found no token file, because `naht serve` has not run for this project.
+    #[error("no token file at `{}` for this project: run `naht serve` once to create it", path.display())]
     NoToken {
         /// The token file that is missing.
         path: PathBuf,
