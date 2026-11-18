@@ -30,18 +30,20 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 
 ## Contrôle d'accès
 
-Le daemon vérifie chaque route avant son handler. Une requête reçoit `403` quand :
+Le daemon vérifie chaque route avant son handler. Une requête reçoit `403`, ou `401` pour le token, quand :
 
 - elle porte un header `Origin`, que les navigateurs ajoutent aux requêtes inter-sites ;
 - son `Host` n'est pas `127.0.0.1:<port>`, `localhost:<port>` ou `[::1]:<port>`, ce qui bloque les pages qui
   rattachent un nom DNS à l'adresse de bouclage (DNS rebinding) ;
 - elle n'a pas le header `x-naht-client`. Un navigateur ne peut pas envoyer un header personnalisé à une autre
   origine sans preflight, et le daemon n'en répond jamais ;
+- elle n'a pas le header `x-naht-token`, ou en porte une autre valeur, sur toute route sauf `GET /info` ; le refus est alors un `401`.
 - le projet définit `[serve] place_id` et le header `x-naht-place-id` manque ou diffère.
 
-Ces contrôles arrêtent les navigateurs et le DNS rebinding. Ce ne sont pas une authentification : tout processus
-de la machine qui atteint le port et envoie les headers est accepté. Sur une machine partagée, c'est donc le
-compte du système d'exploitation qui protège le projet. Le modèle de menace est dans `SECURITY.md`.
+Ces contrôles arrêtent les navigateurs et le DNS rebinding. Toutes les routes sauf `GET /info` exigent aussi le
+token du projet dans `x-naht-token`, que le daemon crée dans `.naht/token` avec des droits réservés à son propriétaire :
+les autres comptes d'une machine partagée ne peuvent pas l'appeler. Le token ne protège pas contre un processus du même
+compte, qui peut lire ce fichier. Le modèle de menace est dans `SECURITY.md`.
 
 Les écritures sont aussi contrôlées. `POST /changes` prend une map MessagePack `{changes: [...]}`, où chaque
 changement vaut `{Upsert: {path, class, content}}` ou `{Delete: {path}}`. Il n'accepte que des chemins visibles
@@ -115,3 +117,7 @@ Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur ch
 `GET /patches`, `GET /blobs` et `POST /ack` exigent aussi le paramètre `session`, et une requête périmée reçoit `409`.
 Un plugin qui ne correspond pas à la version de protocole du daemon est refusé au handshake. Mets à jour la CLI,
 le plugin et le daemon ensemble.
+
+La version `4` ajoute le token du projet. Toutes les routes sauf `GET /info` exigent `x-naht-token`, et une requête sans
+token correspondant reçoit `401`. Un plugin de version `3` s'arrête à son message de mise à jour. Mets à jour la CLI, le
+plugin et le daemon ensemble.

@@ -55,9 +55,20 @@ terrain_sync = false # opt into live terrain blob sync
 
 <Callout type="important">
 
-**`place_id` est un garde-fou peu coûteux et à forte valeur.** Une fois défini, un place id qui ne
-correspond pas est rejeté à la poignée de main, ce qui t'empêche de verser accidentellement la source
-d'un jeu dans un autre. Définis-le sur tout projet destiné à être publié.
+**`place_id` est un garde-fou peu coûteux et à forte valeur.** Une fois défini, une requête dont le place id ne
+correspond pas est refusée, ce qui t'empêche de verser accidentellement la source d'un jeu dans un autre. Sans lui,
+le daemon rattache le projet à la première place qui se connecte (enregistrée dans `.naht/state.db`) et refuse
+toute autre. Définis-le sur tout projet destiné à être publié. Le place id n'est pas un identifiant : c'est le token
+du projet (voir plus bas).
+
+</Callout>
+
+<Callout type="important">
+
+**Le token du projet est l'identifiant.** `naht serve` crée `.naht/token` à sa première exécution et le réutilise
+ensuite. Le plugin Studio le demande une fois par projet et le garde dans ses réglages. Lance `naht token` pour
+l'afficher. Chaque requête sauf le handshake l'exige : garde le fichier privé, car quiconque peut le lire peut lire
+et écrire le projet à travers le daemon.
 
 </Callout>
 

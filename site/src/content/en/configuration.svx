@@ -53,9 +53,19 @@ terrain_sync = false # opt into live terrain blob sync
 
 <Callout type="important">
 
-**`place_id` is a cheap, high-value safety guard.** With it set, a mismatched place id is rejected at
-the handshake, so you can't accidentally pour one game's source into another. Set it on any project
-that ships.
+**`place_id` is a cheap, high-value safety guard.** With it set, a request whose place id does not match is
+refused, so you can't accidentally pour one game's source into another. Without it, the daemon binds the project
+to the first place that attaches (recorded in `.naht/state.db`) and refuses any other. Set it on any project
+that ships. The place id is not a credential: the project token is (see below).
+
+</Callout>
+
+<Callout type="important">
+
+**The project token is the credential.** `naht serve` creates `.naht/token` on its first run and reuses it after.
+The Studio plugin asks for the token once per project and stores it in the plugin settings. Run `naht token` to
+print it. Every request except the handshake needs it, so keep the file private: whoever can read it can read and
+write the project through the daemon.
 
 </Callout>
 

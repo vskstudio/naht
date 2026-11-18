@@ -30,18 +30,20 @@ it needs HTTP/2, which `HttpService` does not support.
 
 ## Access control
 
-The daemon checks every route before its handler runs. A request is refused with `403` when:
+The daemon checks every route before its handler runs. A request is refused with `403`, or with `401` for the token, when:
 
 - it carries an `Origin` header, which browsers add to cross-site requests;
 - its `Host` is not `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, which stops web pages that
   rebind a DNS name to the loopback address;
 - it lacks the `x-naht-client` header. A browser cannot send a custom header to another origin without a
   preflight, and the daemon never answers one;
+- it lacks the `x-naht-token` header, or sends another value, on any route except `GET /info`; that refusal is `401`.
 - the project sets `[serve] place_id` and the `x-naht-place-id` header is missing or differs.
 
-These checks stop browsers and DNS rebinding. They are not authentication: any process on the machine that
-reaches the port and sends the headers is accepted, so on a shared machine the operating system account is
-what protects the project. The threat model is in `SECURITY.md`.
+These checks stop browsers and DNS rebinding. Every route except `GET /info` also needs the project token in
+`x-naht-token`. The daemon creates it in `.naht/token` with owner-only permissions, so other accounts on a shared
+machine cannot call it. The token is no defence against a process of the same account, which can read the file.
+The threat model is in `SECURITY.md`.
 
 Writes are checked against what they may touch. `POST /changes` takes a MessagePack map `{changes: [...]}`,
 where each change is `{Upsert: {path, class, content}}` or `{Delete: {path}}`. It accepts only visible paths
@@ -118,3 +120,7 @@ and stops reconnecting. Upgrade the CLI and the plugin together.
 Protocol 3 changes the poll and ack routes. `GET /patches`, `GET /blobs` and `POST /ack` require the `session`
 query parameter, and a stale session is answered `409`. Upgrade the CLI, the daemon and the plugin
 together. A plugin built for another protocol version is refused at the handshake.
+
+Protocol 4 adds the project token. Every route except `GET /info` requires `x-naht-token`, and a request without a
+matching token is answered `401`. A plugin built for version `3` stops at the update message. Upgrade the CLI, the
+daemon and the plugin together.

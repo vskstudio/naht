@@ -11,14 +11,14 @@ mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core)
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec for the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request, and `x-naht-token` once the token is known |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Terrain.luau` | Read/write terrain voxels (`ReadVoxels`/`WriteVoxels`) as an opaque binary blob |
 | `src/Connection.luau` | Handshake, long-poll + apply, reconnect with backoff, posts the inventory on attach |
 | `src/TerrainSync.luau` | Terrain push and the `/blobs` channel, used only when `terrain_sync` is on |
 | `src/Placement.luau` | Maps DataModel scripts to file paths, queues renames, moves and removals, builds the inventory |
 | `src/PushQueue.luau` | Batches queued edits into `POST /changes`, retries after a failure and drops the paths the daemon refuses |
-| `src/Plugin.server.luau` | Entry: toolbar toggle and a status widget |
+| `src/Plugin.server.luau` | Entry: toolbar toggle, a status widget, and the token box shown in `TokenRequired` |
 
 ## Install
 
@@ -132,6 +132,14 @@ daemon answers `403` to a request without the client header, with a body that st
 built for protocol version 1 sends no client header and does not know that token: it keeps showing
 `Reconnecting` with the 403 reason, so update the plugin to match the daemon (protocol version 2). Only a
 plugin built for version 2 stops at `Disconnected` with the update message.
+
+From protocol version 4 every request except `GET /info` also carries `x-naht-token`. The daemon answers `401`
+to a request without that header or with another value, with the body `{"error": "token required"}` or
+`{"error": "token rejected"}`. The plugin then stops at `TokenRequired`: the widget shows a text box, and the
+user pastes the token that `naht token` prints and presses Enter. The plugin stores it in its plugin settings
+under `naht.token.<projectId>`, so the user is asked once per project. A rejected token returns the widget to
+the same state. A plugin built for version 3 stops at its update message, because the handshake refuses any
+other version.
 
 ## Tests
 
