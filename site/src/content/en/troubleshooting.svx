@@ -88,8 +88,9 @@ Naht froze a file because both sides changed it and the change couldn't be auto-
 
 ## Edits stopped syncing after a disconnect
 
-On reconnect the daemon re-runs `GET /info`, re-diffs against the **persisted base** (`.naht/state.db`),
-and resends anything un-acked. If sync seems stuck:
+On reconnect the plugin calls `GET /info` with the project token. The daemon then re-diffs against the
+**persisted base** (`.naht/state.db`) and resends anything un-acked. `naht serve` also re-diffs once when it starts,
+so an edit made while it was stopped is queued before the plugin attaches. If sync seems stuck:
 
 - Check the daemon is still up and the connection state shows connected (heartbeat).
 - A `naht pull` forces an immediate re-sync rather than waiting for the next filesystem event.

@@ -19,7 +19,7 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 
 | Méthode + chemin | Rôle |
 |---|---|
-| `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Déclenche un re-diff contre l'état persisté à la (re)connexion. |
+| `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Avec le token du projet, il déclenche un re-diff contre l'état persisté à la (re)connexion ; sans token, il répond seulement. |
 | `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. Exige le paramètre de requête `session`. |
 | `POST /changes` | Éditions Studio → système de fichiers (un lot d'upserts/deletes). |
 | `POST /inventory` | Liste complète des scripts du plugin, envoyée une fois par session à l'attachement. Le daemon retire les scripts miroir que la liste ne nomme pas et écrit ceux qu'il n'a pas, si bien qu'un renommage fait pendant l'arrêt du plugin ne laisse pas d'ancien fichier. Exige le paramètre de requête `session`. Additif : pas de hausse de version de protocole. |

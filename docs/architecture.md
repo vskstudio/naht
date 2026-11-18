@@ -182,8 +182,9 @@ instances only the hash is stored (no merge base).
   paths the other side no longer reads. `GET /patches`, `GET /blobs` and `POST /ack` also require the `session` query parameter. Upgrade the CLI, the daemon and the plugin together.
 - **Protocol version 4:** every route except `GET /info` requires the `x-naht-token` header, and `ServerInfo` reports `project_id` and `token_required`. The handshake refuses any other version, so a version 3 plugin stops at its update message before it sends a request that needs the token. Upgrade the CLI, the daemon and the plugin together.
 - **Resilience** is the headline feature here, because it is exactly what Rojo and Argon get wrong:
-  heartbeat, automatic reconnect, an explicit connection-state indicator, and: on reconnect: a
-  **re-diff against the persisted state** rather than a blind re-push. Studio-bound patches are
+  heartbeat, automatic reconnect, an explicit connection-state indicator, and, on reconnect, a
+  **re-diff against the persisted state** rather than a blind re-push. Only a `GET /info` that carries the project
+  token triggers that re-diff, and `naht serve` also re-diffs once at startup, before it binds the port. Studio-bound patches are
   **ack-gated**: a patch's base advances only once the plugin acks its queue sequence, so a half-applied
   batch re-diffs the rest instead of treating them as synced. An acked patch leaves the queue, and an ack
   for a sequence the daemon has since superseded confirms nothing.

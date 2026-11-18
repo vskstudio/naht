@@ -87,8 +87,10 @@ Naht a gelé un fichier parce que les deux côtés l'ont modifié et que le chan
 
 ## Les éditions ont cessé de se synchroniser après une déconnexion
 
-À la reconnexion, le daemon relance `GET /info`, re-diffe contre la **base persistée** (`.naht/state.db`),
-et renvoie tout ce qui n'a pas été acquitté. Si le sync semble bloqué :
+À la reconnexion, le plugin rappelle `GET /info` avec le token du projet. Le daemon re-diffe alors contre la
+**base persistée** (`.naht/state.db`) et renvoie tout ce qui n'a pas été acquitté. `naht serve` re-diffe aussi une
+fois au démarrage, donc une modification faite pendant qu'il était arrêté est mise en file avant que le plugin
+s'attache. Si le sync semble bloqué :
 
 - Vérifie que le daemon est toujours actif et que l'état de connexion affiche connecté (heartbeat).
 - Un `naht pull` force une re-synchro immédiate plutôt que d'attendre le prochain événement du système de fichiers.

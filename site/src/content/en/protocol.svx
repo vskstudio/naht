@@ -19,7 +19,7 @@ it needs HTTP/2, which `HttpService` does not support.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /info` | Handshake: protocol/server version, project name, session id. Triggers a re-diff against persisted state on (re)connect. |
+| `GET /info` | Handshake: protocol/server version, project name, session id. With the project token, it re-diffs against persisted state on (re)connect; without it, it only answers. |
 | `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. Needs the `session` query parameter. |
 | `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
 | `POST /inventory` | The plugin's full listing of its scripts, posted once per session on attach. The daemon removes the mirrored scripts it does not name and writes the ones it lacks, so a rename made while the plugin was stopped leaves no old file. Needs the `session` query parameter. Additive: no protocol-version bump. |
