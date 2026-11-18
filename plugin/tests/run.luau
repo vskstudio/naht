@@ -381,6 +381,16 @@ local function studioWorld(syncEcho: boolean)
 			fireAdded(child)
 		end
 	end
+	local function isUnderRoot(node: any): boolean
+		local current: any = node
+		while current ~= nil do
+			if current == root then
+				return true
+			end
+			current = current.Parent
+		end
+		return false
+	end
 	local tree = {
 		root = root,
 		createInstance = function(className: string, name: string)
@@ -411,13 +421,15 @@ local function studioWorld(syncEcho: boolean)
 			return node.Source
 		end,
 		setParent = function(node: any, parent: any)
-			if node.Parent ~= nil then
+			if isUnderRoot(node) then
 				fireRemoving(node)
 			end
 			detach(node)
 			node.Parent = parent
 			table.insert(parent.children, node)
-			fireAdded(node)
+			if isUnderRoot(node) then
+				fireAdded(node)
+			end
 		end,
 		setSource = function(node: any, content: string)
 			if not SCRIPT_CLASSES[node.ClassName] then
@@ -2706,6 +2718,23 @@ suite("a reparent the daemon refuses leaves the old file in place", function()
 			"a refused reparent restores the old path as the placed path",
 			connection.placed[script] == "A.luau",
 			tostring(connection.placed[script])
+		)
+		connection:stop()
+end)
+
+suite("moving a script out of the root deletes its file", function()
+		local client, posts, attempts = recordingClient()
+		local connection, tree, root = renameWorld(client)
+		local script = place(tree, "ModuleScript", "A", root)
+		waitFor(function() return #attempts >= 1 end)
+		local outside = tree.createInstance("Folder", "Outside")
+		tree.setParent(script, outside)
+		waitFor(function() return #attempts >= 2 end)
+		local batch = attempts[2] or {}
+		check(
+			"moving a script out of the root deletes its old file",
+			#attempts == 2 and hasChange(batch, "Delete", "A.luau"),
+			tostring(#attempts) .. " batches"
 		)
 		connection:stop()
 end)
