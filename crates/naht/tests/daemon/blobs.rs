@@ -35,13 +35,12 @@ async fn terrain_sync_disabled_does_not_read_or_write_blobs() {
 
     let status = harness
         .post_blobs(vec![BlobInstance::new(
-            "Studio.terrain",
+            "Terrain.terrain",
             "Terrain",
             b"studio-terrain".to_vec(),
         )])
         .await;
     assert!(status.is_success());
-    assert!(!harness.root.join("Studio.terrain").exists());
     assert_eq!(harness.read_bytes("Terrain.terrain"), b"disk-terrain");
 }
 
@@ -64,37 +63,53 @@ async fn terrain_blob_syncs_both_ways_byte_for_byte() {
     let other: Vec<u8> = (u8::MIN..=u8::MAX).rev().collect();
     let status = harness
         .post_blobs(vec![BlobInstance::new(
-            "World.terrain",
+            "Terrain.terrain",
             "Terrain",
             other.clone(),
         )])
         .await;
     assert!(status.is_success());
-    assert_eq!(harness.read_bytes("World.terrain"), other);
+    assert_eq!(harness.read_bytes("Terrain.terrain"), other);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_blobs_names_each_path_it_refuses_and_writes_none() {
+    let harness = Harness::start(None).await;
+
+    let refused = harness
+        .post_blobs_refused(vec![BlobInstance::new(
+            "World.terrain",
+            "Terrain",
+            vec![1, 2, 3],
+        )])
+        .await;
+
+    assert_eq!(refused, vec!["World.terrain".to_owned()]);
+    assert!(!harness.root.join("World.terrain").exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_both_sides_blob_change_freezes_through_the_live_daemon() {
     let harness = Harness::start(None).await;
 
-    harness.write("t.terrain", b"base");
+    harness.write("Terrain.terrain", b"base");
     harness.info(None).await;
     let drained = harness.blobs(0).await.cursor;
 
-    harness.write("t.terrain", b"fs-edit");
+    harness.write("Terrain.terrain", b"fs-edit");
     let status = harness
         .post_blobs(vec![BlobInstance::new(
-            "t.terrain",
+            "Terrain.terrain",
             "Terrain",
             b"studio-edit".to_vec(),
         )])
         .await;
     assert!(status.is_success());
 
-    assert_eq!(harness.read_bytes("t.terrain"), b"fs-edit");
+    assert_eq!(harness.read_bytes("Terrain.terrain"), b"fs-edit");
     assert_eq!(harness.blobs(drained).await.patches.len(), 0);
 
-    harness.write("t.terrain", b"fs-2");
+    harness.write("Terrain.terrain", b"fs-2");
     harness.info(None).await;
     assert_eq!(harness.blobs(drained).await.patches.len(), 0);
 }
@@ -105,7 +120,7 @@ async fn a_studio_text_edit_drives_the_blob_reconcile() {
     let blob: Vec<u8> = (u8::MIN..=u8::MAX).cycle().take(300).collect();
 
     assert!(harness.post_blobs(vec![]).await.is_success());
-    harness.write("Zone.terrain", &blob);
+    harness.write("Terrain.terrain", &blob);
     let status = harness
         .post_changes(vec![Change::Upsert {
             path: "Script.luau".to_owned(),
@@ -117,7 +132,7 @@ async fn a_studio_text_edit_drives_the_blob_reconcile() {
 
     let batch = harness.blobs(0).await;
     assert_eq!(batch.patches.len(), 1);
-    assert_eq!(batch.patches[0].path, "Zone.terrain");
+    assert_eq!(batch.patches[0].path, "Terrain.terrain");
     assert_eq!(batch.patches[0].content.as_deref(), Some(blob.as_slice()));
 }
 

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::hash::content_hash;
+use crate::protocol::TERRAIN_PATH;
 use crate::reconciler::{
     Direction, PatchKind, ReconcileError, Side, class_of, remove_fs_copy, union_keys, write_toward,
 };
@@ -32,14 +33,22 @@ pub fn reconcile_blobs(
         if record.base_content.is_some() {
             continue;
         }
-        if studio.contains_key(&record.path) || record.conflicted || unseen.contains(&record.path) {
+        let is_terrain = record.path == TERRAIN_PATH;
+        if is_terrain
+            && (studio.contains_key(&record.path)
+                || record.conflicted
+                || unseen.contains(&record.path))
+        {
             base.insert(record.path.clone(), record);
         } else {
             store.remove(&record.path)?;
         }
     }
 
-    let keys = union_keys(fs, studio, &base);
+    let keys: Vec<&String> = union_keys(fs, studio, &base)
+        .into_iter()
+        .filter(|key| key.as_str() == TERRAIN_PATH)
+        .collect();
 
     let mut pass = Pass {
         vfs,

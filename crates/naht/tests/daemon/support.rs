@@ -173,6 +173,21 @@ impl Harness {
             .send()
             .await
             .unwrap();
+        Self::refused_paths_of(resp).await
+    }
+
+    pub(crate) async fn post_blobs_refused(&self, changes: Vec<BlobInstance>) -> Vec<String> {
+        let body = protocol::to_msgpack(&BlobChangeBatch { changes }).unwrap();
+        let resp = self
+            .authed(self.client.post(format!("{}/blobs", self.base)))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        Self::refused_paths_of(resp).await
+    }
+
+    async fn refused_paths_of(resp: reqwest::Response) -> Vec<String> {
         assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
         let refused: serde_json::Value =
             serde_json::from_slice(&resp.bytes().await.unwrap()).unwrap();
