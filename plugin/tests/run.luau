@@ -2940,6 +2940,63 @@ suite("a live terrain change over the size cap warns instead of pushing", functi
 		connection:stop()
 end)
 
+local function connectWithoutTerrainSync(terrain: any, onState: (string, string?) -> ())
+	local tree, root = studioWorld(true)
+	local blobPosts = 0
+	local blobPolls = 0
+	local client = {
+		info = function(_)
+			return { project_name = "demo", session_id = "s-1", conflicted = {}, terrain_sync = false }
+		end,
+		patches = function(_, _cursor)
+			error("stop")
+		end,
+		blobs = function(_, _cursor)
+			blobPolls += 1
+			error("stop")
+		end,
+		postBlobs = function(_, _batch)
+			blobPosts += 1
+		end,
+		postChanges = noop,
+		postAck = noop,
+	}
+	local connection = Connection.new(client, root, onState, deps(terrain, tree))
+	connection.running = true
+	connection.session = 1
+	task.spawn(function()
+		connection:_run(1)
+	end)
+	task.wait(0.5)
+	connection:stop()
+	return blobPosts, blobPolls
+end
+
+suite("a connect with terrain_sync off posts no terrain snapshot and polls no blobs", function()
+		local blobPosts, blobPolls = connectWithoutTerrainSync(memoryTerrain(1), noop)
+		check(
+			"a connect with terrain_sync off posts no terrain blob",
+			blobPosts == 0,
+			tostring(blobPosts) .. " posts"
+		)
+		check(
+			"a connect with terrain_sync off polls no blobs",
+			blobPolls == 0,
+			tostring(blobPolls) .. " polls"
+		)
+end)
+
+suite("a connect with terrain_sync off sets no terrain warning, even over the size cap", function()
+		local huge = { CFrame = extentsRegion.CFrame, Size = { X = 2048, Y = 2048, Z = 2048 } }
+		local log, onState = stateLog()
+		connectWithoutTerrainSync(memoryTerrain(1, huge), onState)
+		check(
+			"a connect with terrain_sync off sets no terrain warning",
+			#warningsOf(log) == 0,
+			table.concat(warningsOf(log), " | ")
+		)
+end)
+
 suite("the connection takes live terrain sync from the daemon's handshake", function()
 		local terrain = memoryTerrain(1)
 		local tree, root = studioWorld(true)

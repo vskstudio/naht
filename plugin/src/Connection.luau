@@ -225,12 +225,14 @@ function Connection._run(self, session: number)
 			self.epoch += 1
 			local epoch = self.epoch
 			self.terrainBaseline = nil
-			task.spawn(function()
-				self:_pushTerrain(epoch)
-			end)
-			task.spawn(function()
-				self:_serveBlobs(epoch, info.session_id)
-			end)
+			if self.terrainSync then
+				task.spawn(function()
+					self:_pushTerrain(epoch)
+				end)
+				task.spawn(function()
+					self:_serveBlobs(epoch, info.session_id)
+				end)
+			end
 			self:_serve(session, info.session_id)
 		end)
 		if not self:_isCurrent(session) then
