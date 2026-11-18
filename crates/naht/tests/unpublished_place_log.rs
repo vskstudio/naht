@@ -75,7 +75,11 @@ async fn an_unpublished_place_is_logged_once_per_session() {
     let app = router(Arc::clone(&state), PORT);
 
     for _ in 0..3 {
-        let response = app.clone().oneshot(info_request("0", &token)).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(info_request("0", &token))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
