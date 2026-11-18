@@ -4,7 +4,6 @@ use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
 use naht_core::protocol::Change;
@@ -16,6 +15,7 @@ use tracing::subscriber::with_default;
 use super::remove_emptied_dirs_in;
 use crate::session::transaction::{DiskChange, Journal};
 use crate::session::{Session, SessionError};
+use crate::test_logs::LogBuffer;
 
 mod folder_shape;
 mod renames;
@@ -311,20 +311,6 @@ fn a_folder_the_disk_refuses_for_another_io_reason_is_kept_and_the_batch_is_not_
     batch_emptying_a_folder_the_disk_refuses_to_remove(io::ErrorKind::PermissionDenied);
 }
 
-#[derive(Clone, Default)]
-struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for LogBuffer {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[test]
 fn a_client_path_with_control_bytes_is_logged_escaped() {
     let logs = LogBuffer::default();
@@ -346,7 +332,7 @@ fn a_client_path_with_control_bytes_is_logged_escaped() {
         remove_emptied_dirs_in(&mut vfs, &mut journal, &[Path::new(hostile)]);
     });
 
-    let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    let output = logs.text();
     assert!(output.contains("kept a directory"), "{output}");
     assert!(
         output.contains(r#"path="src/Bad\nDir\u{1b}[2J""#),

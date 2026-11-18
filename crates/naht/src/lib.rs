@@ -17,5 +17,7 @@ pub mod server;
 pub mod session;
 /// Graceful shutdown on signals and on request.
 pub mod shutdown;
+#[cfg(test)]
+mod test_logs;
 pub mod uploader;
 pub mod watcher;
