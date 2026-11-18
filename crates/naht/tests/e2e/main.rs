@@ -152,7 +152,7 @@ impl Daemon {
     }
 
     async fn handshake(&self) {
-        let resp = wire::info(&self.client, &self.base, None).await;
+        let resp = wire::info(&self.client, &self.base, None, &self.token).await;
         assert!(resp.status().is_success(), "GET /info: {}", resp.status());
     }
 
@@ -237,12 +237,12 @@ fn write_config_port(root: &Path, port: u16) {
 }
 
 fn write_port_file(root: &Path, port: u16) {
-    fs::create_dir_all(root.join(".naht")).unwrap();
+    token::load_or_create(root).unwrap();
     fs::write(root.join(".naht").join("daemon.port"), port.to_string()).unwrap();
 }
 
 fn write_recorded_port(root: &Path, port: u16, daemon_id: &str) {
-    fs::create_dir_all(root.join(".naht")).unwrap();
+    token::load_or_create(root).unwrap();
     fs::write(
         root.join(".naht").join("daemon.port"),
         format!("{port}\n{daemon_id}\n"),

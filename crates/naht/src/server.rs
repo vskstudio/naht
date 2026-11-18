@@ -16,7 +16,7 @@ use axum::body::Bytes;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -248,21 +248,28 @@ pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()
     listen::accept_until_cancelled(listener, router(state, port), shutdown, connections).await
 }
 
-async fn info(State(state): State<Arc<AppState>>) -> Response {
-    let outcome = state.with_session(handshake).await;
+async fn info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let authenticated = guard::presents_token(&state, &headers);
+    let outcome = state
+        .with_session(move |session| handshake(session, authenticated))
+        .await;
     let info = match outcome {
         Ok(Ok(info)) => info,
         Ok(Err(rejection)) => return rejection.into_response(),
         Err(error) => return Rejection::Blocking(error).into_response(),
     };
-    tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
-    state.patches_ready.notify_waiters();
-    state.blobs_ready.notify_waiters();
+    if authenticated {
+        tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
+        state.patches_ready.notify_waiters();
+        state.blobs_ready.notify_waiters();
+    }
     msgpack(&info)
 }
 
-fn handshake(session: &mut Session) -> Result<ServerInfo, Rejection> {
-    session.rescan()?;
+fn handshake(session: &mut Session, authenticated: bool) -> Result<ServerInfo, Rejection> {
+    if authenticated {
+        session.rescan()?;
+    }
     Ok(session.info())
 }
 
@@ -460,6 +467,8 @@ fn enrol_waiter(notify: &Notify) -> Pin<Box<impl Future<Output = ()> + '_>> {
 }
 
 mod cursor;
+#[cfg(test)]
+mod info_tests;
 mod rejection;
 #[cfg(test)]
 mod tests;

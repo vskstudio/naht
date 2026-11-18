@@ -236,6 +236,12 @@ fn unplaced_write_refused(bound: u64) -> String {
     )
 }
 
+pub(super) fn presents_token(state: &AppState, headers: &HeaderMap) -> bool {
+    headers
+        .get(TOKEN_HEADER)
+        .is_some_and(|presented| state.token().matches(presented.as_bytes()))
+}
+
 pub(super) async fn guard(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> Response {
     match gate
         .admit(request.method(), request.uri().path(), request.headers())

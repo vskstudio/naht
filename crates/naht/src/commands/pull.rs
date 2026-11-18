@@ -1,9 +1,11 @@
 use super::error::CommandError;
 use super::files::canonical;
+use super::token::read_token;
 use crate::config::Config;
 use crate::daemon_port::{self, Recorded};
+use crate::token::Token;
 use naht_core::protocol::{
-    CLIENT_HEADER, PLACE_ID_HEADER, ReportedLimits, ServerInfo, from_msgpack,
+    CLIENT_HEADER, PLACE_ID_HEADER, ReportedLimits, ServerInfo, TOKEN_HEADER, from_msgpack,
 };
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -66,7 +68,13 @@ pub async fn resync_running(root: &Path) -> ResyncOutcome {
         Ok(config) => config,
         Err(error) => return ResyncOutcome::Failed(format!("could not be checked ({error})")),
     };
-    match fetch_info(recorded.port, config.serve.place_id).await {
+    let token = match read_token(root) {
+        Ok(token) => token,
+        Err(error) => {
+            return ResyncOutcome::Failed(format!("cannot be asked to re-sync ({error})"));
+        }
+    };
+    match fetch_info(recorded.port, config.serve.place_id, &token).await {
         Ok(info) => match ownership(
             &info,
             &project_name(root, &config),
@@ -97,12 +105,13 @@ pub async fn resync_running(root: &Path) -> ResyncOutcome {
 /// Returns [`CommandError`] when the daemon is unreachable within the nudge timeout, fails, or
 /// belongs to another project.
 pub async fn pull(root: &Path, config: &Config) -> Result<(), CommandError> {
+    let token = read_token(root)?;
     let recorded = daemon_port::read(root);
     let port = recorded
         .as_ref()
         .map_or_else(|| config.port(), |recorded| recorded.port);
     let project = project_name(root, config);
-    match fetch_info(port, config.serve.place_id).await {
+    match fetch_info(port, config.serve.place_id, &token).await {
         Ok(info) => accept_verdict(
             ownership(&info, &project, config.serve.place_id, recorded.as_ref()),
             port,
@@ -119,9 +128,16 @@ pub async fn pull(root: &Path, config: &Config) -> Result<(), CommandError> {
     }
 }
 
-async fn fetch_info(port: u16, place_id: Option<u64>) -> Result<ServerInfo, InfoFailure> {
+async fn fetch_info(
+    port: u16,
+    place_id: Option<u64>,
+    token: &Token,
+) -> Result<ServerInfo, InfoFailure> {
     let client = nudge_client().map_err(InfoFailure::Request)?;
-    let mut request = client.get(info_url(port)).header(CLIENT_HEADER, CLI_CLIENT);
+    let mut request = client
+        .get(info_url(port))
+        .header(CLIENT_HEADER, CLI_CLIENT)
+        .header(TOKEN_HEADER, token.as_str());
     if let Some(place_id) = place_id {
         request = request.header(PLACE_ID_HEADER, place_id.to_string());
     }

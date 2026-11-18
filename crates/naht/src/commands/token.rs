@@ -15,7 +15,13 @@ pub fn print_token<Stdout: Write, Stderr: Write>(
     root: &Path,
     out: &mut Output<Stdout, Stderr>,
 ) -> Result<(), CommandError> {
-    let token = token::read(root).map_err(|error| {
+    let token = read_token(root)?;
+    out.say(format_args!("{}", token.as_str()))
+        .map_err(CommandError::Output)
+}
+
+pub(super) fn read_token(root: &Path) -> Result<token::Token, CommandError> {
+    token::read(root).map_err(|error| {
         if error.is_missing() {
             CommandError::NoToken {
                 path: token::path(root),
@@ -23,9 +29,7 @@ pub fn print_token<Stdout: Write, Stderr: Write>(
         } else {
             CommandError::Token(error)
         }
-    })?;
-    out.say(format_args!("{}", token.as_str()))
-        .map_err(CommandError::Output)
+    })
 }
 
 #[cfg(test)]

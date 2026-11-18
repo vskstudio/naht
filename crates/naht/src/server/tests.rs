@@ -12,7 +12,7 @@ use tower::ServiceExt;
 
 use super::*;
 
-const TEST_PORT: u16 = 34872;
+pub(super) const TEST_PORT: u16 = 34872;
 
 fn test_state() -> Arc<AppState> {
     let store = StateStore::open_in_memory().unwrap();
@@ -20,7 +20,7 @@ fn test_state() -> Arc<AppState> {
     AppState::new(session, Duration::from_secs(1), Token::for_tests())
 }
 
-fn fresh_state(post_wait: Duration) -> (tempfile::TempDir, Arc<AppState>) {
+pub(super) fn fresh_state(post_wait: Duration) -> (tempfile::TempDir, Arc<AppState>) {
     let root = tempfile::tempdir().unwrap();
     let session = Session::new(
         root.path(),

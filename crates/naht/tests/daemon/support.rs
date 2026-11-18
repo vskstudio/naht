@@ -7,7 +7,7 @@ use naht::config::Limits;
 use naht::server;
 use naht::server::AppState;
 use naht::session::Session;
-use naht::token::Token;
+use naht::token::{self, Token};
 use naht_core::binary::BlobInstance;
 use naht_core::protocol::{
     self, BlobChangeBatch, BlobPatchBatch, Change, ChangeBatch, PatchBatch, Pong, SyncActivity,
@@ -69,7 +69,7 @@ impl Harness {
         let mut session =
             Session::new(root.clone(), store, "demo", serve_place_id, terrain_sync).unwrap();
         session.set_limits(limits);
-        let token = Token::generate().unwrap();
+        let token = token::load_or_create(&root).unwrap().token;
         let state = AppState::new(session, long_poll, token.clone());
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -167,7 +167,7 @@ impl Harness {
     }
 
     pub(crate) async fn info(&self, place_id: Option<u64>) -> reqwest::Response {
-        wire::info(&self.client, &self.base, place_id).await
+        wire::info(&self.client, &self.base, place_id, self.token()).await
     }
 
     pub(crate) async fn raw_reply(&self, request: &str) -> io::Result<String> {

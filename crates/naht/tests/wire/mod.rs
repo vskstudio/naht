@@ -11,8 +11,13 @@ pub(crate) async fn decode<T: DeserializeOwned>(resp: Response) -> T {
     protocol::from_msgpack(&bytes).unwrap()
 }
 
-pub(crate) async fn info(client: &Client, base: &str, place_id: Option<u64>) -> Response {
-    let mut req = plugin(client.get(format!("{base}/info")));
+pub(crate) async fn info(
+    client: &Client,
+    base: &str,
+    place_id: Option<u64>,
+    token: &str,
+) -> Response {
+    let mut req = authorized(client.get(format!("{base}/info")), token);
     if let Some(id) = place_id {
         req = req.header(PLACE_ID_HEADER, id.to_string());
     }
