@@ -1,6 +1,6 @@
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use naht_core::protocol::ProtocolError;
+use naht_core::protocol::{NONCE_MAX_LEN, ProtocolError};
 use naht_core::vfs::{ProjectPathError, VfsError};
 use tokio::task::JoinError;
 
@@ -34,6 +34,13 @@ pub(super) enum Rejection {
         "terrain has {voxels} voxels, over the limit of {limit}: raise `[limits] terrain_voxels` or use naht build"
     )]
     TerrainTooLarge { voxels: usize, limit: usize },
+    #[error(
+        "malformed nonce: send 1 to {} ASCII letters and digits",
+        NONCE_MAX_LEN
+    )]
+    MalformedNonce,
+    #[error("cannot compute the daemon proof")]
+    ProofUnavailable,
 }
 
 impl Rejection {
@@ -44,11 +51,12 @@ impl Rejection {
             | Self::Disallowed(_)
             | Self::RefusedPaths(_)
             | Self::MissingSession
-            | Self::UnreadableTerrain(_) => StatusCode::BAD_REQUEST,
+            | Self::UnreadableTerrain(_)
+            | Self::MalformedNonce => StatusCode::BAD_REQUEST,
             Self::TerrainTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::SessionChanged => StatusCode::CONFLICT,
-            Self::Encode(_) | Self::Session(_) | Self::Blocking(_) => {
+            Self::Encode(_) | Self::Session(_) | Self::Blocking(_) | Self::ProofUnavailable => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         }
@@ -70,6 +78,7 @@ impl IntoResponse for Rejection {
             Self::InvalidPath(_)
             | Self::Malformed(_)
             | Self::UnreadableTerrain(_)
+            | Self::MalformedNonce
             | Self::TerrainTooLarge { .. } => {
                 json_response(status, &serde_json::json!({ "error": self.to_string() }))
             }
@@ -79,7 +88,8 @@ impl IntoResponse for Rejection {
             | Self::Blocking(_)
             | Self::Busy
             | Self::SessionChanged
-            | Self::MissingSession => (status, self.to_string()).into_response(),
+            | Self::MissingSession
+            | Self::ProofUnavailable => (status, self.to_string()).into_response(),
         }
     }
 }

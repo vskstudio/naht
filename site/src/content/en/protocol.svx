@@ -114,7 +114,7 @@ backbone of Naht's reconnect safety, detailed in the [Sync engine](#/docs/sync-e
 
 ## Versioning
 
-The protocol carries an integer `PROTOCOL_VERSION` (currently `3`). It is part of the handshake so the
+The protocol carries an integer `PROTOCOL_VERSION` (currently `5`). It is part of the handshake so the
 two halves can refuse to talk across an incompatible boundary instead of corrupting state.
 
 The client headers `x-naht-client` and `x-naht-place-id` are required on every request and came with
@@ -128,3 +128,9 @@ together. A plugin built for another protocol version is refused at the handshak
 Protocol 4 adds the project token. Every route except `GET /info` requires `x-naht-token`, and a request without a
 matching token is answered `401`. A plugin built for version `3` stops at the update message. Upgrade the CLI, the
 daemon and the plugin together.
+
+Protocol 5 adds the daemon proof. `GET /info?nonce=<n>` answers with `proof`, the HMAC-SHA256 of
+`naht-daemon-proof-v1\n<port>\n<n>` keyed by the token, and the plugin sends the token only once that matches the
+value it computes. Until then it sends nothing but `GET /info`, and with no token for the project it stops and asks
+for one. A program that takes the port while `naht serve` is stopped cannot answer it, so it never sees the token and
+cannot push patches into Studio. Upgrade the CLI, the daemon and the plugin together.

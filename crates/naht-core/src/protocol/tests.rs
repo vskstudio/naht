@@ -44,6 +44,7 @@ fn server_info_round_trips_through_msgpack() {
         conflicted: vec!["Frozen.luau".to_owned()],
         terrain_sync: true,
         limits: None,
+        proof: None,
     };
     let bytes = to_msgpack(&info).unwrap();
     assert_eq!(from_msgpack::<ServerInfo>(&bytes).unwrap(), info);
@@ -182,6 +183,7 @@ fn server_info_encodes_to_the_bytes_the_plugin_suite_pins() {
         conflicted: Vec::new(),
         terrain_sync: false,
         limits: None,
+        proof: None,
     };
     assert_eq!(hex(&to_msgpack(&info).unwrap()), pinned_hex("server_info"));
 }

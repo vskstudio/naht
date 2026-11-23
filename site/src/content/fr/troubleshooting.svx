@@ -32,6 +32,13 @@ garde dans les réglages du plugin. Un 401 veut dire que le daemon n'a pas reçu
   recréation de ce fichier. Lance `naht token` dans ce projet et saisis la valeur affichée. Le plugin te la redemande à la
   prochaine tentative.
 
+## « could not prove it holds this project's token »
+
+Avant d'envoyer le token, le plugin demande au programme qui écoute sur le port de prouver qu'il le détient, et celui-ci
+n'a pas pu. Soit le token a changé (`.naht/token` a été supprimé puis recréé : lance `naht token` et saisis la valeur
+affichée), soit autre chose que `naht serve` répond sur le port. Dans ce cas le token n'a pas été envoyé : arrête ce
+programme et relance `naht serve`.
+
 ## Port déjà utilisé
 
 Un autre daemon (ou un autre outil, comme Rojo et Naht qui partagent le défaut `34872`) est sur le port. Soit tu l'arrêtes,

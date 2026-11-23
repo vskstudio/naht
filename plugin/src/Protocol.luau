@@ -10,6 +10,7 @@ export type ServerInfo = {
 	limits: { terrain_voxels: number }?,
 	project_id: string,
 	token_required: boolean?,
+	proof: string?,
 }
 
 export type Patch = {
@@ -64,7 +65,7 @@ export type Codec = {
 	binary: (bytes: string) -> any,
 }
 
-local PROTOCOL_VERSION = 4
+local PROTOCOL_VERSION = 5
 
 local function new(MessagePack: Codec)
 	local Protocol = {}

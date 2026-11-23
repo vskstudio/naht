@@ -23,6 +23,7 @@ fn info(project: &str, place: Option<u64>, daemon_id: &str) -> ServerInfo {
         conflicted: Vec::new(),
         terrain_sync: false,
         limits: None,
+        proof: None,
     }
 }
 

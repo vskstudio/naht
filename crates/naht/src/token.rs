@@ -9,6 +9,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use hmac::{Hmac, KeyInit, Mac};
+use naht_core::protocol;
+use sha2::Sha256;
+
 const TOKEN_BYTES: usize = 32;
 const TOKEN_DIGITS: usize = TOKEN_BYTES * 2;
 
@@ -37,6 +41,15 @@ impl Token {
     /// reads every byte whatever the first mismatch, so its timing does not reveal the token.
     pub fn matches(&self, presented: &[u8]) -> bool {
         constant_time_eq(self.0.as_bytes(), presented)
+    }
+
+    /// The daemon proof for `nonce` on `port`: the lowercase hex HMAC-SHA256 of
+    /// [`protocol::proof_message`] keyed by the token text, which the plugin checks before it sends
+    /// the token. `None` only if the MAC refuses the key, which HMAC never does.
+    pub fn prove(&self, port: u16, nonce: &str) -> Option<String> {
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(self.0.as_bytes()).ok()?;
+        mac.update(protocol::proof_message(port, nonce).as_bytes());
+        Some(hex(&mac.finalize().into_bytes()))
     }
 
     fn parse(text: &str) -> Option<Self> {

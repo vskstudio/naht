@@ -75,6 +75,13 @@ local function httpBridge()
 		JSONDecode = function(_, text)
 			return serde.decode("json", text)
 		end,
+		GenerateGUID = function(_, _wrapped)
+			local digits = {}
+			for _ = 1, 32 do
+				table.insert(digits, string.format("%x", math.random(0, 15)))
+			end
+			return table.concat(digits)
+		end,
 	}
 end
 
@@ -405,30 +412,48 @@ local function tokenRefused(root, port, log)
 	local info = daemon.client:info()
 
 	local bare = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
-	local missingOk, missingErr = pcall(bare.patches, bare, 0, info.session_id)
+	local missingOk, missingErr = pcall(bare.info, bare)
 	check(
-		"a request without the token is refused with a 401",
-		not missingOk and type(missingErr) == "table" and missingErr.tokenRefused == true and missingErr.status == 401,
-		tostring(if type(missingErr) == "table" then missingErr.status else missingErr)
+		"a client with no token stops at the handshake and asks for it",
+		not missingOk and type(missingErr) == "table" and missingErr.tokenRefused == true and missingErr.message == Client.TOKEN_REQUIRED,
+		if type(missingErr) == "table" then tostring(missingErr.message) else tostring(missingErr)
 	)
+	local heldPoll, heldPollErr = pcall(bare.patches, bare, 0, info.session_id)
+	check("a client with no token holds back its poll", not heldPoll and heldPollErr == Client.UNVERIFIED, tostring(heldPollErr))
+
+	local tokenless = request("GET", daemon.base .. "/patches?cursor=0&session=" .. info.session_id, {
+		["x-naht-client"] = "plugin",
+		["x-naht-place-id"] = tostring(PLACE_ID),
+	})
+	check("a request without the token is refused with a 401", tokenless.status == 401, tostring(tokenless.status))
 	check(
 		"a request without the token is told the daemon needs it",
-		not missingOk and type(missingErr) == "table" and missingErr.message == Client.TOKEN_REQUIRED,
-		if type(missingErr) == "table" then tostring(missingErr.message) else tostring(missingErr)
+		string.find(tokenless.body, "token required", 1, true) ~= nil,
+		tokenless.body
 	)
 
 	local wrong = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
 	wrong:setToken("not-the-project-token")
-	local wrongOk, wrongErr = pcall(wrong.postChanges, wrong, { Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") })
+	local provedOk, provedErr = pcall(wrong.info, wrong)
 	check(
-		"a request with a wrong token is refused with a 401",
-		not wrongOk and type(wrongErr) == "table" and wrongErr.tokenRefused == true and wrongErr.status == 401,
-		tostring(if type(wrongErr) == "table" then wrongErr.status else wrongErr)
+		"a client holding a wrong token finds the daemon proof does not match it",
+		not provedOk and type(provedErr) == "table" and provedErr.message == Client.PROOF_FAILED,
+		if type(provedErr) == "table" then tostring(provedErr.message) else tostring(provedErr)
 	)
+	local heldOk, heldErr = pcall(wrong.postChanges, wrong, { Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") })
+	check("the plugin holds back a write it cannot prove", not heldOk and heldErr == Client.UNVERIFIED, tostring(heldErr))
+
+	local forced = request("POST", daemon.base .. "/changes", {
+		["x-naht-client"] = "plugin",
+		["x-naht-place-id"] = tostring(PLACE_ID),
+		["x-naht-token"] = "not-the-project-token",
+		["Content-Type"] = "application/msgpack",
+	}, Protocol.encodeChanges({ Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") }))
+	check("a request with a wrong token is refused with a 401", forced.status == 401, tostring(forced.status))
 	check(
 		"a wrong token is told the daemon rejected it",
-		not wrongOk and type(wrongErr) == "table" and wrongErr.message == Client.TOKEN_REJECTED,
-		if type(wrongErr) == "table" then tostring(wrongErr.message) else tostring(wrongErr)
+		string.find(forced.body, "token rejected", 1, true) ~= nil,
+		forced.body
 	)
 	check("a refused write leaves no file on disk", not fs.isFile(root .. "/" .. REFUSED_FILE))
 

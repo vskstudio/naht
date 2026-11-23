@@ -11,7 +11,8 @@ mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core)
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec for the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request, and `x-naht-token` once the token is known |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request, and `x-naht-token` once the daemon has proven it holds the token |
+| `src/Hmac.luau` | SHA-256 and HMAC-SHA256 in pure Luau, for the daemon proof |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Terrain.luau` | Read/write terrain voxels (`ReadVoxels`/`WriteVoxels`) as an opaque binary blob |
 | `src/Connection.luau` | Handshake, long-poll + apply, reconnect with backoff, posts the inventory on attach |
@@ -139,10 +140,24 @@ plugin built for version 2 stops at `Disconnected` with the update message.
 From protocol version 4 every request except `GET /info` also carries `x-naht-token`. The daemon answers `401`
 to a request without that header or with another value, with the body `{"error": "token required"}` or
 `{"error": "token rejected"}`. The plugin then stops at `TokenRequired`: the widget shows a text box, and the
-user pastes the token that `naht token` prints and presses Enter. The plugin stores it in its plugin settings
-under `naht.token.<projectId>`, so the user is asked once per project. A rejected token returns the widget to
+user pastes the token that `naht token` prints and presses Enter. Once a daemon proves it holds that token, the
+plugin stores it in its plugin settings under `naht.token.<projectId>`, so the user is asked once per project. A rejected token returns the widget to
 the same state. A plugin built for version 3 stops at its update message, because the handshake refuses any
 other version.
+
+From protocol version 5 the plugin sends the token only to a daemon that proves it holds it. Each handshake first
+calls `GET /info?nonce=<n>` without the token; the daemon answers with `proof`, the HMAC-SHA256 of the nonce and its
+port keyed by the token, and `src/Hmac.luau` computes the same value from the stored token. The port comes from
+the daemon URL, which must name one. Only a match lets the second `GET /info`, and every later request, go out with
+`x-naht-token`; until then the plugin sends nothing else, so it posts no inventory or change and applies no patch
+from an unproven program. With no token stored for the project id the first answer names, the handshake stops at
+`TokenRequired` and asks for one. A mismatch stops at `TokenRequired` with a message saying the program on the port
+could not prove it holds the token, and a token typed then is proven the same way before it is sent or saved. It
+is saved under the project id of the handshake that proved it, and it stays in memory when the daemon reports a
+project with no stored token, so the user does not type it twice. When the daemon reports a project that has a
+stored token, that stored token replaces a typed one not yet proven, since it was proven when it was saved. An
+`/info` answer over 1 MiB is refused before it is decoded. After a transport failure the plugin holds back every
+request but `/info` until the next handshake proves the daemon again.
 
 ## Tests
 

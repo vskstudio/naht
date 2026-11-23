@@ -17,11 +17,12 @@ local Client = require("../src/Client")
 local Fingerprint = require("../src/Fingerprint")
 local Connection = require("../src/Connection")
 local Support = require("../src/Support")
+local Hmac = require("../src/Hmac")
 local fs = require("@lune/fs")
 local serde = require("@lune/serde")
 
 local GOLDEN = {
-	server_info = "8ab070726f746f636f6c5f76657273696f6e04ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa70726f6a6563745f6964a3702d31ae746f6b656e5f7265717569726564c3aa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490ac7465727261696e5f73796e63c2",
+	server_info = "8ab070726f746f636f6c5f76657273696f6e05ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa70726f6a6563745f6964a3702d31ae746f6b656e5f7265717569726564c3aa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490ac7465727261696e5f73796e63c2",
 	patch_batch = "82a6637572736f7202a7706174636865739186a373657101a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
 	change_batch = "81a76368616e6765739281a655707365727483a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a7636f6e74656e74a872657475726e203281a644656c65746581a470617468aa7372632f422e6c756175",
 	blob_patch_batch = "82a6637572736f7201a7706174636865739185a470617468af5465727261696e2e7465727261696ea5636c617373a75465727261696ea9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74c4050001ff807f",
@@ -79,11 +80,11 @@ local function noop() end
 
 suite("the server_info golden decodes to the expected fields and a matching version is accepted", function()
 	local info = MessagePack.decode(fromHex(GOLDEN.server_info))
-	check("server_info protocol_version", info.protocol_version == 4)
+	check("server_info protocol_version", info.protocol_version == 5)
 	check("server_info project_name", info.project_name == "demo")
 	check("server_info serve_place_id", info.serve_place_id == 123)
 	check("server_info daemon_id", info.daemon_id == "d-1")
-	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 4)
+	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 5)
 	check(
 		"mismatched protocol version is rejected",
 		not pcall(Protocol.assertCompatible, {
@@ -2129,7 +2130,7 @@ suite("a connect with a frozen path reports it as a Conflict and never Connected
 		connection = Connection.new(
 			{
 				info = function(_, _placeId)
-					return { protocol_version = 4, project_name = "demo", conflicted = { "Frozen.luau" } }
+					return { protocol_version = 5, project_name = "demo", conflicted = { "Frozen.luau" } }
 				end,
 				patches = function(_, _cursor)
 					connection:stop()
@@ -4755,7 +4756,11 @@ local function placeReader(placeId: number): () -> number
 end
 
 local function fakeHttp(respond: (any) -> any)
-	local fake = { calls = {} :: { any } }
+	local fake = { calls = {} :: { any }, guids = 0 }
+	function fake.GenerateGUID(_self, _wrapped)
+		fake.guids += 1
+		return string.format("{0F1E2D3C-4B5A-6978-8796-%012X}", fake.guids)
+	end
 	function fake.RequestAsync(_self, options)
 		table.insert(fake.calls, options)
 		return respond(options)
@@ -4770,11 +4775,53 @@ local function reply(status: number, body: string)
 	return { Success = status >= 200 and status < 300, StatusCode = status, Body = body }
 end
 
+local TEST_PORT = 34872
+
+local function nonceOf(url: string): string
+	return string.match(url, "[?&]nonce=(%w+)") or ""
+end
+
+local function provenInfo(body: string, token: string, url: string, port: number?): string
+	local info = MessagePack.decode(body)
+	info.proof = Hmac.proof(token, port or TEST_PORT, nonceOf(url))
+	return MessagePack.encode(info)
+end
+
+local function storeWith(token: string)
+	local saved: { [string]: string } = { ["p-1"] = token }
+	return {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, value: string)
+			saved[projectId] = value
+		end,
+	}
+end
+
+local function tokenSent(http: any): boolean
+	for _, call in http.calls do
+		if call.Headers["x-naht-token"] ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+local PROVEN_TOKEN = "proven-token"
+
+local function provenClient(http: any, readPlaceId: (() -> number)?): any
+	local client = Client.new("http://127.0.0.1:34872", readPlaceId or placeReader(123), http)
+	client.token = PROVEN_TOKEN
+	client.verified = true
+	return client
+end
+
 suite("an ack names its session and a 409 on /ack reports a changed session", function()
 	local acks = fakeHttp(function(_options)
 		return reply(409, "")
 	end)
-	local client = Client.new("http://127.0.0.1:34872", placeReader(123), acks)
+	local client = provenClient(acks)
 	local ok, err = pcall(function()
 		client:postAck({ 7 }, "s1")
 	end)
@@ -4796,42 +4843,50 @@ suite("the client loads the saved token by the project id from /info and sends i
 			saved[projectId] = token
 		end,
 	}
+	local servingToken = "stored-token"
 	local http = fakeHttp(function(options)
 		if string.find(options.Url, "/info", 1, true) ~= nil then
-			return reply(200, fromHex(GOLDEN.server_info))
+			return reply(200, provenInfo(fromHex(GOLDEN.server_info), servingToken, options.Url))
 		end
 		return reply(200, fromHex(GOLDEN.patch_batch))
 	end)
 	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
 	client:info()
 	check("the client takes the saved token for the project id /info reports", client.token == "stored-token")
+	check("the proven handshake asks /info twice", #http.calls == 2, tostring(#http.calls))
+	check("the first /info withholds the token", http.calls[1].Headers["x-naht-token"] == nil)
+	check("the confirming /info carries the token", http.calls[2].Headers["x-naht-token"] == "stored-token")
+	check("each /info sends a fresh nonce", nonceOf(http.calls[1].Url) ~= nonceOf(http.calls[2].Url) and nonceOf(http.calls[1].Url) ~= "")
 	client:patches(0, "s1")
 	local sent = http.calls[#http.calls].Headers["x-naht-token"]
 	check("a gated request carries the saved token", sent == "stored-token", tostring(sent))
 	client:setToken("typed-token")
-	check("setToken saves the token under the project id", saved["p-1"] == "typed-token")
+	check("a typed token is not saved before a daemon proves it", saved["p-1"] == "stored-token", saved["p-1"])
+	local okUnproven = pcall(function()
+		client:info()
+	end)
+	check(
+		"a typed token the daemon cannot prove is never saved",
+		not okUnproven and saved["p-1"] == "stored-token",
+		saved["p-1"]
+	)
+	servingToken = "typed-token"
+	client:info()
+	check("a typed token is saved under the project id once the daemon proves it", saved["p-1"] == "typed-token", saved["p-1"])
 end)
 
 suite("a 401 from the daemon is a token refusal that says whether the token was missing or wrong", function()
-	local missing = Client.new(
-		"http://127.0.0.1:34872",
-		placeReader(123),
-		fakeHttp(function()
-			return reply(401, '{"error": "token required"}')
-		end)
-	)
+	local missing = provenClient(fakeHttp(function()
+		return reply(401, '{"error": "token required"}')
+	end))
 	local okMissing, errMissing = pcall(function()
 		missing:patches(0, "s1")
 	end)
 	check("a 401 without a token is a token refusal", not okMissing and Support.isTokenRefusal(errMissing))
 	check("a missing token asks for the token", not okMissing and errMissing.message == Client.TOKEN_REQUIRED)
-	local wrong = Client.new(
-		"http://127.0.0.1:34872",
-		placeReader(123),
-		fakeHttp(function()
-			return reply(401, '{"error": "token rejected"}')
-		end)
-	)
+	local wrong = provenClient(fakeHttp(function()
+		return reply(401, '{"error": "token rejected"}')
+	end))
 	local okWrong, errWrong = pcall(function()
 		wrong:patches(0, "s1")
 	end)
@@ -4959,7 +5014,7 @@ end)
 suite("the client sends the headers on every request and reports an outdated plugin", function()
 	local function answerEverything(options)
 		if string.find(options.Url, "/info", 1, true) then
-			return reply(200, fromHex(GOLDEN.server_info))
+			return reply(200, provenInfo(fromHex(GOLDEN.server_info), PROVEN_TOKEN, options.Url))
 		elseif string.find(options.Url, "/patches", 1, true) then
 			return reply(200, fromHex(GOLDEN.patch_batch))
 		elseif string.find(options.Url, "/blobs", 1, true) and options.Method == "GET" then
@@ -4969,14 +5024,14 @@ suite("the client sends the headers on every request and reports an outdated plu
 	end
 
 	local everything = fakeHttp(answerEverything)
-	local everyRequest = Client.new("http://127.0.0.1:34872", placeReader(123), everything)
+	local everyRequest = Client.new("http://127.0.0.1:34872", placeReader(123), everything, storeWith(PROVEN_TOKEN))
 	everyRequest:info()
 	everyRequest:patches(0, "s1")
 	everyRequest:blobs(0, "s1")
 	everyRequest:postBlobs({})
 	everyRequest:postAck({}, "s1")
 	everyRequest:postChanges({})
-	local headersOnEveryRequest = #everything.calls == 6
+	local headersOnEveryRequest = #everything.calls == 7
 	for _, call in everything.calls do
 		if call.Headers["x-naht-client"] ~= "plugin" or call.Headers["x-naht-place-id"] ~= "123" then
 			headersOnEveryRequest = false
@@ -5030,13 +5085,9 @@ suite("the client sends the headers on every request and reports an outdated plu
 		not okWording and not Client.isOutdatedPluginError(tostring(errWording))
 	)
 
-	local accepting = Client.new(
-		"http://127.0.0.1:34872",
-		placeReader(123),
-		fakeHttp(function()
-			return reply(200, "")
-		end)
-	)
+	local accepting = provenClient(fakeHttp(function()
+		return reply(200, "")
+	end))
 	local okAccepted = pcall(function()
 		accepting:postChanges({ Protocol.upsert("src/B.luau", "ModuleScript", "return 2") })
 	end)
@@ -5048,9 +5099,9 @@ suite("the place id header is read on each request, so a publish needs no reconn
 	local http = fakeHttp(function(_options)
 		return reply(200, "")
 	end)
-	local client = Client.new("http://127.0.0.1:34872", function()
+	local client = provenClient(http, function()
 		return placeId
-	end, http)
+	end)
 	client:postAck({}, "s1")
 	placeId = 456
 	client:postAck({}, "s1")
@@ -5065,13 +5116,9 @@ suite("the place id header is read on each request, so a publish needs no reconn
 end)
 
 suite("a 400 refused_paths body is surfaced with its paths", function()
-	local refusing = Client.new(
-		"http://127.0.0.1:34872",
-		placeReader(123),
-		fakeHttp(function()
-			return reply(400, '{"refused_paths":["src/Dir"]}')
-		end)
-	)
+	local refusing = provenClient(fakeHttp(function()
+		return reply(400, '{"refused_paths":["src/Dir"]}')
+	end))
 	local ok, err = pcall(function()
 		refusing:postChanges({ Protocol.upsert("src/Dir", "Folder", "") })
 	end)
@@ -5154,7 +5201,7 @@ suite("an incompatible protocol version is terminal and names the side to update
 	connection:stop()
 	check("an incompatible daemon detaches the Studio listeners", root.DescendantAdded:count() == 0)
 
-	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 5 }))
+	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 6 }))
 	check(
 		"a newer daemon tells the user to update the naht plugin",
 		string.find(tostring(newerDaemon), "update the naht plugin", 1, true) ~= nil
@@ -5234,13 +5281,18 @@ suite("a poll names the session it handshook with, and a 409 sends the plugin ba
 			infos += 1
 			return reply(
 				200,
-				MessagePack.encode({
-					protocol_version = 4,
-					server_version = "0.1.0",
-					project_name = "demo",
-					session_id = if infos == 1 then "s1" else "s2",
-					daemon_id = "d-1",
-				})
+				provenInfo(
+					MessagePack.encode({
+						protocol_version = 5,
+						server_version = "0.1.0",
+						project_id = "p-1",
+						project_name = "demo",
+						session_id = if infos <= 2 then "s1" else "s2",
+						daemon_id = "d-1",
+					}),
+					PROVEN_TOKEN,
+					options.Url
+				)
 			)
 		end
 		if string.find(options.Url, "/blobs", 1, true) ~= nil then
@@ -5255,7 +5307,7 @@ suite("a poll names the session it handshook with, and a 409 sends the plugin ba
 		return reply(200, MessagePack.encode({ cursor = 0, patches = {} }))
 	end)
 	connection = Connection.new(
-		Client.new("http://127.0.0.1:34872", placeReader(123), http),
+		Client.new("http://127.0.0.1:34872", placeReader(123), http, storeWith(PROVEN_TOKEN)),
 		root,
 		onState,
 		deps(extentsTerrainWith(extentsRegion), tree)
@@ -5272,7 +5324,7 @@ suite("a poll names the session it handshook with, and a 409 sends the plugin ba
 		polls[1] ~= nil and string.find(polls[1], "/patches?cursor=0&session=s1", 1, true) ~= nil,
 		"polls " .. table.concat(polls, " ")
 	)
-	check("a 409 sends the plugin back to /info", infos == 2, "handshakes " .. tostring(infos))
+	check("a 409 sends the plugin back to /info", infos == 4, "handshakes " .. tostring(infos))
 	check(
 		"the re-handshake polls the new session from cursor 0",
 		polls[2] ~= nil and string.find(polls[2], "/patches?cursor=0&session=s2", 1, true) ~= nil,
@@ -5563,7 +5615,7 @@ suite("a script named .Hidden is never listed in the inventory", function()
 end)
 
 suite("a 400 on /inventory warns and the run still pulls patches, without a Reconnecting state", function()
-	local real = Client.new("http://127.0.0.1:34872", placeReader(123), fakeHttp(function(_options)
+	local real = provenClient(fakeHttp(function(_options)
 		return reply(400, '{"refused_paths":[".Hidden.luau"]}')
 	end))
 	local log, onState = stateLog()
@@ -5892,9 +5944,10 @@ suite("a daemon that switches project reloads the stored token for the new proje
 		end,
 	}
 	local serving = fromHex(GOLDEN.server_info)
+	local servingToken = "token-one"
 	local http = fakeHttp(function(options)
 		if string.find(options.Url, "/info", 1, true) ~= nil then
-			return reply(200, serving)
+			return reply(200, provenInfo(serving, servingToken, options.Url))
 		end
 		local presented = options.Headers["x-naht-token"]
 		if presented == "token-two" then
@@ -5910,6 +5963,7 @@ suite("a daemon that switches project reloads the stored token for the new proje
 	check("the first project takes its stored token", client.token == "token-one", tostring(client.token))
 
 	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
+	servingToken = "token-two"
 	client:info()
 	check("the client now reports the second project", client.projectId == "p-2", tostring(client.projectId))
 	check("a daemon switch takes the token stored for the new project", client.token == "token-two", tostring(client.token))
@@ -5919,15 +5973,235 @@ suite("a daemon that switches project reloads the stored token for the new proje
 	check("a gated request to the switched daemon is accepted without a prompt", okSwitched)
 
 	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d33")))
-	client:info()
-	check("a project with no stored token leaves the token empty", client.token == nil, tostring(client.token))
+	servingToken = "token-three"
 	local okUnstored, errUnstored = pcall(function()
-		client:patches(0, "s1")
+		client:info()
 	end)
+	check("a project with no stored token leaves the token empty", client.token == nil, tostring(client.token))
 	check(
-		"a project with no stored token is prompted for the token",
+		"a project with no stored token is prompted for the token at the handshake",
 		not okUnstored and Support.isTokenRefusal(errUnstored) and errUnstored.message == Client.TOKEN_REQUIRED,
 		tostring(errUnstored)
+	)
+	local callsBefore = #http.calls
+	local okHeld, errHeld = pcall(function()
+		client:postChanges({ Protocol.upsert("src/A.luau", "ModuleScript", "return 1") })
+	end)
+	check(
+		"a push without a proven token is held back and never sent",
+		not okHeld and errHeld == Client.UNVERIFIED and #http.calls == callsBefore,
+		tostring(errHeld)
+	)
+end)
+
+suite("the HMAC-SHA256 behind the daemon proof matches RFC 4231 and the daemon's pinned proof", function()
+	check("sha256 of the empty string", Hmac.hex(Hmac.sha256("")) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	check(
+		"sha256 over several blocks",
+		Hmac.hex(Hmac.sha256(string.rep("a", 1000))) == "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
+	)
+	check(
+		"RFC 4231 case 1",
+		Hmac.hex(Hmac.hmacSha256(string.rep("\x0b", 20), "Hi There"))
+			== "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+	)
+	check(
+		"RFC 4231 case 6, a key longer than a block",
+		Hmac.hex(Hmac.hmacSha256(string.rep("\xaa", 131), "Test Using Larger Than Block-Size Key - Hash Key First"))
+			== "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+	)
+	check(
+		"the proof matches the one the daemon's token tests pin",
+		Hmac.proof(string.rep("0123456789abcdef", 4), 34872, "0f1e2d3c4b5a69788796a5b4c3d2e1f0")
+			== "dcb7f3d58ef90f33f851024789b159b0482f018970b17c628f3009c9a6aa5928"
+	)
+end)
+
+suite("a program on the port that cannot prove the token never receives it", function()
+	local squatter = fakeHttp(function(options)
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			return reply(200, fromHex(GOLDEN.server_info))
+		end
+		return reply(200, fromHex(GOLDEN.patch_batch))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), squatter, storeWith("stored-token"))
+	local ok, err = pcall(function()
+		client:info()
+	end)
+	check("a missing proof fails the handshake as a token refusal", not ok and Support.isTokenRefusal(err), tostring(err))
+	check("the refusal explains the proof failed", not ok and err.message == Client.PROOF_FAILED)
+	local polled, held = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check("a gated request after a failed proof is held back", not polled and held == Client.UNVERIFIED, tostring(held))
+	check("the squatter never saw the token", not tokenSent(squatter))
+
+	client:setToken("typed-token")
+	pcall(function()
+		client:info()
+	end)
+	check("a token typed after a failed proof is not sent to the squatter either", not tokenSent(squatter))
+end)
+
+suite("a proof made for another port is refused, so a relay to a daemon elsewhere fails", function()
+	local relay = fakeHttp(function(options)
+		return reply(200, provenInfo(fromHex(GOLDEN.server_info), "stored-token", options.Url, 34999))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), relay, storeWith("stored-token"))
+	local ok, err = pcall(function()
+		client:info()
+	end)
+	check("a proof over another port is refused", not ok and Support.isTokenRefusal(err), tostring(err))
+	check("the relay never saw the token", not tokenSent(relay))
+end)
+
+suite("a transport failure drops the proof until the next handshake", function()
+	local down = false
+	local http = fakeHttp(function(options)
+		if down then
+			error("connection refused")
+		end
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			return reply(200, provenInfo(fromHex(GOLDEN.server_info), "stored-token", options.Url))
+		end
+		return reply(200, fromHex(GOLDEN.patch_batch))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, storeWith("stored-token"))
+	client:info()
+	down = true
+	pcall(function()
+		client:patches(0, "s1")
+	end)
+	down = false
+	local calls = #http.calls
+	local ok, err = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check("the next gated request is held back", not ok and err == Client.UNVERIFIED, tostring(err))
+	check("a held-back request reaches nothing", #http.calls == calls)
+	check("a held-back request is a transient failure the loops retry", Support.isTransientFailure(err))
+	client:info()
+	local resumed = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check("a fresh proven handshake lets gated requests through again", resumed)
+end)
+
+suite("a program on the port that reports a project with no stored token gets nothing from Studio", function()
+	local tree, root = studioWorld(true)
+	local keep = place(tree, "ModuleScript", "Keep", root)
+	tree.setSource(keep, "return 1")
+	local log, onState = stateLog()
+	local squatter = fakeHttp(function(options)
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			return reply(200, fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d39"))))
+		end
+		return reply(200, fromHex(GOLDEN.patch_batch))
+	end)
+	local connection = Connection.new(
+		Client.new("http://127.0.0.1:34872", placeReader(123), squatter, storeWith("stored-token")),
+		root,
+		onState,
+		deps(extentsTerrainWith(extentsRegion), tree)
+	)
+	connection:start()
+	waitFor(function()
+		return lastStateOf(log) == "TokenRequired"
+	end)
+	task.wait(0.2)
+	local halted = lastStateOf(log)
+	connection:stop()
+	local onlyInfo = #squatter.calls > 0
+	for _, call in squatter.calls do
+		if string.find(call.Url, "/info", 1, true) == nil then
+			onlyInfo = false
+		end
+	end
+	check("an unproven project stops the connection at TokenRequired", halted == "TokenRequired", tostring(halted))
+	check("the program is only ever asked /info: no inventory, push or poll", onlyInfo, tostring(#squatter.calls))
+	check("the program never saw a token", not tokenSent(squatter))
+end)
+
+suite("a typed token survives a switch to a project with no stored token and is saved under the project that proves it", function()
+	local saved: { [string]: string } = {}
+	local store = {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, token: string)
+			saved[projectId] = token
+		end,
+	}
+	local serving = fromHex(GOLDEN.server_info)
+	local http = fakeHttp(function(options)
+		return reply(200, provenInfo(serving, "typed-token", options.Url))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
+	local okFirst, errFirst = pcall(function()
+		client:info()
+	end)
+	check(
+		"the first handshake with nothing stored asks for the token",
+		not okFirst and Support.isTokenRefusal(errFirst) and errFirst.message == Client.TOKEN_REQUIRED,
+		tostring(errFirst)
+	)
+	client:setToken("typed-token")
+	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
+	client:info()
+	check("the typed token is kept across the switch", client.token == "typed-token", tostring(client.token))
+	check("the proven token is saved under the project that proved it", saved["p-2"] == "typed-token", tostring(saved["p-2"]))
+	check("nothing is saved under the project that never proved it", saved["p-1"] == nil, tostring(saved["p-1"]))
+end)
+
+suite("a token stored for the project the daemon switches to wins over a typed token not yet proven", function()
+	local saved: { [string]: string } = { ["p-2"] = "token-two" }
+	local store = {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, token: string)
+			saved[projectId] = token
+		end,
+	}
+	local serving = fromHex(GOLDEN.server_info)
+	local http = fakeHttp(function(options)
+		return reply(200, provenInfo(serving, "token-two", options.Url))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
+	pcall(function()
+		client:info()
+	end)
+	client:setToken("typed-token")
+	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
+	client:info()
+	check("the stored token of the new project replaces the typed one", client.token == "token-two", tostring(client.token))
+	check("the typed token is saved nowhere", saved["p-1"] == nil and saved["p-2"] == "token-two", tostring(saved["p-1"]))
+end)
+
+suite("the client takes the proof port from the daemon URL and refuses a URL without one", function()
+	check("a URL ending in a slash keeps its port", Client.new("http://127.0.0.1:34872/", placeReader(123), fakeHttp(noop)).port == 34872)
+	check("an IPv6 host keeps its port", Client.new("http://[::1]:40000", placeReader(123), fakeHttp(noop)).port == 40000)
+	check("a URL with a path keeps its port", Client.new("http://localhost:34873/naht", placeReader(123), fakeHttp(noop)).port == 34873)
+	local ok, err = pcall(Client.new, "http://localhost/naht", placeReader(123), fakeHttp(noop))
+	check(
+		"a URL without a port is refused instead of proving against another port",
+		not ok and string.find(tostring(err), Client.UNPORTED_URL, 1, true) ~= nil,
+		tostring(err)
+	)
+end)
+
+suite("an /info answer over the size limit is refused before it is decoded", function()
+	local oversized = fakeHttp(function(_options)
+		return reply(200, string.rep("\0", Client.INFO_BODY_LIMIT + 1))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), oversized, storeWith("stored-token"))
+	local ok, err = pcall(function()
+		client:info()
+	end)
+	check(
+		"an oversized /info is refused by its size",
+		not ok and string.find(tostring(err), "more than", 1, true) ~= nil,
+		tostring(err)
 	)
 end)
 

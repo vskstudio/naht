@@ -1,6 +1,6 @@
 //! The localhost HTTP server the Studio plugin talks to (architecture §7).
 //!
-//! All endpoints speak `MessagePack`: `GET /info` (handshake + `servePlaceId` guard + reconnect
+//! All endpoints speak `MessagePack`: `GET /info` (handshake, daemon proof, `servePlaceId` guard, reconnect
 //! re-diff when authenticated), `GET /patches` (text long-poll held open until a change or timeout), `POST /changes`
 //! (Studio → filesystem), `GET /blobs` + `POST /blobs` (the separate terrain blob channel),
 //! `POST /ack` (the plugin confirms applied patches), and `GET /heartbeat` (liveness). All sync
@@ -23,7 +23,7 @@ use axum::routing::{get, post};
 use cursor::{CursorQuery, SessionQuery};
 use naht_core::binary::{BlobInstance, TERRAIN_CLASS, terrain_voxel_count};
 use naht_core::protocol::{
-    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong, ServerInfo,
+    self, Ack, BlobChangeBatch, BlobPatchBatch, ChangeBatch, PatchBatch, Pong,
 };
 use naht_core::vfs::validate_blob_path;
 use rejection::Rejection;
@@ -43,11 +43,13 @@ use crate::config::Limits;
 use crate::session::Session;
 
 mod guard;
+mod handshake;
 mod inventory;
 mod listen;
 mod refuse;
 
 use guard::{Gate, PostGate, guard, limit_post_bodies};
+use handshake::ServedPort;
 use refuse::{refuse_directories, refused_text_paths};
 use std::io;
 use tokio::net::TcpListener;
@@ -186,7 +188,10 @@ pub fn router(state: Arc<AppState>, port: u16) -> Router {
             state.long_poll.saturating_add(TIMEOUT_SLACK),
         ));
     Router::new()
-        .route(INFO_ROUTE, get(info).layer(read_deadline.clone()))
+        .route(
+            INFO_ROUTE,
+            get(handshake::info).layer(read_deadline.clone()),
+        )
         .route("/patches", get(patches).layer(read_deadline.clone()))
         .route("/changes", post(changes))
         .route(INVENTORY_ROUTE, post(inventory::inventory))
@@ -207,6 +212,7 @@ pub fn router(state: Arc<AppState>, port: u16) -> Router {
                 .layer(DefaultBodyLimit::max(body_ceiling)),
         )
         .layer(from_fn_with_state(gate, guard))
+        .layer(Extension(ServedPort(port)))
         .with_state(state)
 }
 
@@ -246,34 +252,6 @@ pub async fn serve(listener: TcpListener, state: Arc<AppState>) -> io::Result<()
     let shutdown = state.shutdown.clone();
     let connections = state.limits.connections;
     listen::accept_until_cancelled(listener, router(state, port), shutdown, connections).await
-}
-
-async fn info(
-    State(state): State<Arc<AppState>>,
-    authenticated: Option<Extension<guard::Authenticated>>,
-) -> Response {
-    let authenticated = authenticated.is_some();
-    let outcome = state
-        .with_session(move |session| handshake(session, authenticated))
-        .await;
-    let info = match outcome {
-        Ok(Ok(info)) => info,
-        Ok(Err(rejection)) => return rejection.into_response(),
-        Err(error) => return Rejection::Blocking(error).into_response(),
-    };
-    if authenticated {
-        tracing::info!(target: "naht::server", "handshake ok; re-diffed on connect");
-        state.patches_ready.notify_waiters();
-        state.blobs_ready.notify_waiters();
-    }
-    msgpack(&info)
-}
-
-fn handshake(session: &mut Session, authenticated: bool) -> Result<ServerInfo, Rejection> {
-    if authenticated {
-        session.rescan()?;
-    }
-    Ok(session.info())
 }
 
 async fn patches(State(state): State<Arc<AppState>>, Query(query): Query<CursorQuery>) -> Response {

@@ -195,6 +195,7 @@ impl Answer {
             conflicted: self.conflicted,
             terrain_sync: self.terrain_sync,
             limits: self.limits,
+            proof: None,
         })
     }
 }
