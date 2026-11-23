@@ -39,6 +39,9 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-permissions.workspace = true
+
 [dev-dependencies]
 rbx_binary.workspace = true
 rbx_dom_weak.workspace = true

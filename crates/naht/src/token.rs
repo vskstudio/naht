@@ -1,12 +1,13 @@
 //! The per-project token that gates every daemon route except `GET /info` (architecture §7).
 //!
 //! `naht serve` creates `.naht/token` on its first run and reuses it after. The file holds 32 random
-//! bytes as 64 lowercase hex digits, readable only by its owner on Unix. The plugin sends the token in
-//! the `x-naht-token` header; `naht token` prints it.
+//! bytes as 64 lowercase hex digits, readable only by its owner: mode 0600 on Unix, and on Windows a
+//! protected DACL that grants only the current user. The plugin sends the token in the `x-naht-token`
+//! header; `naht token` prints it.
 
 use std::fmt::{self, Formatter};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use hmac::{Hmac, KeyInit, Mac};
@@ -169,7 +170,25 @@ fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
+    let io_error = |source| TokenError::Io {
+        path: path.to_path_buf(),
+        source,
+    };
+    if owner_only::is_owner_only(path).map_err(io_error)? {
+        return Ok(());
+    }
+    owner_only::restrict(path).map_err(io_error)?;
+    tracing::warn!(
+        target: "naht::token",
+        path = %path.display(),
+        "the token file was open to other accounts; it is now owner-only"
+    );
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 fn restrict_to_owner(_path: &Path) -> Result<(), TokenError> {
     Ok(())
 }
@@ -184,26 +203,37 @@ fn create(root: &Path) -> Result<Token, TokenError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_error)?;
     }
-    let mut file = private_file(&path).map_err(io_error)?;
-    file.write_all(token.as_str().as_bytes())
-        .map_err(io_error)?;
-    file.sync_all().map_err(io_error)?;
+    write_new(&path, token.as_str()).map_err(io_error)?;
     Ok(token)
 }
 
 #[cfg(unix)]
-fn private_file(path: &Path) -> io::Result<fs::File> {
+fn write_new(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(path)
+        .open(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
 }
 
-#[cfg(not(unix))]
-fn private_file(path: &Path) -> io::Result<fs::File> {
-    OpenOptions::new().write(true).create_new(true).open(path)
+#[cfg(windows)]
+fn write_new(path: &Path, text: &str) -> io::Result<()> {
+    owner_only::write_new(path, text)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn write_new(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -236,5 +266,7 @@ impl Token {
     }
 }
 
+#[cfg(windows)]
+mod owner_only;
 #[cfg(test)]
 mod tests;

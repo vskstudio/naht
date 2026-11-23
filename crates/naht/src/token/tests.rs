@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(windows)]
+use std::path::Path;
 
 use super::{Token, TokenError, load_or_create, path, read};
 use crate::test_logs::LogBuffer;
@@ -153,6 +155,78 @@ fn surrounding_whitespace_in_the_token_file_is_ignored() {
     fs::create_dir_all(root.path().join(".naht")).unwrap();
     fs::write(path(root.path()), format!("{}\n", token.as_str())).unwrap();
     assert_eq!(read(root.path()).unwrap(), token);
+}
+
+#[cfg(windows)]
+fn assert_owner_only(file: &Path) {
+    use windows_permissions::constants::{SeObjectType, SecurityInformation};
+    use windows_permissions::utilities::current_process_sid;
+    use windows_permissions::wrappers::{EqualSid, GetNamedSecurityInfo};
+
+    let descriptor = GetNamedSecurityInfo(
+        file,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl,
+    )
+    .unwrap();
+    let sddl = descriptor.as_sddl().unwrap().to_string_lossy().into_owned();
+    assert!(sddl.starts_with("D:P"), "the DACL is not protected: {sddl}");
+    let dacl = descriptor.dacl().unwrap();
+    let only_ace = dacl.get_ace(0).expect("the DACL has no ACE");
+    assert!(dacl.get_ace(1).is_none(), "more than one ACE: {sddl}");
+    let owner = current_process_sid().unwrap();
+    assert!(EqualSid(only_ace.sid().unwrap(), &owner), "{sddl}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_new_token_file_is_created_with_a_protected_dacl_for_its_owner_only() {
+    let root = tempfile::tempdir().unwrap();
+    load_or_create(root.path()).unwrap();
+    assert_owner_only(&path(root.path()));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_token_file_open_to_other_accounts_is_restricted_with_one_warning() {
+    use tracing::subscriber::with_default;
+    use windows_permissions::constants::{SeObjectType, SecurityInformation};
+    use windows_permissions::wrappers::GetNamedSecurityInfo;
+
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    fs::create_dir_all(root.path().join(".naht")).unwrap();
+    fs::write(path(root.path()), token.as_str()).unwrap();
+    let inherited = GetNamedSecurityInfo(
+        &path(root.path()),
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl,
+    )
+    .unwrap();
+    assert!(
+        !inherited
+            .as_sddl()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("D:P")
+    );
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+
+    let loaded = with_default(subscriber, || load_or_create(root.path()).unwrap());
+
+    assert_eq!(loaded.token, token);
+    assert_owner_only(&path(root.path()));
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("WARN"), "{text}");
+    assert!(!text.contains(token.as_str()), "{text}");
 }
 
 const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";

@@ -42,6 +42,7 @@ http-body-util = "0.1.5"
 hyper-util = { version = "0.1.21", features = ["server-auto", "server-graceful", "service", "tokio"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+windows-permissions = "0.2.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
