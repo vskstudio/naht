@@ -47,7 +47,7 @@ impl<V: Vfs> Session<V> {
             let Some(known) = self.studio.get(old).cloned() else {
                 continue;
             };
-            if !self.vfs.exists(Path::new(old)) || self.has_pending_patch(target) {
+            if !self.vfs.exists(Path::new(old)) {
                 continue;
             }
             self.make_parent_folders(target)?;
