@@ -20,3 +20,16 @@ impl io::Write for LogBuffer {
         Ok(())
     }
 }
+
+#[cfg(windows)]
+pub(crate) fn captured_logs() -> (LogBuffer, tracing::Dispatch) {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    (logs, tracing::Dispatch::new(subscriber))
+}

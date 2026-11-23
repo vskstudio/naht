@@ -36,6 +36,21 @@ garde dans les réglages du plugin. Un 401 veut dire que le daemon n'a pas reçu
 
 Sous Windows, les règles d'accès de `.naht/token` peuvent refuser l'accès au compte courant, par exemple après l'ajout d'une entrée de refus. Le daemon ne peut alors pas lire le token : `naht serve` refuse de démarrer et nomme le fichier. Supprime `.naht/token`, lance `naht serve` pour créer un nouveau token, puis lance `naht token` et saisis la valeur affichée dans le plugin.
 
+## « le dossier d'état refuse l'accès à ce compte » (Windows)
+
+Sous Windows, les règles d'accès du dossier `.naht` peuvent refuser l'accès au compte courant. `naht serve` refuse alors de démarrer et nomme le dossier. Ce dossier contient le token et `.naht/state.db`, qui garde les bases, les conflits enregistrés et le rattachement à la place. Rétablis d'abord ton accès, depuis une invite de commandes dans le projet :
+
+```bat
+takeown /F .naht /R /D Y
+icacls .naht /reset /T /C
+```
+
+Puis relance `naht serve` : il remet `.naht` en accès réservé au propriétaire au démarrage. Supprimer `.naht` à la place supprime aussi cet état de synchronisation : ne le fais que si tu acceptes de perdre les bases, les conflits enregistrés et le rattachement à la place.
+
+## « le dossier d'état est une jonction ou un lien symbolique » (Windows)
+
+Sous Windows, `naht` refuse un `.naht` qui est une jonction ou un lien symbolique, avant de lire ou de modifier la moindre règle d'accès : le dossier vers lequel il pointe reste intact. Remplace le lien par un vrai dossier, puis relance `naht serve`. Supprimer le lien ne supprime pas le dossier cible, mais le nouveau `.naht` démarre vide : copie `state.db` depuis le dossier cible si tu veux garder l'état de synchronisation.
+
 ## « could not prove it holds this project's token »
 
 Avant d'envoyer le token, le plugin demande au programme qui écoute sur le port de prouver qu'il le détient, et celui-ci

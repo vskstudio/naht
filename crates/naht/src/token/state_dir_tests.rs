@@ -1,24 +1,18 @@
 use std::fs;
 use std::path::Path;
 
-use tracing::dispatcher::with_default;
-
-use super::acl_fixtures::{owner_sid_text, set_dacl};
-use super::tests::captured_logs;
+use super::acl_fixtures::{assert_only_owner_is_granted, owner_sid_text, set_dacl, try_set_dacl};
 use super::{TokenError, owner_only, path, prepare_state_dir};
-use crate::commands::serve::take_instance_lock;
 
-#[test]
-fn a_fresh_project_lock_creates_an_owner_only_state_directory_and_lock_file_silently() {
-    let root = tempfile::tempdir().unwrap();
-    let (logs, dispatch) = captured_logs();
+struct RestoreOwnerAccess<'a> {
+    dir: &'a Path,
+    owner: String,
+}
 
-    let lock = with_default(&dispatch, || take_instance_lock(root.path()).unwrap());
-
-    assert!(owner_only::is_dir_owner_only(&root.path().join(".naht")).unwrap());
-    assert_only_owner_is_granted(&root.path().join(".naht").join("daemon.lock"));
-    assert_eq!(logs.text(), "");
-    drop(lock);
+impl Drop for RestoreOwnerAccess<'_> {
+    fn drop(&mut self) {
+        let _ = try_set_dacl(self.dir, &format!("D:P(A;OICI;FA;;;{})", self.owner), true);
+    }
 }
 
 #[test]
@@ -63,43 +57,35 @@ fn a_state_directory_that_is_a_junction_is_refused_and_its_target_is_untouched()
 }
 
 #[test]
-fn a_state_directory_denied_to_this_account_names_the_fix() {
+fn a_state_directory_denied_to_this_account_names_the_fix_and_the_state_it_holds() {
     let root = tempfile::tempdir().unwrap();
     let state_dir = root.path().join(".naht");
     fs::create_dir(&state_dir).unwrap();
     let owner = owner_sid_text();
+    let _restore = RestoreOwnerAccess {
+        dir: &state_dir,
+        owner: owner.clone(),
+    };
     set_dacl(
         &state_dir,
-        &format!("D:P(D;;FA;;;WD)(A;;FA;;;{owner})"),
+        &format!("D:P(D;;RC;;;WD)(A;;FA;;;{owner})"),
         true,
     );
 
     let error = prepare_state_dir(root.path()).unwrap_err();
     let text = error.to_string();
+    let shown = state_dir.display();
 
     assert!(matches!(error, TokenError::StateDirDenied { .. }), "{text}");
-    assert!(text.contains("delete the directory"), "{text}");
-    assert!(text.contains("run `naht serve`"), "{text}");
-
-    set_dacl(&state_dir, &format!("D:P(A;OICI;FA;;;{owner})"), true);
-    fs::remove_dir(&state_dir).unwrap();
-}
-
-fn assert_only_owner_is_granted(file: &Path) {
-    use windows_permissions::constants::{SeObjectType, SecurityInformation};
-    use windows_permissions::utilities::current_process_sid;
-    use windows_permissions::wrappers::{EqualSid, GetNamedSecurityInfo};
-
-    let descriptor = GetNamedSecurityInfo(
-        file,
-        SeObjectType::SE_FILE_OBJECT,
-        SecurityInformation::Dacl,
-    )
-    .unwrap();
-    let sddl = descriptor.as_sddl().unwrap().to_string_lossy().into_owned();
-    let dacl = descriptor.dacl().unwrap();
-    let only_ace = dacl.get_ace(0).expect("the DACL has no ACE");
-    assert!(dacl.get_ace(1).is_none(), "more than one ACE: {sddl}");
-    let owner = current_process_sid().unwrap();
-    assert!(EqualSid(only_ace.sid().unwrap(), &owner), "{sddl}");
+    assert!(
+        text.contains(&format!("takeown /F {shown} /R /D Y")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("icacls {shown} /reset /T /C")),
+        "{text}"
+    );
+    assert!(text.contains("run `naht serve` again"), "{text}");
+    assert!(text.contains("deletes `state.db`"), "{text}");
+    assert!(text.contains("place binding"), "{text}");
 }

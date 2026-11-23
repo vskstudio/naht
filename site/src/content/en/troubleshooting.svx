@@ -35,6 +35,21 @@ stores it in the plugin settings. A 401 means the daemon did not receive a token
 
 On Windows the access rules of `.naht/token` can deny the current account, for example after a tool added a deny entry to it. The daemon then cannot read the token, so `naht serve` refuses to start and names the file. Delete `.naht/token`, run `naht serve` to make a new token, then run `naht token` and enter the value it prints in the plugin.
 
+## "the state directory denies this account access" (Windows)
+
+On Windows the access rules of the `.naht` directory can deny the current account. `naht serve` then refuses to start and names the directory. That directory holds the token and `.naht/state.db`, which keeps the bases, the recorded conflicts and the place binding. Restore your access first, from a command prompt in the project:
+
+```bat
+takeown /F .naht /R /D Y
+icacls .naht /reset /T /C
+```
+
+Then run `naht serve` again: it makes `.naht` owner-only when it starts. Deleting `.naht` instead also deletes that sync state, so do it only if you accept losing the bases, the recorded conflicts and the place binding.
+
+## "the state directory is a junction or symbolic link" (Windows)
+
+On Windows `naht` refuses a `.naht` that is a junction or a symbolic link, before it reads or changes any access rule, so the directory the link points to is left alone. Replace the link with a real directory, then run `naht serve` again. Removing the link does not delete its target, but the new `.naht` starts empty: copy `state.db` from the target into it if you want to keep the sync state.
+
 ## "could not prove it holds this project's token"
 
 Before it sends the token, the plugin asks the program on the port to prove it holds that token, and this one could

@@ -5,7 +5,10 @@ use std::path::Path;
 #[cfg(windows)]
 use super::acl_fixtures::{assert_dacl_is, owner_sid_text, set_dacl};
 use super::{Token, TokenError, load_or_create, path, read};
+#[cfg(unix)]
 use crate::test_logs::LogBuffer;
+#[cfg(windows)]
+use crate::test_logs::captured_logs;
 
 #[test]
 fn generated_tokens_are_64_lowercase_hex_digits_and_differ() {
@@ -212,19 +215,6 @@ fn a_token_file_open_to_other_accounts_is_restricted_with_one_warning() {
 }
 
 #[cfg(windows)]
-pub(super) fn captured_logs() -> (LogBuffer, tracing::Dispatch) {
-    let logs = LogBuffer::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer({
-            let logs = logs.clone();
-            move || logs.clone()
-        })
-        .finish();
-    (logs, tracing::Dispatch::new(subscriber))
-}
-
-#[cfg(windows)]
 #[test]
 fn a_token_file_already_protected_loads_silently_and_keeps_its_dacl() {
     use tracing::dispatcher::with_default;
@@ -272,8 +262,6 @@ fn a_new_token_file_has_the_owner_only_dacl_before_any_token_byte_is_written() {
 
 #[cfg(windows)]
 fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str, protected: bool) {
-    use tracing::dispatcher::with_default;
-
     let root = tempfile::tempdir().unwrap();
     let token = Token::generate().unwrap();
     let dir = root.path().join(".naht");
@@ -282,13 +270,21 @@ fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str, protected: bool) 
     fs::write(path(root.path()), token.as_str()).unwrap();
     set_dacl(&path(root.path()), sddl, protected);
     assert_dacl_is(&path(root.path()), sddl, protected);
+
+    assert_loaded_with_one_warning(root.path(), &token);
+}
+
+#[cfg(windows)]
+fn assert_loaded_with_one_warning(root: &Path, token: &Token) {
+    use tracing::dispatcher::with_default;
+
     let (logs, dispatch) = captured_logs();
 
-    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
+    let loaded = with_default(&dispatch, || load_or_create(root).unwrap());
 
-    assert_eq!(loaded.token, token);
+    assert_eq!(loaded.token, *token);
     assert!(!loaded.created);
-    assert_owner_only(&path(root.path()));
+    assert_owner_only(&path(root));
     let text = logs.text();
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.contains("WARN"), "{text}");
@@ -372,6 +368,25 @@ fn a_protected_owner_ace_carrying_an_inherit_flag_loads_silently_as_owner_only()
 fn a_token_file_with_an_unprotected_owner_only_dacl_is_rewritten_with_one_warning() {
     let owner = owner_sid_text();
     assert_rewritten_to_owner_only_with_one_warning(&format!("D:(A;;FA;;;{owner})"), false);
+}
+
+#[cfg(windows)]
+#[test]
+fn an_unprotected_owner_ace_with_no_inherited_ace_is_rewritten_with_one_warning() {
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir(&dir).unwrap();
+    let owner = owner_sid_text();
+    let sddl = format!("D:(A;;FA;;;{owner})");
+    set_dacl(&dir, &format!("D:P(A;;FA;;;{owner})"), true);
+    fs::write(path(root.path()), token.as_str()).unwrap();
+    set_dacl(&path(root.path()), &sddl, false);
+    assert_dacl_is(&path(root.path()), &sddl, false);
+    super::owner_only::restrict_dir(&dir).unwrap();
+    assert_dacl_is(&path(root.path()), &sddl, false);
+
+    assert_loaded_with_one_warning(root.path(), &token);
 }
 
 #[cfg(windows)]

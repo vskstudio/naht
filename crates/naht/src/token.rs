@@ -109,7 +109,9 @@ pub enum TokenError {
     },
     /// The state directory's access rules deny this account access, so it cannot be secured or used.
     #[error(
-        "the state directory `{}` denies this account access, so `naht serve` cannot use it: delete the directory, run `naht serve` to make a new token, and enter the new token in the plugin",
+        "the state directory `{}` denies this account access, so `naht serve` cannot use it. Restore your access first from a command prompt: `takeown /F {} /R /D Y`, then `icacls {} /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
+        path.display(),
+        path.display(),
         path.display()
     )]
     StateDirDenied {
@@ -239,7 +241,7 @@ fn windows_access_error(path: &Path, source: io::Error) -> TokenError {
 /// [`TokenError::StateDirDenied`] when its access rules deny this account, and
 /// [`TokenError::StateDirIo`] for any other failure.
 #[cfg(windows)]
-pub fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
+pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
     let dir = root.join(".naht");
     fs::create_dir_all(root).map_err(|source| state_dir_io(&dir, source))?;
     match fs::create_dir(&dir) {
@@ -374,6 +376,8 @@ impl Token {
 
 #[cfg(all(test, windows))]
 mod acl_fixtures;
+#[cfg(all(test, windows))]
+pub(crate) use acl_fixtures::{assert_dacl_is, assert_only_owner_is_granted, owner_sid_text};
 #[cfg(windows)]
 mod owner_only;
 #[cfg(all(test, windows))]

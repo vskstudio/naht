@@ -12,7 +12,7 @@ mod inspect;
 mod pull;
 mod release;
 mod rojo;
-pub(crate) mod serve;
+mod serve;
 mod token;
 mod unbind;
 

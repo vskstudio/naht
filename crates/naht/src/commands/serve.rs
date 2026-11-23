@@ -163,6 +163,8 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
+    #[cfg(windows)]
+    use super::take_instance_lock;
     use super::{CommandError, Config, Output, checked_tree_paths, serve};
     use crate::config::{ConfigError, LimitsConfig, TreeNode};
     use tokio::time;
@@ -285,6 +287,26 @@ mod tests {
             "{first}"
         );
         assert!(!later.contains("naht created the token"), "{later}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_fresh_project_lock_creates_an_owner_only_state_directory_and_lock_file_silently() {
+        use crate::test_logs::captured_logs;
+        use crate::token::{assert_dacl_is, assert_only_owner_is_granted, owner_sid_text};
+        use tracing::dispatcher::with_default;
+
+        let root = tempfile::tempdir().unwrap();
+        let state_dir = root.path().join(".naht");
+        let (logs, dispatch) = captured_logs();
+
+        let lock = with_default(&dispatch, || take_instance_lock(root.path()).unwrap());
+
+        let owner = owner_sid_text();
+        assert_dacl_is(&state_dir, &format!("D:P(A;OICI;FA;;;{owner})"), true);
+        assert_only_owner_is_granted(&state_dir.join("daemon.lock"));
+        assert_eq!(logs.text(), "");
+        drop(lock);
     }
 
     #[tokio::test]
