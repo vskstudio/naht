@@ -34,11 +34,11 @@ garde dans les réglages du plugin. Un 401 veut dire que le daemon n'a pas reçu
 
 ## « le fichier de token refuse l'accès à ce compte » (Windows)
 
-Sous Windows, les règles d'accès de `.naht/token` peuvent refuser l'accès au compte courant, par exemple après l'ajout d'une entrée de refus. Le daemon ne peut alors pas lire le token : `naht serve` refuse de démarrer et nomme le fichier. Supprime `.naht/token`, lance `naht serve` pour créer un nouveau token, puis lance `naht token` et saisis la valeur affichée dans le plugin.
+Sous Windows, les règles d'accès de `.naht/token` peuvent refuser l'accès au compte courant, par exemple après l'ajout d'une entrée de refus. Si ce compte possède le fichier, `naht serve` remet les règles en ordre au démarrage et journalise un seul avertissement ; le token ne change pas. Si un autre compte possède le fichier, par exemple un fichier créé depuis une invite élevée, `naht serve` refuse de démarrer et nomme le fichier. Prends alors d'abord la propriété du fichier, depuis une invite de commandes dans le projet, avec `takeown /F .naht\token`, puis relance `naht serve`. Ou supprime `.naht/token`, lance `naht serve` pour créer un nouveau token, puis lance `naht token` et saisis la valeur affichée dans le plugin.
 
 ## « le dossier d'état refuse l'accès à ce compte » (Windows)
 
-Sous Windows, les règles d'accès du dossier `.naht` peuvent refuser l'accès au compte courant. `naht serve` refuse alors de démarrer et nomme le dossier. Ce dossier contient le token et `.naht/state.db`, qui garde les bases, les conflits enregistrés et le rattachement à la place. Rétablis d'abord ton accès, depuis une invite de commandes dans le projet :
+Sous Windows, les règles d'accès du dossier `.naht` peuvent refuser l'accès au compte courant. Si ce compte possède le dossier, `naht serve` remet les règles en ordre au démarrage et journalise un seul avertissement. Si un autre compte le possède, par exemple un dossier créé depuis une invite élevée, `naht serve` refuse de démarrer et nomme le dossier. Ce dossier contient le token et `.naht/state.db`, qui garde les bases, les conflits enregistrés et le rattachement à la place. Prends d'abord la propriété du dossier, depuis une invite de commandes dans le projet :
 
 ```bat
 takeown /F .naht /R /D Y

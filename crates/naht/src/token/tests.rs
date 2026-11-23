@@ -323,9 +323,62 @@ fn a_token_file_denied_to_this_account_names_the_fix() {
     let text = error.to_string();
 
     assert!(matches!(error, TokenError::Denied { .. }), "{text}");
+    assert!(text.contains("another account owns the file"), "{text}");
+    assert!(
+        text.contains("takeown /F \"C:\\project\\.naht\\token\""),
+        "{text}"
+    );
     assert!(text.contains("delete the file"), "{text}");
     assert!(text.contains("run `naht serve`"), "{text}");
     assert!(text.contains("enter the new token in the plugin"), "{text}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_token_file_owned_by_this_account_with_an_extra_ace_is_repaired_with_one_warning() {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir(&dir).unwrap();
+    let owner = owner_sid_text();
+    set_dacl(&dir, &format!("D:P(A;OICI;FA;;;{owner})"), true);
+    fs::write(path(root.path()), token.as_str()).unwrap();
+    set_dacl(
+        &path(root.path()),
+        &format!("D:P(A;;FA;;;{owner})(A;;FR;;;WD)"),
+        true,
+    );
+    assert!(!super::owner_only::is_file_owner_only(&path(root.path())).unwrap());
+
+    let (logs, dispatch) = captured_logs();
+    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
+
+    assert_eq!(loaded.token, token);
+    assert!(!loaded.created);
+    assert!(super::owner_only::is_file_owner_only(&path(root.path())).unwrap());
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(
+        text.contains("the token file was open to other accounts"),
+        "{text}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_deleted_token_file_is_replaced_by_a_new_owner_only_token() {
+    let root = tempfile::tempdir().unwrap();
+
+    let first = load_or_create(root.path()).unwrap();
+    assert!(first.created);
+    fs::remove_file(path(root.path())).unwrap();
+    let renewed = load_or_create(root.path()).unwrap();
+
+    assert!(renewed.created);
+    assert_ne!(renewed.token, first.token);
+    assert_owner_only(&path(root.path()));
 }
 
 #[cfg(windows)]

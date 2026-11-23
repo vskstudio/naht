@@ -58,6 +58,10 @@ fn a_state_directory_denied_to_this_account_names_the_fix_and_the_state_it_holds
 
     assert!(matches!(error, TokenError::StateDirDenied { .. }), "{text}");
     assert!(
+        text.contains("another account owns the directory"),
+        "{text}"
+    );
+    assert!(
         text.contains(&format!("takeown /F \"{shown}\" /R /D Y")),
         "{text}"
     );

@@ -89,9 +89,10 @@ pub enum TokenError {
         #[source]
         source: io::Error,
     },
-    /// The token file's access rules deny this account, so it cannot be read or repaired.
+    /// The token file cannot be opened by this account, which in practice means another account owns it.
     #[error(
-        "the token file `{}` denies this account access, so `naht serve` cannot read the token: delete the file, run `naht serve` to make a new token, and enter the new token in the plugin",
+        "the token file `{}` cannot be opened by this account, so `naht serve` cannot read or repair the token. This happens when another account owns the file, for example one created from an elevated shell. Take ownership first from a command prompt with `takeown /F \"{}\"`, then run `naht serve` again. To start over instead, delete the file, run `naht serve` to make a new token, and enter the new token in the plugin.",
+        path.display(),
         path.display()
     )]
     Denied {
@@ -107,9 +108,9 @@ pub enum TokenError {
         #[source]
         source: io::Error,
     },
-    /// The state directory's access rules deny this account access, so it cannot be secured or used.
+    /// The state directory cannot be opened by this account, which in practice means another account owns it.
     #[error(
-        "the state directory `{}` denies this account access, so `naht serve` cannot use it. Restore your access first from a command prompt: `takeown /F \"{}\" /R /D Y`, then `icacls \"{}\" /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
+        "the state directory `{}` cannot be opened by this account, so `naht serve` cannot use it. This happens when another account owns the directory, for example one created from an elevated shell. Take ownership first from a command prompt: `takeown /F \"{}\" /R /D Y`, then `icacls \"{}\" /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
         path.display(),
         path.display(),
         path.display()
