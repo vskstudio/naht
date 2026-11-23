@@ -384,7 +384,9 @@ fn a_protected_owner_ace_carrying_an_inherit_flag_loads_silently_as_owner_only()
 
     let root = tempfile::tempdir().unwrap();
     let token = Token::generate().unwrap();
-    fs::create_dir_all(root.path().join(".naht")).unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir_all(&dir).unwrap();
+    super::owner_only::restrict_dir(&dir).unwrap();
     fs::write(path(root.path()), token.as_str()).unwrap();
     let owner = owner_sid_text();
     set_dacl(
@@ -449,20 +451,21 @@ fn a_file_created_in_the_owner_only_state_directory_is_owner_only_before_any_set
 #[cfg(windows)]
 fn assert_only_owner_is_granted(file: &Path) {
     use windows_permissions::constants::{SeObjectType, SecurityInformation};
-    use windows_permissions::wrappers::GetNamedSecurityInfo;
+    use windows_permissions::utilities::current_process_sid;
+    use windows_permissions::wrappers::{EqualSid, GetNamedSecurityInfo};
 
-    let sddl = GetNamedSecurityInfo(
+    let descriptor = GetNamedSecurityInfo(
         file,
         SeObjectType::SE_FILE_OBJECT,
         SecurityInformation::Dacl,
     )
-    .unwrap()
-    .as_sddl()
-    .unwrap()
-    .to_string_lossy()
-    .into_owned();
-    assert_eq!(sddl.matches('(').count(), 1, "{sddl}");
-    assert!(sddl.contains(&owner_sid_text()), "{sddl}");
+    .unwrap();
+    let sddl = descriptor.as_sddl().unwrap().to_string_lossy().into_owned();
+    let dacl = descriptor.dacl().unwrap();
+    let only_ace = dacl.get_ace(0).expect("the DACL has no ACE");
+    assert!(dacl.get_ace(1).is_none(), "more than one ACE: {sddl}");
+    let owner = current_process_sid().unwrap();
+    assert!(EqualSid(only_ace.sid().unwrap(), &owner), "{sddl}");
 }
 
 const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
