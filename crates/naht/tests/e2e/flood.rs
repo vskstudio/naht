@@ -18,6 +18,10 @@ const FLOOD_READ_WAIT: Duration = Duration::from_secs(5);
 
 const SETTLE: Duration = Duration::from_secs(1);
 
+const PROBE_MARGIN: Duration = Duration::from_millis(500);
+
+pub(super) const SETUP_ATTEMPTS: usize = 5;
+
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
 
 const REPORT_VARIABLE: &str = "NAHT_FLOOD_REPORT";
@@ -270,34 +274,49 @@ fn write_report(line: &str) {
 #[tokio::test]
 async fn a_newcomer_is_refused_at_accept_once_the_queue_is_full() {
     let root = tempfile::tempdir().unwrap();
-    let daemon = started(&root).await;
-    let address_of_daemon = address(&daemon);
-    let held = hold_silent(&address_of_daemon, SEATS + QUEUE + 28).await;
-    sleep(SETTLE).await;
+    init(root.path());
+    for _ in 0..SETUP_ATTEMPTS {
+        let daemon = Daemon::start(root.path()).await;
+        let address_of_daemon = address(&daemon);
+        let started = Instant::now();
+        let held = hold_silent(&address_of_daemon, SEATS + QUEUE + 28).await;
+        let before_first_seat_expires = SEAT_DEADLINE
+            .saturating_sub(started.elapsed())
+            .saturating_sub(PROBE_MARGIN);
+        if before_first_seat_expires.is_zero() {
+            drop(held);
+            continue;
+        }
+        sleep(before_first_seat_expires).await;
 
-    let (refused_in, newcomer) = timed(timeout(
-        QUEUE_WAIT + SLACK,
-        attempt(
-            &address_of_daemon,
-            &authenticated_request(&daemon, "/heartbeat"),
-        ),
-    ))
-    .await;
-    drop(held);
+        let (refused_in, newcomer) = timed(timeout(
+            QUEUE_WAIT + SLACK,
+            attempt(
+                &address_of_daemon,
+                &authenticated_request(&daemon, "/heartbeat"),
+            ),
+        ))
+        .await;
+        drop(held);
 
-    let mut report = String::new();
-    writeln!(
-        report,
-        "queue_refusal_ms={} queue_refusal_served={}",
-        refused_in.as_millis(),
-        matches!(newcomer, Ok(Some(_))),
-    )
-    .unwrap();
-    write_report(&report);
+        let mut report = String::new();
+        writeln!(
+            report,
+            "queue_refusal_ms={} queue_refusal_served={}",
+            refused_in.as_millis(),
+            matches!(newcomer, Ok(Some(_))),
+        )
+        .unwrap();
+        write_report(&report);
 
-    assert!(
-        matches!(newcomer, Ok(None)) && refused_in < REFUSAL_BOUND,
-        "a newcomer behind a full queue was not refused at accept (answered after {refused_in:?})"
+        assert!(
+            matches!(newcomer, Ok(None)) && refused_in < REFUSAL_BOUND,
+            "a newcomer behind a full queue was not refused at accept (answered after {refused_in:?})"
+        );
+        return;
+    }
+    panic!(
+        "the silent connections took longer than the seat deadline to hold in {SETUP_ATTEMPTS} attempts"
     );
 }
 

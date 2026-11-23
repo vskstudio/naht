@@ -25,9 +25,13 @@ const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 const DOCUMENTED_DEADLINE: Duration = Duration::from_secs(2);
 
-const DEADLINE_SLACK: Duration = Duration::from_secs(5);
+const DEADLINE_SLACK: Duration = Duration::from_secs(1);
 
 const SERVED_WAIT: Duration = Duration::from_secs(1);
+
+const PROBE_MARGIN: Duration = Duration::from_millis(500);
+
+const SETUP_ATTEMPTS: usize = 5;
 
 const HOLD: Duration = Duration::from_secs(3);
 
@@ -75,32 +79,50 @@ async fn spawn_server(
 
 #[tokio::test]
 async fn a_connection_past_the_anonymous_seats_waits_for_a_seat_then_is_served() {
-    let (address, shutdown, server) = spawn_server(ping_router(), AUTHENTICATED_CAP).await;
+    for _ in 0..SETUP_ATTEMPTS {
+        let (address, shutdown, server) = spawn_server(ping_router(), AUTHENTICATED_CAP).await;
 
-    let mut idle = Vec::new();
-    for _ in 0..ANONYMOUS_CONNECTIONS {
-        idle.push(TcpStream::connect(address).await.unwrap());
+        let started = Instant::now();
+        let mut idle = Vec::new();
+        for _ in 0..ANONYMOUS_CONNECTIONS {
+            idle.push(TcpStream::connect(address).await.unwrap());
+        }
+        sleep(Duration::from_millis(200)).await;
+
+        let mut queued = TcpStream::connect(address).await.unwrap();
+        queued.write_all(PING).await.unwrap();
+        let before_first_seat_expires = DOCUMENTED_DEADLINE
+            .saturating_sub(started.elapsed())
+            .saturating_sub(PROBE_MARGIN);
+        if before_first_seat_expires.is_zero() {
+            drop(idle);
+            shutdown.cancel();
+            server.await.unwrap().unwrap();
+            continue;
+        }
+        let early = timeout(before_first_seat_expires, read_to_close(&mut queued)).await;
+        if early.is_ok() {
+            drop(idle);
+            shutdown.cancel();
+            server.await.unwrap().unwrap();
+            continue;
+        }
+
+        idle.pop();
+        let response = timeout(HOLD, read_to_close(&mut queued))
+            .await
+            .expect("the queued connection was not served once a seat freed");
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(response.ends_with("pong"), "{response}");
+
+        idle.clear();
+        shutdown.cancel();
+        server.await.unwrap().unwrap();
+        return;
     }
-    sleep(Duration::from_millis(200)).await;
-
-    let mut queued = TcpStream::connect(address).await.unwrap();
-    queued.write_all(PING).await.unwrap();
-    let early = timeout(SERVED_WAIT, read_to_close(&mut queued)).await;
-    assert!(
-        early.is_err(),
-        "a connection past the anonymous seats was served while they were full"
+    panic!(
+        "in {SETUP_ATTEMPTS} attempts a connection past the anonymous seats was never held while they were full"
     );
-
-    idle.pop();
-    let response = timeout(HOLD, read_to_close(&mut queued))
-        .await
-        .expect("the queued connection was not served once a seat freed");
-    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-    assert!(response.ends_with("pong"), "{response}");
-
-    idle.clear();
-    shutdown.cancel();
-    server.await.unwrap().unwrap();
 }
 
 async fn a_new_connection_is_served_once_the_held_connections_expire(opening: &[u8]) {
@@ -171,4 +193,18 @@ fn a_shed_is_reported_at_once_and_later_sheds_are_reported_as_one_count() {
     assert_eq!(sheds.record(at(12)), None);
     assert_eq!(sheds.flush(at(20)), Some(1));
     assert_eq!(sheds.flush(at(30)), None);
+}
+
+#[test]
+fn a_flush_within_ten_seconds_of_a_warning_keeps_the_count_for_the_next_due_report() {
+    let start = Instant::now();
+    let at = |milliseconds: u64| start + Duration::from_millis(milliseconds);
+    let mut sheds = super::ShedLog::default();
+
+    assert_eq!(sheds.record(at(0)), Some(1));
+    assert_eq!(sheds.record(at(5)), None);
+    assert_eq!(sheds.flush(at(10)), None);
+    assert_eq!(sheds.record(at(9_990)), None);
+    assert_eq!(sheds.flush(at(10_000)), Some(2));
+    assert_eq!(sheds.flush(at(10_010)), None);
 }

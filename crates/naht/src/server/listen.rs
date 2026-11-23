@@ -77,7 +77,7 @@ pub(super) async fn accept_until_cancelled(
         }
     }
 
-    report_sheds(sheds.flush(Instant::now()));
+    report_sheds(sheds.finish(Instant::now()));
     graceful.shutdown().await;
     Ok(())
 }
@@ -91,6 +91,10 @@ struct ShedLog {
 impl ShedLog {
     fn record(&mut self, now: Instant) -> Option<u64> {
         self.pending = self.pending.saturating_add(1);
+        self.flush(now)
+    }
+
+    fn flush(&mut self, now: Instant) -> Option<u64> {
         if self.is_due(now) {
             self.take(now)
         } else {
@@ -98,7 +102,7 @@ impl ShedLog {
         }
     }
 
-    fn flush(&mut self, now: Instant) -> Option<u64> {
+    fn finish(&mut self, now: Instant) -> Option<u64> {
         self.take(now)
     }
 

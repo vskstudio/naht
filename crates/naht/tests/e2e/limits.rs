@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
 use naht_core::protocol::{
@@ -12,8 +12,8 @@ use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 
 use super::flood::{
-    authenticated_request, hold_authenticated, request_on_open, served_within, timed,
-    tokenless_request, try_read_response,
+    SETUP_ATTEMPTS, authenticated_request, hold_authenticated, request_on_open, served_within,
+    timed, tokenless_request, try_read_response,
 };
 use super::{Daemon, init, wire};
 
@@ -32,6 +32,8 @@ const LONG_POLL_CEILING: Duration = Duration::from_secs(60);
 const HELD_CURSOR: u64 = u64::MAX;
 
 const PROBE_WAIT: Duration = Duration::from_secs(1);
+const PROBE_MARGIN: Duration = Duration::from_millis(500);
+const STALL_SETTLE: Duration = Duration::from_millis(200);
 const RELEASE_WAIT: Duration = Duration::from_secs(5);
 const WARNING: &str = "large deletion reconciled";
 
@@ -186,34 +188,52 @@ async fn the_configured_inventory_body_limit_is_enforced_at_its_boundary() {
 #[tokio::test]
 async fn a_full_anonymous_pool_holds_the_seventeenth_connection_until_a_seat_frees() {
     let root = project("");
-    let daemon = Daemon::start(root.path()).await;
-    let addr = daemon.base.trim_start_matches("http://").to_owned();
+    for _ in 0..SETUP_ATTEMPTS {
+        let daemon = Daemon::start(root.path()).await;
+        let addr = daemon.base.trim_start_matches("http://").to_owned();
 
-    let mut stalled = Vec::new();
-    for _ in 0..ANONYMOUS_POOL {
-        stalled.push(stall(&daemon).await);
+        let started = Instant::now();
+        let mut stalled = Vec::new();
+        for _ in 0..ANONYMOUS_POOL {
+            stalled.push(stall(&daemon).await);
+        }
+        sleep(STALL_SETTLE).await;
+        let mut seventeenth = TcpStream::connect(&addr).await.unwrap();
+        seventeenth
+            .write_all(tokenless_request(&daemon, "/info").as_bytes())
+            .await
+            .unwrap();
+        let before_first_seat_expires = ANONYMOUS_DEADLINE
+            .saturating_sub(started.elapsed())
+            .saturating_sub(PROBE_MARGIN);
+        if before_first_seat_expires.is_zero() {
+            continue;
+        }
+        let early = timeout(
+            before_first_seat_expires,
+            try_read_response(&mut seventeenth),
+        )
+        .await;
+        if early.is_ok() {
+            drop(stalled);
+            continue;
+        }
+        let served = timeout(
+            ANONYMOUS_DEADLINE.saturating_add(DEADLINE_MARGIN),
+            try_read_response(&mut seventeenth),
+        )
+        .await;
+        assert_eq!(
+            served.ok().flatten().map(|(status, _)| status),
+            Some(200),
+            "the queued connection was not served once the stalled seats expired"
+        );
+        drop(stalled);
+        return;
     }
-    let mut seventeenth = TcpStream::connect(&addr).await.unwrap();
-    seventeenth
-        .write_all(tokenless_request(&daemon, "/info").as_bytes())
-        .await
-        .unwrap();
-    let early = timeout(PROBE_WAIT, try_read_response(&mut seventeenth)).await;
-    assert!(
-        early.is_err(),
-        "a connection past the {ANONYMOUS_POOL} anonymous seats was served while they were full"
+    panic!(
+        "in {SETUP_ATTEMPTS} attempts the connection past the {ANONYMOUS_POOL} anonymous seats was never held while they were full"
     );
-    let served = timeout(
-        ANONYMOUS_DEADLINE.saturating_add(DEADLINE_MARGIN),
-        try_read_response(&mut seventeenth),
-    )
-    .await;
-    assert_eq!(
-        served.ok().flatten().map(|(status, _)| status),
-        Some(200),
-        "the queued connection was not served once the stalled seats expired"
-    );
-    drop(stalled);
 }
 
 #[tokio::test]
