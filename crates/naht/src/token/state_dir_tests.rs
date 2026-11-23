@@ -1,17 +1,16 @@
 use std::fs;
 use std::path::Path;
 
-use super::acl_fixtures::{assert_only_owner_is_granted, owner_sid_text, set_dacl, try_set_dacl};
+use super::acl_fixtures::{assert_only_owner_is_granted, owner_sid_text, set_dacl};
 use super::{TokenError, owner_only, path, prepare_state_dir};
 
-struct RestoreOwnerAccess<'a> {
+struct RemoveDeniedDir<'a> {
     dir: &'a Path,
-    owner: String,
 }
 
-impl Drop for RestoreOwnerAccess<'_> {
+impl Drop for RemoveDeniedDir<'_> {
     fn drop(&mut self) {
-        let _ = try_set_dacl(self.dir, &format!("D:P(A;OICI;FA;;;{})", self.owner), true);
+        let _ = fs::remove_dir(self.dir);
     }
 }
 
@@ -62,10 +61,7 @@ fn a_state_directory_denied_to_this_account_names_the_fix_and_the_state_it_holds
     let state_dir = root.path().join(".naht");
     fs::create_dir(&state_dir).unwrap();
     let owner = owner_sid_text();
-    let _restore = RestoreOwnerAccess {
-        dir: &state_dir,
-        owner: owner.clone(),
-    };
+    let _remove = RemoveDeniedDir { dir: &state_dir };
     set_dacl(
         &state_dir,
         &format!("D:P(D;;RC;;;WD)(A;;FA;;;{owner})"),

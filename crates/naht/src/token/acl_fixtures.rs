@@ -17,22 +17,18 @@ pub(crate) fn owner_sid_text() -> String {
 
 #[cfg(windows)]
 pub(super) fn set_dacl(file: &Path, sddl: &str, protected: bool) {
-    try_set_dacl(file, sddl, protected).unwrap();
-}
-
-#[cfg(windows)]
-pub(super) fn try_set_dacl(file: &Path, sddl: &str, protected: bool) -> std::io::Result<()> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_permissions::constants::{AccessRights, SeObjectType, SecurityInformation};
     use windows_permissions::wrappers::{
         ConvertStringSecurityDescriptorToSecurityDescriptor, SetSecurityInfo,
     };
 
-    let descriptor = ConvertStringSecurityDescriptorToSecurityDescriptor(sddl)?;
+    let descriptor = ConvertStringSecurityDescriptorToSecurityDescriptor(sddl).unwrap();
     let mut handle = fs::OpenOptions::new()
-        .access_mode(AccessRights::WriteDac.bits())
+        .access_mode((AccessRights::ReadControl | AccessRights::WriteDac).bits())
         .custom_flags(super::owner_only::FILE_FLAG_BACKUP_SEMANTICS)
-        .open(file)?;
+        .open(file)
+        .unwrap();
     SetSecurityInfo(
         &mut handle,
         SeObjectType::SE_FILE_OBJECT,
@@ -46,6 +42,7 @@ pub(super) fn try_set_dacl(file: &Path, sddl: &str, protected: bool) -> std::io:
         descriptor.dacl(),
         None,
     )
+    .unwrap();
 }
 
 #[cfg(windows)]
