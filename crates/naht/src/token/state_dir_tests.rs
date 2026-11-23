@@ -3,7 +3,8 @@ use std::path::Path;
 
 use tracing::dispatcher::with_default;
 
-use super::tests::{captured_logs, owner_sid_text, set_dacl};
+use super::acl_fixtures::{owner_sid_text, set_dacl};
+use super::tests::captured_logs;
 use super::{TokenError, owner_only, path, prepare_state_dir};
 use crate::commands::serve::take_instance_lock;
 

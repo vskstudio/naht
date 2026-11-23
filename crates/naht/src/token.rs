@@ -372,6 +372,8 @@ impl Token {
     }
 }
 
+#[cfg(all(test, windows))]
+mod acl_fixtures;
 #[cfg(windows)]
 mod owner_only;
 #[cfg(all(test, windows))]
