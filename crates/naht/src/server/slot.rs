@@ -52,6 +52,10 @@ impl ConnectionSlot {
         true
     }
 
+    pub(super) fn release(&self) {
+        *self.permit.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
     pub(super) async fn expired(&self, deadline: Duration) {
         time::sleep(deadline).await;
         if self

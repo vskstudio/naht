@@ -1,21 +1,33 @@
+use std::io;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Extension;
 use axum::Router;
 use axum::routing::get;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
+use super::super::slot::ConnectionSlot;
 use super::{ANONYMOUS_CONNECTIONS, ANONYMOUS_DEADLINE, accept_until_cancelled};
 
 const AUTHENTICATED_CAP: usize = 64;
 
 const PING: &[u8] = b"GET /ping HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n";
 
+const PROMOTE: &[u8] = b"GET /promote HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n";
+
 const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 const DEADLINE_SLACK: Duration = Duration::from_secs(5);
+
+const SERVED_WAIT: Duration = Duration::from_secs(1);
+
+const HOLD: Duration = Duration::from_secs(3);
 
 async fn read_to_close(stream: &mut TcpStream) -> String {
     let mut response = Vec::new();
@@ -27,17 +39,41 @@ fn ping_router() -> Router {
     Router::new().route("/ping", get(|| async { "pong" }))
 }
 
-#[tokio::test]
-async fn an_anonymous_connection_past_the_pool_waits_until_a_slot_frees_then_is_served() {
+async fn promote_and_hold(Extension(slot): Extension<Arc<ConnectionSlot>>) -> &'static str {
+    if !slot.promote().await {
+        return "refused";
+    }
+    let holder = Arc::clone(&slot);
+    tokio::spawn(async move {
+        sleep(HOLD).await;
+        drop(holder);
+    });
+    "promoted"
+}
+
+fn promoting_router() -> Router {
+    Router::new().route("/promote", get(promote_and_hold))
+}
+
+async fn spawn_server(
+    router: Router,
+    connections: usize,
+) -> (SocketAddr, CancellationToken, JoinHandle<io::Result<()>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let shutdown = CancellationToken::new();
     let server = tokio::spawn(accept_until_cancelled(
         listener,
-        ping_router(),
+        router,
         shutdown.clone(),
-        AUTHENTICATED_CAP,
+        connections,
     ));
+    (address, shutdown, server)
+}
+
+#[tokio::test]
+async fn a_connection_past_the_anonymous_seats_waits_for_a_seat_then_is_served() {
+    let (address, shutdown, server) = spawn_server(ping_router(), AUTHENTICATED_CAP).await;
 
     let mut idle = Vec::new();
     for _ in 0..ANONYMOUS_CONNECTIONS {
@@ -45,18 +81,18 @@ async fn an_anonymous_connection_past_the_pool_waits_until_a_slot_frees_then_is_
     }
     sleep(Duration::from_millis(200)).await;
 
-    let mut waiting = TcpStream::connect(address).await.unwrap();
-    waiting.write_all(PING).await.unwrap();
-    let early = timeout(Duration::from_millis(500), read_to_close(&mut waiting)).await;
+    let mut queued = TcpStream::connect(address).await.unwrap();
+    queued.write_all(PING).await.unwrap();
+    let early = timeout(SERVED_WAIT, read_to_close(&mut queued)).await;
     assert!(
         early.is_err(),
-        "a connection past the anonymous pool was served while the pool was full"
+        "a connection past the anonymous seats was served while they were full"
     );
 
     idle.pop();
-    let response = timeout(Duration::from_secs(5), read_to_close(&mut waiting))
+    let response = timeout(HOLD, read_to_close(&mut queued))
         .await
-        .expect("the waiting connection was not served once a slot freed");
+        .expect("the queued connection was not served once a seat freed");
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(response.ends_with("pong"), "{response}");
 
@@ -65,18 +101,8 @@ async fn an_anonymous_connection_past_the_pool_waits_until_a_slot_frees_then_is_
     server.await.unwrap().unwrap();
 }
 
-async fn a_connection_past_the_pool_is_served_once_the_held_connections_reach_the_deadline(
-    opening: &[u8],
-) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let shutdown = CancellationToken::new();
-    let server = tokio::spawn(accept_until_cancelled(
-        listener,
-        ping_router(),
-        shutdown.clone(),
-        AUTHENTICATED_CAP,
-    ));
+async fn a_new_connection_is_served_once_the_held_connections_expire(opening: &[u8]) {
+    let (address, shutdown, server) = spawn_server(ping_router(), AUTHENTICATED_CAP).await;
 
     let mut held = Vec::new();
     for _ in 0..ANONYMOUS_CONNECTIONS {
@@ -84,15 +110,13 @@ async fn a_connection_past_the_pool_is_served_once_the_held_connections_reach_th
         stream.write_all(opening).await.unwrap();
         held.push(stream);
     }
+    sleep(ANONYMOUS_DEADLINE.saturating_add(DEADLINE_SLACK)).await;
 
-    let mut waiting = TcpStream::connect(address).await.unwrap();
-    waiting.write_all(PING).await.unwrap();
-    let response = timeout(
-        ANONYMOUS_DEADLINE.saturating_add(DEADLINE_SLACK),
-        read_to_close(&mut waiting),
-    )
-    .await
-    .expect("a connection past the pool was not served once the held connections expired");
+    let mut fresh = TcpStream::connect(address).await.unwrap();
+    fresh.write_all(PING).await.unwrap();
+    let response = timeout(SERVED_WAIT, read_to_close(&mut fresh))
+        .await
+        .expect("a new connection was not served once the held connections expired");
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(response.ends_with("pong"), "{response}");
 
@@ -102,14 +126,31 @@ async fn a_connection_past_the_pool_is_served_once_the_held_connections_reach_th
 }
 
 #[tokio::test]
-async fn a_silent_connection_frees_its_slot_at_the_anonymous_deadline() {
-    a_connection_past_the_pool_is_served_once_the_held_connections_reach_the_deadline(b"").await;
+async fn a_silent_connection_frees_its_seat_at_the_anonymous_deadline() {
+    a_new_connection_is_served_once_the_held_connections_expire(b"").await;
 }
 
 #[tokio::test]
-async fn an_http2_preface_frees_its_slot_at_the_anonymous_deadline() {
-    a_connection_past_the_pool_is_served_once_the_held_connections_reach_the_deadline(
-        HTTP2_PREFACE,
-    )
-    .await;
+async fn an_http2_preface_frees_its_seat_at_the_anonymous_deadline() {
+    a_new_connection_is_served_once_the_held_connections_expire(HTTP2_PREFACE).await;
+}
+
+#[tokio::test]
+async fn a_promoted_connection_releases_its_seat_when_the_connection_ends() {
+    let (address, shutdown, server) = spawn_server(promoting_router(), 1).await;
+
+    let mut first = TcpStream::connect(address).await.unwrap();
+    first.write_all(PROMOTE).await.unwrap();
+    let first_response = read_to_close(&mut first).await;
+    assert!(first_response.ends_with("promoted"), "{first_response}");
+
+    let mut second = TcpStream::connect(address).await.unwrap();
+    second.write_all(PROMOTE).await.unwrap();
+    let second_response = timeout(SERVED_WAIT, read_to_close(&mut second))
+        .await
+        .expect("the seat stayed held by a handler after its connection ended");
+    assert!(second_response.ends_with("promoted"), "{second_response}");
+
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
 }

@@ -6,7 +6,7 @@ use axum::Extension;
 use axum::Router;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
-use hyper_util::server::graceful::GracefulShutdown;
+use hyper_util::server::graceful::{GracefulShutdown, Watcher};
 use hyper_util::service::TowerToHyperService;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -21,7 +21,18 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 pub(super) const ANONYMOUS_CONNECTIONS: usize = 16;
 
+pub(super) const ANONYMOUS_QUEUE: usize = 256;
+
+pub(super) const ANONYMOUS_QUEUE_WAIT: Duration = Duration::from_secs(30);
+
 pub(super) const ANONYMOUS_DEADLINE: Duration = Duration::from_secs(2);
+
+struct Serving {
+    router: Router,
+    builder: Builder<TokioExecutor>,
+    anonymous: Arc<Semaphore>,
+    authenticated: Arc<Semaphore>,
+}
 
 pub(super) async fn accept_until_cancelled(
     listener: TcpListener,
@@ -34,29 +45,20 @@ pub(super) async fn accept_until_cancelled(
         .http1()
         .timer(TokioTimer::new())
         .header_read_timeout(HEADER_READ_TIMEOUT);
+    let serving = Arc::new(Serving {
+        router,
+        builder,
+        anonymous: Arc::new(Semaphore::new(ANONYMOUS_CONNECTIONS)),
+        authenticated: Arc::new(Semaphore::new(connections)),
+    });
+    let queue = Arc::new(Semaphore::new(ANONYMOUS_QUEUE));
     let graceful = GracefulShutdown::new();
-    let anonymous = Arc::new(Semaphore::new(ANONYMOUS_CONNECTIONS));
-    let authenticated = Arc::new(Semaphore::new(connections));
 
     loop {
-        let seat = tokio::select! {
-            () = shutdown.cancelled() => break,
-            seat = Arc::clone(&anonymous).acquire_owned() => match seat {
-                Ok(seat) => seat,
-                Err(_) => break,
-            },
-        };
         tokio::select! {
             () = shutdown.cancelled() => break,
             accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => serve_accepted(
-                    stream,
-                    seat,
-                    &router,
-                    &builder,
-                    &graceful,
-                    Arc::clone(&authenticated),
-                ),
+                Ok((stream, _)) => admit(stream, &queue, &serving, graceful.watcher()),
                 Err(error) => {
                     tracing::warn!(target: "naht::server", %error, "accept failed");
                     time::sleep(ACCEPT_BACKOFF).await;
@@ -69,28 +71,47 @@ pub(super) async fn accept_until_cancelled(
     Ok(())
 }
 
-fn serve_accepted(
+fn admit(stream: TcpStream, queue: &Arc<Semaphore>, serving: &Arc<Serving>, watcher: Watcher) {
+    let Ok(place) = Arc::clone(queue).try_acquire_owned() else {
+        tracing::debug!(target: "naht::server", "anonymous queue full, connection closed");
+        return;
+    };
+    tokio::spawn(serve_accepted(stream, place, watcher, Arc::clone(serving)));
+}
+
+async fn serve_accepted(
     stream: TcpStream,
-    seat: OwnedSemaphorePermit,
-    router: &Router,
-    builder: &Builder<TokioExecutor>,
-    graceful: &GracefulShutdown,
-    authenticated: Arc<Semaphore>,
+    place: OwnedSemaphorePermit,
+    watcher: Watcher,
+    serving: Arc<Serving>,
 ) {
-    let slot = ConnectionSlot::new(seat, authenticated);
-    let service = TowerToHyperService::new(router.clone().layer(Extension(Arc::clone(&slot))));
-    let connection = builder.serve_connection(TokioIo::new(stream), service);
-    let watched = graceful.watch(connection.into_owned());
-    tokio::spawn(async move {
-        tokio::select! {
-            result = watched => {
-                if let Err(error) = result {
-                    tracing::debug!(target: "naht::server", %error, "connection closed");
-                }
+    let Ok(Ok(seat)) = time::timeout(
+        ANONYMOUS_QUEUE_WAIT,
+        Arc::clone(&serving.anonymous).acquire_owned(),
+    )
+    .await
+    else {
+        tracing::debug!(target: "naht::server", "no anonymous seat freed in time, connection closed");
+        return;
+    };
+    drop(place);
+
+    let slot = ConnectionSlot::new(seat, Arc::clone(&serving.authenticated));
+    let service =
+        TowerToHyperService::new(serving.router.clone().layer(Extension(Arc::clone(&slot))));
+    let connection = serving
+        .builder
+        .serve_connection(TokioIo::new(stream), service);
+    let finished = watcher.watch(connection.into_owned());
+    tokio::select! {
+        result = finished => {
+            if let Err(error) = result {
+                tracing::debug!(target: "naht::server", %error, "connection closed");
             }
-            () = slot.expired(ANONYMOUS_DEADLINE) => {}
         }
-    });
+        () = slot.expired(ANONYMOUS_DEADLINE) => {}
+    }
+    slot.release();
 }
 
 #[cfg(test)]
