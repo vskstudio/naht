@@ -3,7 +3,7 @@ use super::files::{canonical, create_file, create_parent_dirs};
 use super::inspect::{resolve_assets, unsyncable_lines};
 use super::rojo::assemble_project_snapshot;
 use crate::config::Config;
-use crate::watcher::WatchError;
+use crate::watcher::{WatchError, is_project_event};
 use naht_core::build::{self, ModelFormat};
 use naht_core::limits;
 use notify_debouncer_full::notify::RecursiveMode;
@@ -106,6 +106,7 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use
         };
         let changed: Vec<PathBuf> = events
             .iter()
+            .filter(|event| is_project_event(&root, event))
             .flat_map(|event| event.paths.iter().cloned())
             .collect();
         if changed.is_empty() {
