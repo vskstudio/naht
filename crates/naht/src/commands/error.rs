@@ -93,6 +93,14 @@ pub enum CommandError {
         /// The path as written in the project configuration.
         path: String,
     },
+    /// A `[[tree]]` source path, or a migrated Rojo `$path`, has a segment starting with `.`.
+    #[error(
+        "`[[tree]]` path `{path}` has a segment starting with `.`, which the scanner and the watcher ignore"
+    )]
+    TreePathHidden {
+        /// The path as written in the project configuration.
+        path: String,
+    },
     /// A Rojo project file is not valid JSON for the fields Naht migrates.
     #[error("cannot parse the Rojo project `{}`", path.display())]
     RojoParse {

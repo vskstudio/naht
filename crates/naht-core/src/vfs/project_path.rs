@@ -28,6 +28,9 @@ pub fn validate_project_path(path: &str) -> Result<(), ProjectPathError> {
         if component == "." || component == ".." {
             return Err(ProjectPathError::Traversal);
         }
+        if component.starts_with('.') {
+            return Err(ProjectPathError::Hidden);
+        }
         if component.contains(':') {
             return Err(ProjectPathError::DrivePrefix);
         }
@@ -106,7 +109,6 @@ pub fn is_forbidden_name_character(character: char) -> bool {
 /// Returns [`ProjectPathError`] when the path is unsafe or does not map to a Studio script.
 pub fn validate_source_path(path: &str) -> Result<(), ProjectPathError> {
     validate_project_path(path)?;
-    reject_hidden_components(path)?;
     let file_name = last_component(path);
     if script_class(file_name).is_some() || init_class(file_name).is_some() {
         Ok(())
@@ -121,8 +123,7 @@ pub fn validate_source_path(path: &str) -> Result<(), ProjectPathError> {
 ///
 /// Returns [`ProjectPathError`] when the path is unsafe or hidden.
 pub fn validate_directory_path(path: &str) -> Result<(), ProjectPathError> {
-    validate_project_path(path)?;
-    reject_hidden_components(path)
+    validate_project_path(path)
 }
 
 /// Validate a path sent to `/blobs`: only the synced terrain file, `Terrain.terrain` at the root.
@@ -135,17 +136,6 @@ pub fn validate_blob_path(path: &str) -> Result<(), ProjectPathError> {
         Ok(())
     } else {
         Err(ProjectPathError::Unmapped)
-    }
-}
-
-fn reject_hidden_components(path: &str) -> Result<(), ProjectPathError> {
-    if path
-        .split(['/', '\\'])
-        .any(|component| component.starts_with('.'))
-    {
-        Err(ProjectPathError::Hidden)
-    } else {
-        Ok(())
     }
 }
 
@@ -174,8 +164,9 @@ pub enum ProjectPathError {
     /// The path contains a Windows drive prefix.
     #[error("drive prefixes are not allowed")]
     DrivePrefix,
-    /// The path has a hidden component such as `.naht`.
-    #[error("hidden path components are not allowed")]
+    /// A path component starts with `.`, as `.naht` or `.env` does. The scanner and the watcher
+    /// ignore such entries, so a file or folder named that way could never round-trip.
+    #[error("names starting with `.` are not allowed in paths")]
     Hidden,
     /// The file does not map to a Studio instance the daemon can write.
     #[error("the file does not map to a Studio instance")]
@@ -190,7 +181,7 @@ pub enum ProjectPathError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProjectPathError, validate_project_path};
+    use super::{ProjectPathError, validate_directory_path, validate_project_path};
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/project_path_names.json");
 
@@ -287,5 +278,20 @@ mod tests {
                 "{name:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_segment_starting_with_a_dot_is_refused_as_hidden_wherever_it_sits() {
+        for path in [".naht/state.db", "Dir/.x/Leaf.luau", "Dir/.x.luau", ".env"] {
+            assert_eq!(
+                validate_project_path(path),
+                Err(ProjectPathError::Hidden),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            validate_directory_path("Dir/.x"),
+            Err(ProjectPathError::Hidden)
+        );
     }
 }

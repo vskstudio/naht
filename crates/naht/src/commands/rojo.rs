@@ -1,7 +1,7 @@
 use super::error::CommandError;
 use super::files::{dir_name, write_file};
 use crate::config::{Config, INTERNAL_DIR, PROJECT_FILE};
-use crate::project_path::{has_portable_tree_path, stays_inside_project};
+use crate::project_path::{has_hidden_segment, has_portable_tree_path, stays_inside_project};
 use naht_core::mapper;
 use naht_core::snapshot::Snapshot;
 use naht_core::vfs::DiskVfs;
@@ -301,6 +301,11 @@ pub(super) fn checked_tree_path(path: &str) -> Result<&Path, CommandError> {
     let relative = Path::new(path);
     if !stays_inside_project(relative) {
         return Err(CommandError::TreePathOutsideRoot {
+            path: path.to_owned(),
+        });
+    }
+    if has_hidden_segment(relative) {
+        return Err(CommandError::TreePathHidden {
             path: path.to_owned(),
         });
     }

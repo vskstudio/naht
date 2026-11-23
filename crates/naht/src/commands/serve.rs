@@ -223,6 +223,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn serve_refuses_a_tree_path_with_a_segment_starting_with_a_dot() {
+        for path in [".src", "packages/.hidden", "src/.x/Shared"] {
+            assert!(
+                matches!(
+                    checked_tree_paths(&config_with_tree_path(path)),
+                    Err(CommandError::TreePathHidden { .. })
+                ),
+                "serve accepted the tree path `{path}`"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_dot_tree_path_is_accepted_and_serve_reaches_the_bind() {
         for path in [".", "./"] {
