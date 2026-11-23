@@ -50,7 +50,7 @@ All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on f
 
 ### `naht` (binary): CLI + daemon
 - The localhost HTTP server (`axum`) that the plugin talks to.
-- The file watcher (`notify-debouncer-full`).
+- The file watcher (`notify-debouncer-full`). On Linux it holds one non-recursive watch on the root and on each directory the walk keeps: the same ignore rule as the scans skips `node_modules`, `target` and dot-directories, so the kernel never reports their events. Before each debounced batch's rescan, the watch set is brought up to date: new directories are watched, and removed or renamed ones are dropped. A file created in a new directory is seen by the rescan that follows its watch. On macOS and Windows it stays one recursive watch on the root, because the native recursive watch is cheap there.
 - Session orchestration and ownership of the SQLite database.
 - All CLI commands: `init`, `init --from-rojo`, `serve`, `pull`, `build`, `status`, `resolve`.
 - `anyhow` at this boundary for ergonomic error context.
@@ -269,7 +269,6 @@ not a v1 blocker.
   `naht pull` (it reads `/info` without the header). Every route except `GET /info` now needs the token, so `GET /patches` no longer hands
   queued patches to a local client without it. The place guard does not restrict reads, and it is not a credential
   either: the token is. The shipped plugin always sends the header.
-- **Watch cost (N5).** The watcher installs one recursive watch on the project root, debounced at 200 ms. Directories the walk ignores (`node_modules`, `target`, dot-directories) are still watched, so a busy `node_modules` produces events that `is_project_event` then discards. The cost is CPU and event volume; correctness is unaffected. Excluding them would need per-directory watches that the debouncer's callback thread cannot update, so it is not implemented.
 - **Place 0 is never bound.** Studio reports place id `0` until a place is published, and every unpublished place
   reports it, so the daemon cannot tell them apart and never records it. An unbound project accepts a request for
   place `0` without binding, so an unpublished place can attach before it is published; a bound project refuses it
