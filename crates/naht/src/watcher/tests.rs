@@ -285,6 +285,10 @@ fn start_fails_when_the_kernel_refuses_a_directory_for_a_reason_other_than_it_va
     };
     let error = directories::start_with(&mut watch, &root).unwrap_err();
     assert!(matches!(error.0.kind, notify::ErrorKind::MaxFilesWatch));
+    assert!(
+        error.to_string().contains("fs.inotify.max_user_watches"),
+        "the watch limit error does not name fs.inotify.max_user_watches: {error}"
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -376,6 +380,48 @@ async fn a_file_in_a_new_child_of_a_parent_removed_and_recreated_is_seen() {
     assert!(
         wait_for_patch(&state, "src/a/new/Late.luau").await,
         "a write after the recreated parent's batch was never seen"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_into_a_recreated_nested_directory_under_a_renamed_parent_is_seen() {
+    let (_dir, state, root) = watched_project();
+    fs::create_dir_all(root.join("src").join("a").join("b")).unwrap();
+    let _watch = spawn(&root, Arc::clone(&state)).unwrap();
+    time::sleep(Duration::from_millis(300)).await;
+    fs::rename(root.join("src").join("a"), root.join("src").join("z")).unwrap();
+    let nested = root.join("src").join("a").join("b");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("Early.luau"), "return 1").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/a/b/Early.luau").await,
+        "a file written into a nested directory recreated under a renamed parent was never queued"
+    );
+    fs::write(nested.join("Late.luau"), "return 2").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/a/b/Late.luau").await,
+        "a write after the recreated nested directory's batch was never seen"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_into_a_recreated_nested_directory_under_a_removed_parent_is_seen() {
+    let (_dir, state, root) = watched_project();
+    fs::create_dir_all(root.join("src").join("a").join("b")).unwrap();
+    let _watch = spawn(&root, Arc::clone(&state)).unwrap();
+    time::sleep(Duration::from_millis(300)).await;
+    fs::remove_dir_all(root.join("src").join("a")).unwrap();
+    let nested = root.join("src").join("a").join("b");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("Early.luau"), "return 1").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/a/b/Early.luau").await,
+        "a file written into a nested directory recreated under a removed parent was never queued"
+    );
+    fs::write(nested.join("Late.luau"), "return 2").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/a/b/Late.luau").await,
+        "a write after the recreated nested directory's batch was never seen"
     );
 }
 
