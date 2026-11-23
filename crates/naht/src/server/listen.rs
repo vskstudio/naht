@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Extension;
 use axum::Router;
@@ -18,6 +18,8 @@ use super::slot::ConnectionSlot;
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
+const SHED_REPORT_INTERVAL: Duration = Duration::from_secs(10);
 
 pub(super) const ANONYMOUS_CONNECTIONS: usize = 16;
 
@@ -53,12 +55,17 @@ pub(super) async fn accept_until_cancelled(
     });
     let queue = Arc::new(Semaphore::new(ANONYMOUS_QUEUE));
     let graceful = GracefulShutdown::new();
+    let mut sheds = ShedLog::default();
 
     loop {
         tokio::select! {
             () = shutdown.cancelled() => break,
             accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => admit(stream, &queue, &serving, graceful.watcher()),
+                Ok((stream, _)) => {
+                    if !admit(stream, &queue, &serving, graceful.watcher()) {
+                        sheds.record(Instant::now());
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(target: "naht::server", %error, "accept failed");
                     time::sleep(ACCEPT_BACKOFF).await;
@@ -71,12 +78,41 @@ pub(super) async fn accept_until_cancelled(
     Ok(())
 }
 
-fn admit(stream: TcpStream, queue: &Arc<Semaphore>, serving: &Arc<Serving>, watcher: Watcher) {
+#[derive(Default)]
+struct ShedLog {
+    since_report: u64,
+    last_report: Option<Instant>,
+}
+
+impl ShedLog {
+    fn record(&mut self, now: Instant) {
+        self.since_report = self.since_report.saturating_add(1);
+        let due = self
+            .last_report
+            .is_none_or(|last| now.duration_since(last) >= SHED_REPORT_INTERVAL);
+        if due {
+            tracing::warn!(
+                target: "naht::server",
+                shed = self.since_report,
+                "anonymous queue full, connections closed at accept"
+            );
+            self.since_report = 0;
+            self.last_report = Some(now);
+        }
+    }
+}
+
+fn admit(
+    stream: TcpStream,
+    queue: &Arc<Semaphore>,
+    serving: &Arc<Serving>,
+    watcher: Watcher,
+) -> bool {
     let Ok(place) = Arc::clone(queue).try_acquire_owned() else {
-        tracing::debug!(target: "naht::server", "anonymous queue full, connection closed");
-        return;
+        return false;
     };
     tokio::spawn(serve_accepted(stream, place, watcher, Arc::clone(serving)));
+    true
 }
 
 async fn serve_accepted(
