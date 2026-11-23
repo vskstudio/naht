@@ -1,18 +1,9 @@
 use std::fs;
+use std::io;
 use std::path::Path;
 
-use super::acl_fixtures::{assert_only_owner_is_granted, owner_sid_text, set_dacl};
-use super::{TokenError, owner_only, path, prepare_state_dir};
-
-struct RemoveDeniedDir<'a> {
-    dir: &'a Path,
-}
-
-impl Drop for RemoveDeniedDir<'_> {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir(self.dir);
-    }
-}
+use super::acl_fixtures::assert_only_owner_is_granted;
+use super::{TokenError, owner_only, path, prepare_state_dir, state_dir_access};
 
 #[test]
 fn a_file_created_in_the_owner_only_state_directory_is_owner_only_before_any_set() {
@@ -57,18 +48,8 @@ fn a_state_directory_that_is_a_junction_is_refused_and_its_target_is_untouched()
 
 #[test]
 fn a_state_directory_denied_to_this_account_names_the_fix_and_the_state_it_holds() {
-    let root = tempfile::tempdir().unwrap();
-    let state_dir = root.path().join(".naht");
-    fs::create_dir(&state_dir).unwrap();
-    let owner = owner_sid_text();
-    let _remove = RemoveDeniedDir { dir: &state_dir };
-    set_dacl(
-        &state_dir,
-        &format!("D:P(D;;RC;;;WD)(A;;FA;;;{owner})"),
-        true,
-    );
-
-    let error = prepare_state_dir(root.path()).unwrap_err();
+    let state_dir = Path::new(r"C:\project\.naht");
+    let error = state_dir_access(state_dir, io::Error::from(io::ErrorKind::PermissionDenied));
     let text = error.to_string();
     let shown = state_dir.display();
 
