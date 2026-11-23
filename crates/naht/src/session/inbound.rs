@@ -134,6 +134,7 @@ impl<V: Vfs> Session<V> {
         removals.retain(|path| !renamed.contains(path));
         let upserted: BTreeSet<String> = upserts.iter().map(|(path, _, _)| path.clone()).collect();
         let deleted: BTreeSet<String> = removals.iter().cloned().collect();
+        let mut emptied = self.relocate_pending(&upserted)?;
         let mut resolved_upserts = BTreeSet::new();
         for (path, class, content) in upserts {
             let path = self.batch_target(&path, &upserted, &deleted);
@@ -142,7 +143,6 @@ impl<V: Vfs> Session<V> {
             let instance = TextInstance::new(path.clone(), class, content);
             self.write_studio(path, Some(instance));
         }
-        let mut emptied = Vec::with_capacity(removals.len());
         for path in removals {
             let path = self.batch_target(&path, &resolved_upserts, &deleted);
             if resolved_upserts.contains(&path) {
@@ -449,6 +449,8 @@ impl<V: Vfs> Session<V> {
         }
     }
 }
+
+mod relocate;
 
 #[cfg(test)]
 mod tests;

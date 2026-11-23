@@ -2,6 +2,8 @@ use super::*;
 use naht_core::hash::source_fingerprint;
 use naht_core::inventory::InventoryEntry;
 
+mod folder_moves;
+
 struct CaseFoldingVfs {
     inner: MemoryVfs,
     refused_write: Option<PathBuf>,

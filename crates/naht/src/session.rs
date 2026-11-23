@@ -91,6 +91,9 @@ pub struct Session<V: Vfs = DiskVfs> {
     queue: BTreeMap<String, (u64, Patch)>,
     /// Studio-bound patches sent but not yet acked; their base stays at the agreed content.
     unacked: BTreeMap<String, Patch>,
+    /// Scripts the inventory found under a renamed folder whose Studio content changed: the new path
+    /// maps to the old path the file still holds, and the file moves when Studio sends that content.
+    pending_relocations: BTreeMap<String, String>,
     next_seq: u64,
     /// The last-known Studio side of binary blobs (terrain), keyed by path. Blobs are last-writer-wins
     /// (architecture §9), so, unlike the ack-gated text mirror, this advances as soon as a patch is
