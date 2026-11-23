@@ -113,7 +113,7 @@ backbone of Naht's reconnect safety, detailed in the [Sync engine](#/docs/sync-e
 
 ## Versioning
 
-The protocol carries an integer `PROTOCOL_VERSION` (currently `5`). It is part of the handshake so the
+The protocol carries an integer `PROTOCOL_VERSION` (currently `5`, unreleased; `4` in v0.5.0). It is part of the handshake so the
 two halves can refuse to talk across an incompatible boundary instead of corrupting state.
 
 The client headers `x-naht-client` and `x-naht-place-id` are required on every request and came with
