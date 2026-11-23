@@ -11,9 +11,19 @@ use windows_permissions::wrappers::{
 };
 use windows_permissions::{LocalBox, SecurityDescriptor};
 
-const OWNER_ONLY_DACL: &str = "D:P(A;;FA;;;{sid})";
+const FILE_DACL: &str = "D:P(A;;FA;;;{sid})";
+const DIR_DACL: &str = "D:P(A;OICI;FA;;;{sid})";
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 
-pub(super) fn is_owner_only(path: &Path) -> io::Result<bool> {
+pub(super) fn is_file_owner_only(path: &Path) -> io::Result<bool> {
+    matches_dacl(path, FILE_DACL)
+}
+
+pub(super) fn is_dir_owner_only(path: &Path) -> io::Result<bool> {
+    matches_dacl(path, DIR_DACL)
+}
+
+fn matches_dacl(path: &Path, template: &str) -> io::Result<bool> {
     let file = open_for_acl(path)?;
     let current = GetSecurityInfo(
         &file,
@@ -23,7 +33,7 @@ pub(super) fn is_owner_only(path: &Path) -> io::Result<bool> {
     .as_sddl()?
     .to_string_lossy()
     .into_owned();
-    let expected = owner_only_descriptor()?
+    let expected = owner_only_descriptor(template)?
         .as_sddl()?
         .to_string_lossy()
         .into_owned();
@@ -37,8 +47,16 @@ fn protection_and_aces(sddl: &str) -> Option<(bool, &str)> {
     Some((flags.contains('P'), aces))
 }
 
-pub(super) fn restrict(path: &Path) -> io::Result<()> {
-    let descriptor = owner_only_descriptor()?;
+pub(super) fn restrict_file(path: &Path) -> io::Result<()> {
+    restrict(path, FILE_DACL)
+}
+
+pub(super) fn restrict_dir(path: &Path) -> io::Result<()> {
+    restrict(path, DIR_DACL)
+}
+
+fn restrict(path: &Path, template: &str) -> io::Result<()> {
+    let descriptor = owner_only_descriptor(template)?;
     let mut file = open_for_acl(path)?;
     apply_owner_only(&mut file, &descriptor)
 }
@@ -57,7 +75,7 @@ pub(super) fn write_new(path: &Path, text: &str) -> io::Result<()> {
 }
 
 pub(super) fn create(path: &Path) -> io::Result<File> {
-    let descriptor = owner_only_descriptor()?;
+    let descriptor = owner_only_descriptor(FILE_DACL)?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -87,6 +105,7 @@ fn remove_unfinished(path: &Path) {
 fn open_for_acl(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .access_mode((AccessRights::ReadControl | AccessRights::WriteDac).bits())
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
 }
 
@@ -105,9 +124,9 @@ fn apply_owner_only(file: &mut File, descriptor: &SecurityDescriptor) -> io::Res
     )
 }
 
-fn owner_only_descriptor() -> io::Result<LocalBox<SecurityDescriptor>> {
+fn owner_only_descriptor(template: &str) -> io::Result<LocalBox<SecurityDescriptor>> {
     let owner = current_process_sid()?;
     let sid = ConvertSidToStringSid(&owner)?;
-    let sddl = OWNER_ONLY_DACL.replace("{sid}", &sid.to_string_lossy());
+    let sddl = template.replace("{sid}", &sid.to_string_lossy());
     ConvertStringSecurityDescriptorToSecurityDescriptor(&sddl)
 }

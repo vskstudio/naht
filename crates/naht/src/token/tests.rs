@@ -189,42 +189,22 @@ fn a_new_token_file_is_created_with_a_protected_dacl_for_its_owner_only() {
 #[cfg(windows)]
 #[test]
 fn a_token_file_open_to_other_accounts_is_restricted_with_one_warning() {
-    use tracing::subscriber::with_default;
-    use windows_permissions::constants::{SeObjectType, SecurityInformation};
-    use windows_permissions::wrappers::GetNamedSecurityInfo;
+    use tracing::dispatcher::with_default;
 
     let root = tempfile::tempdir().unwrap();
     let token = Token::generate().unwrap();
     fs::create_dir_all(root.path().join(".naht")).unwrap();
     fs::write(path(root.path()), token.as_str()).unwrap();
-    let inherited = GetNamedSecurityInfo(
-        &path(root.path()),
-        SeObjectType::SE_FILE_OBJECT,
-        SecurityInformation::Dacl,
-    )
-    .unwrap();
-    assert!(
-        !inherited
-            .as_sddl()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("D:P")
-    );
-    let logs = LogBuffer::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer({
-            let logs = logs.clone();
-            move || logs.clone()
-        })
-        .finish();
+    assert!(!super::owner_only::is_file_owner_only(&path(root.path())).unwrap());
+    let (logs, dispatch) = captured_logs();
 
-    let loaded = with_default(subscriber, || load_or_create(root.path()).unwrap());
+    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
 
     assert_eq!(loaded.token, token);
     assert_owner_only(&path(root.path()));
     let text = logs.text();
-    assert_eq!(text.lines().count(), 1, "{text}");
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert_eq!(text.matches("token file").count(), 1, "{text}");
     assert!(text.contains("WARN"), "{text}");
     assert!(!text.contains(token.as_str()), "{text}");
 }
@@ -301,7 +281,7 @@ fn owner_sid_text() -> String {
 }
 
 #[cfg(windows)]
-fn set_protected_dacl(file: &Path, sddl: &str) {
+fn set_dacl(file: &Path, sddl: &str, protected: bool) {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_permissions::constants::{AccessRights, SeObjectType, SecurityInformation};
     use windows_permissions::wrappers::{
@@ -316,7 +296,11 @@ fn set_protected_dacl(file: &Path, sddl: &str) {
     SetSecurityInfo(
         &mut handle,
         SeObjectType::SE_FILE_OBJECT,
-        SecurityInformation::Dacl | SecurityInformation::ProtectedDacl,
+        if protected {
+            SecurityInformation::Dacl | SecurityInformation::ProtectedDacl
+        } else {
+            SecurityInformation::Dacl
+        },
         None,
         None,
         descriptor.dacl(),
@@ -326,14 +310,16 @@ fn set_protected_dacl(file: &Path, sddl: &str) {
 }
 
 #[cfg(windows)]
-fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str) {
+fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str, protected: bool) {
     use tracing::dispatcher::with_default;
 
     let root = tempfile::tempdir().unwrap();
     let token = Token::generate().unwrap();
-    fs::create_dir_all(root.path().join(".naht")).unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir_all(&dir).unwrap();
+    super::owner_only::restrict_dir(&dir).unwrap();
     fs::write(path(root.path()), token.as_str()).unwrap();
-    set_protected_dacl(&path(root.path()), sddl);
+    set_dacl(&path(root.path()), sddl, protected);
     let (logs, dispatch) = captured_logs();
 
     let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
@@ -351,37 +337,44 @@ fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str) {
 #[test]
 fn a_protected_dacl_with_an_extra_ace_is_rewritten_with_one_warning() {
     let owner = owner_sid_text();
-    assert_rewritten_to_owner_only_with_one_warning(&format!("D:P(A;;FA;;;{owner})(A;;FR;;;WD)"));
+    assert_rewritten_to_owner_only_with_one_warning(
+        &format!("D:P(A;;FA;;;{owner})(A;;FR;;;WD)"),
+        true,
+    );
 }
 
 #[cfg(windows)]
 #[test]
 fn a_protected_dacl_for_another_account_alone_is_rewritten_with_one_warning() {
-    assert_rewritten_to_owner_only_with_one_warning("D:P(A;;FA;;;WD)");
+    assert_rewritten_to_owner_only_with_one_warning("D:P(A;;FA;;;WD)", true);
 }
 
 #[cfg(windows)]
 #[test]
-fn a_protected_dacl_with_a_deny_ace_on_everyone_fails_closed_and_keeps_the_file() {
-    use std::io::ErrorKind;
-
+fn a_token_file_denied_to_this_account_names_the_fix_and_can_be_deleted() {
     let root = tempfile::tempdir().unwrap();
     let token = Token::generate().unwrap();
     fs::create_dir_all(root.path().join(".naht")).unwrap();
     fs::write(path(root.path()), token.as_str()).unwrap();
     let owner = owner_sid_text();
-    set_protected_dacl(
+    set_dacl(
         &path(root.path()),
         &format!("D:P(D;;FA;;;WD)(A;;FA;;;{owner})"),
+        true,
     );
 
     let error = load_or_create(root.path()).unwrap_err();
+    let text = error.to_string();
 
-    assert!(
-        matches!(&error, TokenError::Io { source, .. } if source.kind() == ErrorKind::PermissionDenied),
-        "{error:?}"
-    );
-    assert_eq!(fs::read_dir(root.path().join(".naht")).unwrap().count(), 1);
+    assert!(matches!(error, TokenError::Denied { .. }), "{text}");
+    assert!(text.contains("delete the file"), "{text}");
+    assert!(text.contains("run `naht serve`"), "{text}");
+    assert!(text.contains("enter the new token in the plugin"), "{text}");
+    assert!(!text.contains(token.as_str()), "{text}");
+    fs::remove_file(path(root.path())).unwrap();
+    let renewed = load_or_create(root.path()).unwrap();
+    assert!(renewed.created);
+    assert_ne!(renewed.token, token);
 }
 
 #[cfg(windows)]
@@ -394,7 +387,11 @@ fn a_protected_owner_ace_carrying_an_inherit_flag_loads_silently_as_owner_only()
     fs::create_dir_all(root.path().join(".naht")).unwrap();
     fs::write(path(root.path()), token.as_str()).unwrap();
     let owner = owner_sid_text();
-    set_protected_dacl(&path(root.path()), &format!("D:P(A;OICI;FA;;;{owner})"));
+    set_dacl(
+        &path(root.path()),
+        &format!("D:P(A;OICI;FA;;;{owner})"),
+        true,
+    );
     assert_owner_only(&path(root.path()));
     let (logs, dispatch) = captured_logs();
 
@@ -404,6 +401,68 @@ fn a_protected_owner_ace_carrying_an_inherit_flag_loads_silently_as_owner_only()
     assert!(!loaded.created);
     assert_owner_only(&path(root.path()));
     assert!(logs.text().is_empty(), "{}", logs.text());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_token_file_with_an_unprotected_owner_only_dacl_is_rewritten_with_one_warning() {
+    let owner = owner_sid_text();
+    assert_rewritten_to_owner_only_with_one_warning(&format!("D:(A;;FA;;;{owner})"), false);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_loose_state_directory_is_tightened_with_one_warning() {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir(&dir).unwrap();
+    let (logs, dispatch) = captured_logs();
+
+    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
+
+    assert!(loaded.created);
+    assert!(super::owner_only::is_dir_owner_only(&dir).unwrap());
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("state directory"), "{text}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_file_created_in_the_owner_only_state_directory_is_owner_only_before_any_set() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir(&dir).unwrap();
+    super::owner_only::restrict_dir(&dir).unwrap();
+
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path(root.path()))
+        .unwrap();
+
+    assert_only_owner_is_granted(&path(root.path()));
+}
+
+#[cfg(windows)]
+fn assert_only_owner_is_granted(file: &Path) {
+    use windows_permissions::constants::{SeObjectType, SecurityInformation};
+    use windows_permissions::wrappers::GetNamedSecurityInfo;
+
+    let sddl = GetNamedSecurityInfo(
+        file,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl,
+    )
+    .unwrap()
+    .as_sddl()
+    .unwrap()
+    .to_string_lossy()
+    .into_owned();
+    assert_eq!(sddl.matches('(').count(), 1, "{sddl}");
+    assert!(sddl.contains(&owner_sid_text()), "{sddl}");
 }
 
 const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";

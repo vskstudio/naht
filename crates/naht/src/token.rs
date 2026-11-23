@@ -89,6 +89,15 @@ pub enum TokenError {
         #[source]
         source: io::Error,
     },
+    /// The token file's access rules deny this account, so it cannot be read or repaired.
+    #[error(
+        "the token file `{}` denies this account access, so `naht serve` cannot read the token: delete the file, run `naht serve` to make a new token, and enter the new token in the plugin",
+        path.display()
+    )]
+    Denied {
+        /// The token file.
+        path: PathBuf,
+    },
     /// The token file does not hold a well-formed token, typically after a crash while it was written.
     #[error("the token file `{}` holds no token: delete it and run `naht serve` to make a new one", path.display())]
     Malformed {
@@ -118,6 +127,8 @@ pub fn path(root: &Path) -> PathBuf {
 ///
 /// Returns [`TokenError`] when the file exists but holds no token, or cannot be read or created.
 pub fn load_or_create(root: &Path) -> Result<Loaded, TokenError> {
+    #[cfg(windows)]
+    secure_state_dir(root)?;
     match restrict_to_owner(&path(root)) {
         Ok(()) => read(root).map(|token| Loaded {
             token,
@@ -169,20 +180,56 @@ fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
 
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
-    let io_error = |source| TokenError::Io {
-        path: path.to_path_buf(),
-        source,
-    };
-    if owner_only::is_owner_only(path).map_err(io_error)? {
+    let access_error = |source| windows_access_error(path, source);
+    if owner_only::is_file_owner_only(path).map_err(access_error)? {
         return Ok(());
     }
-    owner_only::restrict(path).map_err(io_error)?;
+    owner_only::restrict_file(path).map_err(access_error)?;
     tracing::warn!(
         target: "naht::token",
         path = %path.display(),
         "the token file was open to other accounts; it is now owner-only"
     );
     Ok(())
+}
+
+#[cfg(windows)]
+fn windows_access_error(path: &Path, source: io::Error) -> TokenError {
+    if source.kind() == io::ErrorKind::PermissionDenied {
+        return TokenError::Denied {
+            path: path.to_path_buf(),
+        };
+    }
+    TokenError::Io {
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+#[cfg(windows)]
+fn secure_state_dir(root: &Path) -> Result<(), TokenError> {
+    let dir = root.join(".naht");
+    let io_error = |source| TokenError::Io {
+        path: dir.clone(),
+        source,
+    };
+    fs::create_dir_all(root).map_err(io_error)?;
+    match fs::create_dir(&dir) {
+        Ok(()) => owner_only::restrict_dir(&dir).map_err(io_error),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if owner_only::is_dir_owner_only(&dir).map_err(io_error)? {
+                return Ok(());
+            }
+            owner_only::restrict_dir(&dir).map_err(io_error)?;
+            tracing::warn!(
+                target: "naht::token",
+                path = %dir.display(),
+                "the state directory was open to other accounts; it is now owner-only"
+            );
+            Ok(())
+        }
+        Err(error) => Err(io_error(error)),
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
