@@ -1,3 +1,7 @@
+use std::env;
+use std::fmt::Write as _;
+use std::fs::OpenOptions;
+use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -14,7 +18,9 @@ const FLOOD_READ_WAIT: Duration = Duration::from_secs(5);
 
 const SETTLE: Duration = Duration::from_secs(1);
 
-const REQUEST_CEILING: Duration = Duration::from_secs(60);
+const RETRY_PAUSE: Duration = Duration::from_secs(1);
+
+const REPORT_VARIABLE: &str = "NAHT_FLOOD_REPORT";
 
 pub(super) fn address(daemon: &Daemon) -> String {
     daemon.base.trim_start_matches("http://").to_owned()
@@ -39,7 +45,7 @@ pub(super) async fn read_response(stream: &mut TcpStream) -> (u16, Vec<u8>) {
         .expect("the response ended early")
 }
 
-async fn try_read_response(stream: &mut TcpStream) -> Option<(u16, Vec<u8>)> {
+pub(super) async fn try_read_response(stream: &mut TcpStream) -> Option<(u16, Vec<u8>)> {
     let mut head = Vec::new();
     while !head.ends_with(b"\r\n\r\n") {
         head.push(stream.read_u8().await.ok()?);
@@ -76,9 +82,30 @@ pub(super) async fn request_on_open(stream: &mut TcpStream, request: &str) -> u1
     read_response(stream).await.0
 }
 
-async fn request_on_new_connection(address: &str, request: &str) -> u16 {
-    let mut stream = TcpStream::connect(address).await.unwrap();
-    request_on_open(&mut stream, request).await
+async fn attempt(address: &str, request: &str) -> Option<TcpStream> {
+    let mut stream = TcpStream::connect(address).await.ok()?;
+    stream.write_all(request.as_bytes()).await.ok()?;
+    let (status, _) = try_read_response(&mut stream).await?;
+    (status == 200).then_some(stream)
+}
+
+pub(super) async fn served_within(
+    address: &str,
+    request: &str,
+    within: Duration,
+) -> (u32, Option<TcpStream>) {
+    let mut attempts: u32 = 0;
+    let served = timeout(within, async {
+        loop {
+            attempts = attempts.saturating_add(1);
+            if let Some(stream) = attempt(address, request).await {
+                return stream;
+            }
+            sleep(RETRY_PAUSE).await;
+        }
+    })
+    .await;
+    (attempts, served.ok())
 }
 
 async fn flood(address: String, stop: Arc<AtomicBool>) {
@@ -100,7 +127,7 @@ async fn flood(address: String, stop: Arc<AtomicBool>) {
     }
 }
 
-async fn timed<T: Future>(work: T) -> (Duration, T::Output) {
+pub(super) async fn timed<T: Future>(work: T) -> (Duration, T::Output) {
     let started = Instant::now();
     let output = work.await;
     (started.elapsed(), output)
@@ -113,26 +140,27 @@ pub(super) async fn an_authenticated_request_is_served_under_a_tokenless_flood(
     let root = tempfile::tempdir().unwrap();
     init(root.path());
     let daemon = Daemon::start(root.path()).await;
+    let address_of_daemon = address(&daemon);
     let mut established = hold_authenticated(&daemon).await;
     let stop = Arc::new(AtomicBool::new(false));
     let floods: Vec<JoinHandle<()>> = (0..flooders)
-        .map(|_| tokio::spawn(flood(address(&daemon), Arc::clone(&stop))))
+        .map(|_| tokio::spawn(flood(address_of_daemon.clone(), Arc::clone(&stop))))
         .collect();
     sleep(SETTLE).await;
 
     let authenticated = authenticated_request(&daemon, "/heartbeat");
     let (on_established, established_status) =
         timed(request_on_open(&mut established, &authenticated)).await;
-
-    let (on_new_connection, new_status) = timed(timeout(
-        REQUEST_CEILING,
-        request_on_new_connection(&address(&daemon), &authenticated),
+    let (on_newcomer, (newcomer_attempts, newcomer)) = timed(served_within(
+        &address_of_daemon,
+        &authenticated,
+        newcomer_bound,
     ))
     .await;
-
-    let (on_proof, proof_status) = timed(timeout(
-        REQUEST_CEILING,
-        request_on_new_connection(&address(&daemon), &tokenless_request(&daemon, "/info")),
+    let (on_proof, (proof_attempts, proof)) = timed(served_within(
+        &address_of_daemon,
+        &tokenless_request(&daemon, "/info"),
+        newcomer_bound,
     ))
     .await;
 
@@ -141,8 +169,27 @@ pub(super) async fn an_authenticated_request_is_served_under_a_tokenless_flood(
         flood.abort();
     }
 
-    let new_status = new_status.unwrap_or(0);
-    let proof_status = proof_status.unwrap_or(0);
+    let mut report = String::new();
+    writeln!(
+        report,
+        "flooders={flooders} established_ms={} newcomer_ms={} newcomer_attempts={newcomer_attempts} newcomer_served={} proof_ms={} proof_attempts={proof_attempts} proof_served={}",
+        on_established.as_millis(),
+        on_newcomer.as_millis(),
+        newcomer.is_some(),
+        on_proof.as_millis(),
+        proof.is_some(),
+    )
+    .unwrap();
+    if let Some(path) = env::var_os(REPORT_VARIABLE) {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("the flood report could not be opened");
+        file.write_all(report.as_bytes())
+            .expect("the flood report could not be written");
+    }
+
     assert_eq!(
         established_status, 200,
         "the established connection was refused"
@@ -151,21 +198,13 @@ pub(super) async fn an_authenticated_request_is_served_under_a_tokenless_flood(
         on_established < FLOOD_READ_WAIT,
         "an established authenticated request took {on_established:?} under the flood"
     );
-    assert_eq!(
-        new_status, 200,
-        "a new authenticated connection was not served"
+    assert!(
+        newcomer.is_some(),
+        "a new authenticated connection was not served within {newcomer_bound:?} under the flood ({newcomer_attempts} attempts)"
     );
     assert!(
-        on_new_connection <= newcomer_bound,
-        "a new authenticated connection took {on_new_connection:?} under the flood, past {newcomer_bound:?}"
-    );
-    assert_eq!(
-        proof_status, 200,
-        "the tokenless /info was not served under the flood"
-    );
-    assert!(
-        on_proof <= newcomer_bound,
-        "the tokenless /info took {on_proof:?} under the flood, past {newcomer_bound:?}"
+        proof.is_some(),
+        "the tokenless /info was not served within {newcomer_bound:?} under the flood ({proof_attempts} attempts)"
     );
 }
 
@@ -174,4 +213,11 @@ async fn an_authenticated_request_is_served_under_a_flood_of_sixty_four_tokenles
     an_authenticated_request_is_served_under_a_tokenless_flood(64, NEWCOMER_BOUND).await;
 }
 
+#[tokio::test]
+async fn an_authenticated_request_is_served_under_a_flood_of_two_hundred_tokenless_connections() {
+    an_authenticated_request_is_served_under_a_tokenless_flood(200, QUEUED_NEWCOMER_BOUND).await;
+}
+
 const NEWCOMER_BOUND: Duration = Duration::from_secs(20);
+
+const QUEUED_NEWCOMER_BOUND: Duration = Duration::from_secs(30);
