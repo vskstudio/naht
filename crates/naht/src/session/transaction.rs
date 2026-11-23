@@ -93,7 +93,7 @@ impl<V: Vfs> DerefMut for Transaction<'_, V> {
 impl<V: Vfs> Drop for Transaction<'_, V> {
     fn drop(&mut self) {
         if let Some(journal) = self.session.journal.take() {
-            rollback(self.session, journal);
+            drop(journal);
         }
     }
 }
