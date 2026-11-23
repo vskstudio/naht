@@ -125,7 +125,7 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
 - **Body limits**: at most two POST bodies are read and handled at once, each capped at 64 MiB (`413`), with
   a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 shipped in v0.4.0
   with the old `Ack` and `PatchBatch` shapes, so the sequenced shapes above and these limits ship as version 3,
-  and `PROTOCOL_VERSION` is `3`.
+  The current `PROTOCOL_VERSION` is `5` (`crates/naht-core/src/protocol.rs`), and the `/inventory` changes above did not bump it.
 
 ---
 
