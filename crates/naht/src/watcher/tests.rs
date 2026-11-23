@@ -257,6 +257,24 @@ impl directories::DirectoryWatch for RefusingWatch {
     }
 }
 
+#[test]
+fn the_watch_limit_hint_names_the_knob_and_does_not_name_one_command() {
+    let error = WatchError::from(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
+    let message = error.to_string();
+    assert!(
+        message.contains("fs.inotify.max_user_watches"),
+        "the watch limit hint does not name fs.inotify.max_user_watches: {message}"
+    );
+    assert!(
+        message.contains("then run the command again"),
+        "the watch limit hint does not say to run the command again: {message}"
+    );
+    assert!(
+        !message.contains("naht serve"),
+        "the watch limit hint names one command, but naht build --watch reaches it too: {message}"
+    );
+}
+
 #[cfg(target_os = "linux")]
 fn out_of_watches() -> notify::Error {
     notify::Error::new(notify::ErrorKind::MaxFilesWatch)

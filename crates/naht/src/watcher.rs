@@ -43,7 +43,7 @@ pub struct WatchError(#[from] notify::Error);
 
 fn limit_hint(error: &notify::Error) -> &'static str {
     if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) {
-        ": the kernel's watch limit is reached. On Linux, raise `fs.inotify.max_user_watches` (for example `sudo sysctl fs.inotify.max_user_watches=524288`), then start `naht serve` again"
+        ": the kernel's watch limit is reached. On Linux, raise `fs.inotify.max_user_watches` (for example `sudo sysctl fs.inotify.max_user_watches=524288`), then run the command again"
     } else {
         ""
     }
