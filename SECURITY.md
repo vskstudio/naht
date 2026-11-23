@@ -30,13 +30,19 @@ can read `.naht/token`, and it can read and write the project files directly, so
 is the boundary that protects the project. The place id is a value the client sends, so it is not a credential;
 the token is the only credential the daemon checks.
 
+The plugin sends the token only to a daemon that proves it holds it. Each handshake sends a fresh nonce to
+`GET /info` without the token, and the daemon answers with the HMAC-SHA256 of that nonce and its port, keyed by the
+token. The plugin computes the same value with the token it stored and sends the token only when both match, so a
+process that binds the port while `naht serve` is stopped never receives it. The port is part of the proof, so a
+process on the plugin's port cannot relay the nonce to a daemon serving another port. A transport failure drops the
+proof, and the plugin holds back every request carrying the token until the next handshake proves it again.
+
 ## Known risks
 
-- **Port squatting while the daemon is down.** While `naht serve` is not running, a local process can bind the
-  port the plugin dials, answer `GET /info` with the project's public id, and receive the token the plugin then
-  sends. The plugin does not yet check that the daemon answering it is the one it started. The planned fix is a
-  daemon proof (an HMAC over a plugin nonce, keyed by the token). Details are in
-  [`docs/architecture.md`](docs/architecture.md), section 11.
+- **A daemon swapped between two requests.** Between the end of a proven handshake and the first failure the
+  plugin sees, a request can still reach a process that took the port in that instant. The daemon would have to
+  exit and the other process bind the port before the plugin's next request, which already fails with a refused
+  connection when nothing listens. Details are in [`docs/architecture.md`](docs/architecture.md), section 11.
 
 ## Supported versions
 

@@ -114,7 +114,7 @@ re-diffe et renvoie exactement ce qui manque, sans jamais supposer qu'un lot per
 
 ## Versionnage
 
-Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `3`). Il fait partie du handshake pour que les
+Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `5`). Il fait partie du handshake pour que les
 deux moitiés puissent refuser de se parler à travers une frontière incompatible au lieu de corrompre l'état.
 
 Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur chaque requête. Depuis la version `3`,
@@ -125,3 +125,8 @@ le plugin et le daemon ensemble.
 La version `4` ajoute le token du projet. Toutes les routes sauf `GET /info` exigent `x-naht-token`, et une requête sans
 token correspondant reçoit `401`. Un plugin de version `3` s'arrête à son message de mise à jour. Mets à jour la CLI, le
 plugin et le daemon ensemble.
+
+La version `5` ajoute la preuve du daemon. `GET /info?nonce=<n>` répond avec `proof`, le HMAC-SHA256 de
+`naht-daemon-proof-v1\n<port>\n<n>` dont la clé est le token, et le plugin n'envoie le token qu'une fois cette valeur
+égale à celle qu'il calcule. Un programme qui prend le port pendant que `naht serve` est arrêté ne sait pas y répondre,
+donc il ne voit jamais le token. Mets à jour la CLI, le plugin et le daemon ensemble.

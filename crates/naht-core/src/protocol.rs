@@ -15,7 +15,7 @@ use rmp_serde::encode;
 
 /// The protocol version. Bumped on any breaking change to the message shapes; the handshake carries
 /// it so an incompatible plugin/daemon pair fails loudly instead of misreading each other.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Request header every client sends to identify itself as the Studio plugin or the local CLI.
 pub const CLIENT_HEADER: &str = "x-naht-client";
@@ -25,6 +25,29 @@ pub const PLACE_ID_HEADER: &str = "x-naht-place-id";
 
 /// Request header carrying the project's token, required on every route except `GET /info`.
 pub const TOKEN_HEADER: &str = "x-naht-token";
+
+/// Query parameter of `GET /info` carrying the plugin's nonce, which the daemon answers with a proof.
+pub const NONCE_PARAM: &str = "nonce";
+
+/// The longest nonce the daemon proves; a longer or non-alphanumeric one is refused with `400`.
+pub const NONCE_MAX_LEN: usize = 128;
+
+/// The message the daemon proof authenticates: the port the daemon serves and the plugin's nonce.
+///
+/// The proof is the lowercase hex HMAC-SHA256 of this message keyed by the token text. Binding the
+/// port stops a process on the plugin's port from relaying the nonce to a daemon on another port.
+#[must_use]
+pub fn proof_message(port: u16, nonce: &str) -> String {
+    format!("naht-daemon-proof-v1\n{port}\n{nonce}")
+}
+
+/// Whether `nonce` is a nonce the daemon proves: 1 to [`NONCE_MAX_LEN`] ASCII letters and digits.
+#[must_use]
+pub fn is_valid_nonce(nonce: &str) -> bool {
+    (1..=NONCE_MAX_LEN).contains(&nonce.len())
+        && nonce.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
 /// The place id Studio reports for a place that has never been published, which no project binds to.
 pub const UNPUBLISHED_PLACE_ID: u64 = 0;
 
@@ -68,6 +91,10 @@ pub struct ServerInfo {
     /// the field, which the plugin reads as its built-in defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<ReportedLimits>,
+    /// The daemon proof for the nonce of this request, present only when the request carried one.
+    /// The plugin sends its token only after this matches the proof it computes with that token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<String>,
 }
 
 /// The limits a plugin must stay within, as `[limits]` configures them on the daemon.

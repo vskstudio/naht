@@ -109,6 +109,7 @@ impl<V: Vfs> Session<V> {
             limits: Some(ReportedLimits {
                 terrain_voxels: self.limits.terrain_voxels,
             }),
+            proof: None,
         }
     }
 

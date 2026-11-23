@@ -154,3 +154,30 @@ fn surrounding_whitespace_in_the_token_file_is_ignored() {
     fs::write(path(root.path()), format!("{}\n", token.as_str())).unwrap();
     assert_eq!(read(root.path()).unwrap(), token);
 }
+
+const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+#[test]
+fn the_proof_is_the_hmac_sha256_the_plugin_suite_pins() {
+    assert_eq!(
+        Token::for_tests().prove(34872, PROOF_NONCE).as_deref(),
+        Some("dcb7f3d58ef90f33f851024789b159b0482f018970b17c628f3009c9a6aa5928")
+    );
+}
+
+#[test]
+fn a_proof_for_another_port_does_not_match() {
+    assert_eq!(
+        Token::for_tests().prove(34873, PROOF_NONCE).as_deref(),
+        Some("db399fc25be7c3c5ccf32d3052e20508e391ff333896dd4c3aca877b02fc1901")
+    );
+}
+
+#[test]
+fn another_token_proves_differently() {
+    let other = Token::generate().unwrap();
+    assert_ne!(
+        other.prove(34872, PROOF_NONCE),
+        Token::for_tests().prove(34872, PROOF_NONCE)
+    );
+}

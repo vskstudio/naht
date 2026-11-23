@@ -11,7 +11,8 @@ mapping, reconciliation, and merge are all in [`naht-core`](../crates/naht-core)
 |---|---|
 | `src/MessagePack.luau` | Hand-written MessagePack codec for the exact subset the wire uses |
 | `src/Protocol.luau` | Build/parse wire messages on top of the codec |
-| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request, and `x-naht-token` once the token is known |
+| `src/Client.luau` | HTTP client (`/info`, `/patches` long-poll, `/changes`, `/inventory`, `/blobs`, `/ack`, `/heartbeat`), sends the `x-naht-client` and `x-naht-place-id` headers on every request, and `x-naht-token` once the daemon has proven it holds the token |
+| `src/Hmac.luau` | SHA-256 and HMAC-SHA256 in pure Luau, for the daemon proof |
 | `src/Apply.luau` | Apply a patch to the DataModel through an injectable tree interface |
 | `src/Terrain.luau` | Read/write terrain voxels (`ReadVoxels`/`WriteVoxels`) as an opaque binary blob |
 | `src/Connection.luau` | Handshake, long-poll + apply, reconnect with backoff, posts the inventory on attach |
@@ -143,6 +144,14 @@ user pastes the token that `naht token` prints and presses Enter. The plugin sto
 under `naht.token.<projectId>`, so the user is asked once per project. A rejected token returns the widget to
 the same state. A plugin built for version 3 stops at its update message, because the handshake refuses any
 other version.
+
+From protocol version 5 the plugin sends the token only to a daemon that proves it holds it. Each handshake first
+calls `GET /info?nonce=<n>` without the token; the daemon answers with `proof`, the HMAC-SHA256 of the nonce and its
+port keyed by the token, and `src/Hmac.luau` computes the same value from the stored token. Only a match lets the
+second `GET /info`, and every later request, carry `x-naht-token`. A mismatch stops at `TokenRequired` with a message
+saying the program on the port could not prove it holds the token, and a token typed then is proven the same way
+before it is sent. After a transport failure the plugin holds back token-carrying requests until the next handshake
+proves the daemon again.
 
 ## Tests
 

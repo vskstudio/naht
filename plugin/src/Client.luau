@@ -1,6 +1,7 @@
 
 local MessagePack = require(if script ~= nil then script.Parent.MessagePack else "./MessagePack")
 local Protocol = require(if script ~= nil then script.Parent.Protocol else "./Protocol").new(MessagePack)
+local Hmac = require(if script ~= nil then script.Parent.Hmac else "./Hmac")
 
 local Client = {}
 Client.__index = Client
@@ -9,6 +10,12 @@ Client.OUTDATED_PLUGIN = "naht: this plugin is outdated, update the naht plugin 
 Client.SESSION_CHANGED = "naht: the daemon restarted, re-syncing from its new session"
 Client.TOKEN_REQUIRED = "the daemon needs the project token: enter the token printed by `naht token`"
 Client.TOKEN_REJECTED = "the daemon rejected the token: enter the token printed by `naht token`"
+Client.PROOF_FAILED =
+	"the program on the daemon port could not prove it holds this project's token, so the token was not sent: if `naht token` prints a new token, enter it, otherwise stop whatever else listens on the port"
+Client.UNVERIFIED = "naht: request held back: the daemon has not proven it holds the token yet"
+Client.HANDSHAKE_CHANGED = "naht: the daemon changed during the handshake, retrying"
+
+local DEFAULT_PORT = 80
 
 local TOKEN_REQUIRED_BODY = "token required"
 
@@ -18,13 +25,24 @@ export type TokenStore = {
 }
 
 export type Client = typeof(setmetatable(
-	{} :: { baseUrl: string, readPlaceId: () -> number, http: any, token: string?, projectId: string?, store: TokenStore? },
+	{} :: {
+		baseUrl: string,
+		port: number,
+		readPlaceId: () -> number,
+		http: any,
+		token: string?,
+		verified: boolean,
+		projectId: string?,
+		store: TokenStore?,
+	},
 	Client
 ))
 
 function Client.new(baseUrl: string, readPlaceId: () -> number, http: any?, store: TokenStore?): Client
 	return setmetatable({
 		baseUrl = baseUrl,
+		port = tonumber(string.match(baseUrl, ":(%d+)/?$")) or DEFAULT_PORT,
+		verified = false,
 		readPlaceId = readPlaceId,
 		http = http or game:GetService("HttpService"),
 		store = store,
@@ -38,12 +56,15 @@ local function tokenRefusal(body: string): { status: number, message: string, to
 	return { status = 401, message = message, tokenRefused = true }
 end
 
-local function request(self: Client, options: { [string]: any }): { [string]: any }
+local function request(self: Client, options: { [string]: any }, withholdToken: boolean?): { [string]: any }
 	options.Url = self.baseUrl .. options.Url
 	local headers = options.Headers or {}
 	headers["x-naht-client"] = "plugin"
 	headers["x-naht-place-id"] = tostring(self.readPlaceId())
-	if self.token ~= nil then
+	if self.token ~= nil and not withholdToken then
+		if not self.verified then
+			error(Client.UNVERIFIED, 0)
+		end
 		headers[Protocol.TOKEN_HEADER] = self.token
 	end
 	options.Headers = headers
@@ -51,6 +72,7 @@ local function request(self: Client, options: { [string]: any }): { [string]: an
 		return self.http:RequestAsync(options)
 	end)
 	if not ok then
+		self.verified = false
 		error("naht: request failed: " .. tostring(response))
 	end
 	if response.StatusCode == 401 then
@@ -61,6 +83,7 @@ end
 
 function Client.setToken(self: Client, token: string)
 	self.token = token
+	self.verified = false
 	if self.store ~= nil and self.projectId ~= nil then
 		self.store.save(self.projectId, token)
 	end
@@ -85,24 +108,60 @@ local function refusal(body: string): string
 	return "naht: the daemon refused this session: " .. body
 end
 
-function Client.info(self: Client): any
+local function newNonce(self: Client): string
+	return string.lower((string.gsub(self.http:GenerateGUID(false), "[^%w]", "")))
+end
+
+local function fetchInfo(self: Client, nonce: string, withholdToken: boolean): any
 	local response = request(self, {
-		Url = "/info",
+		Url = "/info?nonce=" .. nonce,
 		Method = "GET",
-	})
+	}, withholdToken)
 	if response.StatusCode == 403 then
 		error(refusal(response.Body))
 	end
 	if not response.Success then
 		error("naht: /info returned " .. tostring(response.StatusCode))
 	end
-	local info = Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
+	return Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
+end
+
+local function proves(self: Client, info: any, nonce: string): boolean
+	local token = self.token
+	return token ~= nil and info.proof == Hmac.proof(token, self.port, nonce)
+end
+
+local function proofFailure(): { status: number, message: string, tokenRefused: boolean }
+	return { status = 401, message = Client.PROOF_FAILED, tokenRefused = true }
+end
+
+function Client.info(self: Client): any
+	self.verified = false
+	local nonce = newNonce(self)
+	local info = fetchInfo(self, nonce, true)
 	local switched = self.projectId ~= info.project_id
 	self.projectId = info.project_id
 	if self.store ~= nil and (self.token == nil or switched) then
 		self.token = self.store.load(info.project_id)
 	end
-	return info
+	if self.token == nil then
+		return info
+	end
+	if not proves(self, info, nonce) then
+		error(proofFailure())
+	end
+	self.verified = true
+	local confirmNonce = newNonce(self)
+	local confirmed = fetchInfo(self, confirmNonce, false)
+	if confirmed.project_id ~= info.project_id then
+		self.verified = false
+		error(Client.HANDSHAKE_CHANGED, 0)
+	end
+	if not proves(self, confirmed, confirmNonce) then
+		self.verified = false
+		error(proofFailure())
+	end
+	return confirmed
 end
 
 local function checkPoll(response: any, route: string)

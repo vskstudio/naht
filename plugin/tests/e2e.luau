@@ -75,6 +75,13 @@ local function httpBridge()
 		JSONDecode = function(_, text)
 			return serde.decode("json", text)
 		end,
+		GenerateGUID = function(_, _wrapped)
+			local digits = {}
+			for _ = 1, 32 do
+				table.insert(digits, string.format("%x", math.random(0, 15)))
+			end
+			return table.concat(digits)
+		end,
 	}
 end
 
@@ -419,16 +426,26 @@ local function tokenRefused(root, port, log)
 
 	local wrong = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
 	wrong:setToken("not-the-project-token")
-	local wrongOk, wrongErr = pcall(wrong.postChanges, wrong, { Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") })
+	local provedOk, provedErr = pcall(wrong.info, wrong)
 	check(
-		"a request with a wrong token is refused with a 401",
-		not wrongOk and type(wrongErr) == "table" and wrongErr.tokenRefused == true and wrongErr.status == 401,
-		tostring(if type(wrongErr) == "table" then wrongErr.status else wrongErr)
+		"a client holding a wrong token finds the daemon proof does not match it",
+		not provedOk and type(provedErr) == "table" and provedErr.message == Client.PROOF_FAILED,
+		if type(provedErr) == "table" then tostring(provedErr.message) else tostring(provedErr)
 	)
+	local heldOk, heldErr = pcall(wrong.postChanges, wrong, { Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") })
+	check("the plugin holds back a write it cannot prove", not heldOk and heldErr == Client.UNVERIFIED, tostring(heldErr))
+
+	local forced = request("POST", daemon.base .. "/changes", {
+		["x-naht-client"] = "plugin",
+		["x-naht-place-id"] = tostring(PLACE_ID),
+		["x-naht-token"] = "not-the-project-token",
+		["Content-Type"] = "application/msgpack",
+	}, Protocol.encodeChanges({ Protocol.upsert(REFUSED_FILE, "ModuleScript", "return 9") }))
+	check("a request with a wrong token is refused with a 401", forced.status == 401, tostring(forced.status))
 	check(
 		"a wrong token is told the daemon rejected it",
-		not wrongOk and type(wrongErr) == "table" and wrongErr.message == Client.TOKEN_REJECTED,
-		if type(wrongErr) == "table" then tostring(wrongErr.message) else tostring(wrongErr)
+		string.find(forced.body, "token rejected", 1, true) ~= nil,
+		forced.body
 	)
 	check("a refused write leaves no file on disk", not fs.isFile(root .. "/" .. REFUSED_FILE))
 

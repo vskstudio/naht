@@ -17,11 +17,12 @@ local Client = require("../src/Client")
 local Fingerprint = require("../src/Fingerprint")
 local Connection = require("../src/Connection")
 local Support = require("../src/Support")
+local Hmac = require("../src/Hmac")
 local fs = require("@lune/fs")
 local serde = require("@lune/serde")
 
 local GOLDEN = {
-	server_info = "8ab070726f746f636f6c5f76657273696f6e04ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa70726f6a6563745f6964a3702d31ae746f6b656e5f7265717569726564c3aa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490ac7465727261696e5f73796e63c2",
+	server_info = "8ab070726f746f636f6c5f76657273696f6e05ae7365727665725f76657273696f6ea5302e312e30ac70726f6a6563745f6e616d65a464656d6faa70726f6a6563745f6964a3702d31ae746f6b656e5f7265717569726564c3aa73657373696f6e5f6964a3616263a96461656d6f6e5f6964a3642d31ae73657276655f706c6163655f69647baa636f6e666c696374656490ac7465727261696e5f73796e63c2",
 	patch_batch = "82a6637572736f7202a7706174636865739186a373657101a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74a872657475726e2031",
 	change_batch = "81a76368616e6765739281a655707365727483a470617468aa7372632f412e6c756175a5636c617373ac4d6f64756c65536372697074a7636f6e74656e74a872657475726e203281a644656c65746581a470617468aa7372632f422e6c756175",
 	blob_patch_batch = "82a6637572736f7201a7706174636865739185a470617468af5465727261696e2e7465727261696ea5636c617373a75465727261696ea9646972656374696f6ea8546f53747564696fa46b696e64a6557064617465a7636f6e74656e74c4050001ff807f",
@@ -79,11 +80,11 @@ local function noop() end
 
 suite("the server_info golden decodes to the expected fields and a matching version is accepted", function()
 	local info = MessagePack.decode(fromHex(GOLDEN.server_info))
-	check("server_info protocol_version", info.protocol_version == 4)
+	check("server_info protocol_version", info.protocol_version == 5)
 	check("server_info project_name", info.project_name == "demo")
 	check("server_info serve_place_id", info.serve_place_id == 123)
 	check("server_info daemon_id", info.daemon_id == "d-1")
-	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 4)
+	check("matching protocol version is accepted", Protocol.assertCompatible(info).protocol_version == 5)
 	check(
 		"mismatched protocol version is rejected",
 		not pcall(Protocol.assertCompatible, {
@@ -2129,7 +2130,7 @@ suite("a connect with a frozen path reports it as a Conflict and never Connected
 		connection = Connection.new(
 			{
 				info = function(_, _placeId)
-					return { protocol_version = 4, project_name = "demo", conflicted = { "Frozen.luau" } }
+					return { protocol_version = 5, project_name = "demo", conflicted = { "Frozen.luau" } }
 				end,
 				patches = function(_, _cursor)
 					connection:stop()
@@ -4755,7 +4756,11 @@ local function placeReader(placeId: number): () -> number
 end
 
 local function fakeHttp(respond: (any) -> any)
-	local fake = { calls = {} :: { any } }
+	local fake = { calls = {} :: { any }, guids = 0 }
+	function fake.GenerateGUID(_self, _wrapped)
+		fake.guids += 1
+		return string.format("{0F1E2D3C-4B5A-6978-8796-%012X}", fake.guids)
+	end
 	function fake.RequestAsync(_self, options)
 		table.insert(fake.calls, options)
 		return respond(options)
@@ -4768,6 +4773,18 @@ end
 
 local function reply(status: number, body: string)
 	return { Success = status >= 200 and status < 300, StatusCode = status, Body = body }
+end
+
+local TEST_PORT = 34872
+
+local function nonceOf(url: string): string
+	return string.match(url, "[?&]nonce=(%w+)") or ""
+end
+
+local function provenInfo(body: string, token: string, url: string, port: number?): string
+	local info = MessagePack.decode(body)
+	info.proof = Hmac.proof(token, port or TEST_PORT, nonceOf(url))
+	return MessagePack.encode(info)
 end
 
 suite("an ack names its session and a 409 on /ack reports a changed session", function()
@@ -4798,13 +4815,17 @@ suite("the client loads the saved token by the project id from /info and sends i
 	}
 	local http = fakeHttp(function(options)
 		if string.find(options.Url, "/info", 1, true) ~= nil then
-			return reply(200, fromHex(GOLDEN.server_info))
+			return reply(200, provenInfo(fromHex(GOLDEN.server_info), "stored-token", options.Url))
 		end
 		return reply(200, fromHex(GOLDEN.patch_batch))
 	end)
 	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
 	client:info()
 	check("the client takes the saved token for the project id /info reports", client.token == "stored-token")
+	check("the proven handshake asks /info twice", #http.calls == 2, tostring(#http.calls))
+	check("the first /info withholds the token", http.calls[1].Headers["x-naht-token"] == nil)
+	check("the confirming /info carries the token", http.calls[2].Headers["x-naht-token"] == "stored-token")
+	check("each /info sends a fresh nonce", nonceOf(http.calls[1].Url) ~= nonceOf(http.calls[2].Url) and nonceOf(http.calls[1].Url) ~= "")
 	client:patches(0, "s1")
 	local sent = http.calls[#http.calls].Headers["x-naht-token"]
 	check("a gated request carries the saved token", sent == "stored-token", tostring(sent))
@@ -5154,7 +5175,7 @@ suite("an incompatible protocol version is terminal and names the side to update
 	connection:stop()
 	check("an incompatible daemon detaches the Studio listeners", root.DescendantAdded:count() == 0)
 
-	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 5 }))
+	local newerDaemon = select(2, pcall(Protocol.assertCompatible, { protocol_version = 6 }))
 	check(
 		"a newer daemon tells the user to update the naht plugin",
 		string.find(tostring(newerDaemon), "update the naht plugin", 1, true) ~= nil
@@ -5235,7 +5256,7 @@ suite("a poll names the session it handshook with, and a 409 sends the plugin ba
 			return reply(
 				200,
 				MessagePack.encode({
-					protocol_version = 4,
+					protocol_version = 5,
 					server_version = "0.1.0",
 					project_name = "demo",
 					session_id = if infos == 1 then "s1" else "s2",
@@ -5892,9 +5913,10 @@ suite("a daemon that switches project reloads the stored token for the new proje
 		end,
 	}
 	local serving = fromHex(GOLDEN.server_info)
+	local servingToken = "token-one"
 	local http = fakeHttp(function(options)
 		if string.find(options.Url, "/info", 1, true) ~= nil then
-			return reply(200, serving)
+			return reply(200, provenInfo(serving, servingToken, options.Url))
 		end
 		local presented = options.Headers["x-naht-token"]
 		if presented == "token-two" then
@@ -5910,6 +5932,7 @@ suite("a daemon that switches project reloads the stored token for the new proje
 	check("the first project takes its stored token", client.token == "token-one", tostring(client.token))
 
 	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
+	servingToken = "token-two"
 	client:info()
 	check("the client now reports the second project", client.projectId == "p-2", tostring(client.projectId))
 	check("a daemon switch takes the token stored for the new project", client.token == "token-two", tostring(client.token))
@@ -5919,6 +5942,7 @@ suite("a daemon that switches project reloads the stored token for the new proje
 	check("a gated request to the switched daemon is accepted without a prompt", okSwitched)
 
 	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d33")))
+	servingToken = "token-three"
 	client:info()
 	check("a project with no stored token leaves the token empty", client.token == nil, tostring(client.token))
 	local okUnstored, errUnstored = pcall(function()
@@ -5929,6 +5953,120 @@ suite("a daemon that switches project reloads the stored token for the new proje
 		not okUnstored and Support.isTokenRefusal(errUnstored) and errUnstored.message == Client.TOKEN_REQUIRED,
 		tostring(errUnstored)
 	)
+end)
+
+suite("the HMAC-SHA256 behind the daemon proof matches RFC 4231 and the daemon's pinned proof", function()
+	check("sha256 of the empty string", Hmac.hex(Hmac.sha256("")) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	check(
+		"sha256 over several blocks",
+		Hmac.hex(Hmac.sha256(string.rep("a", 1000))) == "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
+	)
+	check(
+		"RFC 4231 case 1",
+		Hmac.hex(Hmac.hmacSha256(string.rep("\x0b", 20), "Hi There"))
+			== "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+	)
+	check(
+		"RFC 4231 case 6, a key longer than a block",
+		Hmac.hex(Hmac.hmacSha256(string.rep("\xaa", 131), "Test Using Larger Than Block-Size Key - Hash Key First"))
+			== "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+	)
+	check(
+		"the proof matches the one the daemon's token tests pin",
+		Hmac.proof(string.rep("0123456789abcdef", 4), 34872, "0f1e2d3c4b5a69788796a5b4c3d2e1f0")
+			== "dcb7f3d58ef90f33f851024789b159b0482f018970b17c628f3009c9a6aa5928"
+	)
+end)
+
+local function storeWith(token: string)
+	local saved: { [string]: string } = { ["p-1"] = token }
+	return {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, value: string)
+			saved[projectId] = value
+		end,
+	}
+end
+
+local function tokenSent(http: any): boolean
+	for _, call in http.calls do
+		if call.Headers["x-naht-token"] ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+suite("a program on the port that cannot prove the token never receives it", function()
+	local squatter = fakeHttp(function(options)
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			return reply(200, fromHex(GOLDEN.server_info))
+		end
+		return reply(200, fromHex(GOLDEN.patch_batch))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), squatter, storeWith("stored-token"))
+	local ok, err = pcall(function()
+		client:info()
+	end)
+	check("a missing proof fails the handshake as a token refusal", not ok and Support.isTokenRefusal(err), tostring(err))
+	check("the refusal explains the proof failed", not ok and err.message == Client.PROOF_FAILED)
+	local polled, held = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check("a gated request after a failed proof is held back", not polled and held == Client.UNVERIFIED, tostring(held))
+	check("the squatter never saw the token", not tokenSent(squatter))
+
+	client:setToken("typed-token")
+	pcall(function()
+		client:info()
+	end)
+	check("a token typed after a failed proof is not sent to the squatter either", not tokenSent(squatter))
+end)
+
+suite("a proof made for another port is refused, so a relay to a daemon elsewhere fails", function()
+	local relay = fakeHttp(function(options)
+		return reply(200, provenInfo(fromHex(GOLDEN.server_info), "stored-token", options.Url, 34999))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), relay, storeWith("stored-token"))
+	local ok, err = pcall(function()
+		client:info()
+	end)
+	check("a proof over another port is refused", not ok and Support.isTokenRefusal(err), tostring(err))
+	check("the relay never saw the token", not tokenSent(relay))
+end)
+
+suite("a transport failure drops the proof until the next handshake", function()
+	local down = false
+	local http = fakeHttp(function(options)
+		if down then
+			error("connection refused")
+		end
+		if string.find(options.Url, "/info", 1, true) ~= nil then
+			return reply(200, provenInfo(fromHex(GOLDEN.server_info), "stored-token", options.Url))
+		end
+		return reply(200, fromHex(GOLDEN.patch_batch))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, storeWith("stored-token"))
+	client:info()
+	down = true
+	pcall(function()
+		client:patches(0, "s1")
+	end)
+	down = false
+	local calls = #http.calls
+	local ok, err = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check("the next gated request is held back", not ok and err == Client.UNVERIFIED, tostring(err))
+	check("a held-back request reaches nothing", #http.calls == calls)
+	check("a held-back request is a transient failure the loops retry", Support.isTransientFailure(err))
+	client:info()
+	local resumed = pcall(function()
+		client:patches(0, "s1")
+	end)
+	check("a fresh proven handshake lets gated requests through again", resumed)
 end)
 
 if failures > 0 then
