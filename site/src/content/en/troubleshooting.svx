@@ -31,6 +31,10 @@ stores it in the plugin settings. A 401 means the daemon did not receive a token
 - **"token rejected"**: the value does not match `.naht/token`, for example after that file was deleted and made
   again. Run `naht token` in this project and enter the value it prints. The plugin asks again on the next attempt.
 
+## "the token file denies this account access" (Windows)
+
+On Windows the access rules of `.naht/token` can deny the current account, for example after a tool added a deny entry to it. The daemon then cannot read the token, so `naht serve` refuses to start and names the file. Delete `.naht/token`, run `naht serve` to make a new token, then run `naht token` and enter the value it prints in the plugin.
+
 ## "could not prove it holds this project's token"
 
 Before it sends the token, the plugin asks the program on the port to prove it holds that token, and this one could

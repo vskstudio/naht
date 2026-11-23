@@ -32,6 +32,10 @@ garde dans les réglages du plugin. Un 401 veut dire que le daemon n'a pas reçu
   recréation de ce fichier. Lance `naht token` dans ce projet et saisis la valeur affichée. Le plugin te la redemande à la
   prochaine tentative.
 
+## « le fichier de token refuse l'accès à ce compte » (Windows)
+
+Sous Windows, les règles d'accès de `.naht/token` peuvent refuser l'accès au compte courant, par exemple après l'ajout d'une entrée de refus. Le daemon ne peut alors pas lire le token : `naht serve` refuse de démarrer et nomme le fichier. Supprime `.naht/token`, lance `naht serve` pour créer un nouveau token, puis lance `naht token` et saisis la valeur affichée dans le plugin.
+
 ## « could not prove it holds this project's token »
 
 Avant d'envoyer le token, le plugin demande au programme qui écoute sur le port de prouver qu'il le détient, et celui-ci

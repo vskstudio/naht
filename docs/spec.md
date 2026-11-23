@@ -44,7 +44,7 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
 
 ## Shipped: v0.5.0 (merged)
 
-- **Per project token** (#77): `naht serve` creates `.naht/token` (owner only: mode `0600` on Unix, and a protected DACL for the current user alone on Windows, each tightened if it is looser) and every route except the `GET /info` handshake requires it in
+- **Per project token** (#77): `naht serve` creates `.naht/token` (owner only: mode `0600` on Unix, and a protected DACL for the current user alone on Windows, each tightened if it is looser; on Windows the `.naht` directory is owner-only too) and every route except the `GET /info` handshake requires it in
   `x-naht-token`, so another local process can no longer read patches or post changes. `naht token`
   prints it; the plugin asks for it once per project and keeps it in its settings. Protocol version 4:
   the plugin and the daemon must be updated together.
