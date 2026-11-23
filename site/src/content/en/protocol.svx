@@ -22,7 +22,7 @@ it needs HTTP/2, which `HttpService` does not support.
 | `GET /info` | Handshake: protocol/server version, project name, session id. With the project token, it re-diffs against persisted state on (re)connect; without it, it only answers. |
 | `GET /patches` | Long-poll for filesystem → Studio text patches. Held open until a change is ready or a timeout elapses. Returns a cursor + ordered patches. Needs the `session` query parameter. |
 | `POST /changes` | Studio → filesystem edits (a batch of upserts/deletes). |
-| `POST /inventory` | The plugin's full listing of its scripts, posted once per session on attach. The daemon removes the mirrored scripts it does not name and writes the ones it lacks, so a rename made while the plugin was stopped leaves no old file. Needs the `session` query parameter. Additive: no protocol-version bump. |
+| `POST /inventory` | The plugin's full listing of its scripts, posted once per session on attach. The daemon removes the mirrored scripts it does not name and writes the ones it lacks, so a rename made while the plugin was stopped leaves no old file. A folder renamed in Studio is followed by the scripts left under it, and the reply lists the new paths whose source the plugin then sends as upserts. Needs the `session` query parameter. Unreleased, protocol 5: the `200` body changes from empty to `{"wanted": [...]}`, and a plugin built before that discards it, so the scripts it would have sent stay under the old folder until the next attach. |
 | `GET /blobs` | Long-poll for the **terrain blob** channel (daemon → Studio). Kept separate from `/patches` because blobs sync opaquely, with no diff/merge. The cursor is the ack: queued blob patches below it are dropped. Needs the `session` query parameter. |
 | `POST /blobs` | Studio → daemon blob changes (terrain voxels). |
 | `POST /ack` | The plugin confirms, by sequence number, which patches it actually applied. Gates the base advance. Needs the `session` query parameter. |
@@ -113,7 +113,7 @@ backbone of Naht's reconnect safety, detailed in the [Sync engine](#/docs/sync-e
 
 ## Versioning
 
-The protocol carries an integer `PROTOCOL_VERSION` (currently `5`). It is part of the handshake so the
+The protocol carries an integer `PROTOCOL_VERSION` (currently `5`, unreleased; `4` in v0.5.0). It is part of the handshake so the
 two halves can refuse to talk across an incompatible boundary instead of corrupting state.
 
 The client headers `x-naht-client` and `x-naht-place-id` are required on every request and came with
@@ -128,7 +128,7 @@ Protocol 4 adds the project token. Every route except `GET /info` requires `x-na
 matching token is answered `401`. A plugin built for version `3` stops at the update message. Upgrade the CLI, the
 daemon and the plugin together.
 
-Protocol 5 adds the daemon proof. `GET /info?nonce=<n>` answers with `proof`, the HMAC-SHA256 of
+Protocol 5, not yet released (not in v0.5.0), adds the daemon proof. `GET /info?nonce=<n>` answers with `proof`, the HMAC-SHA256 of
 `naht-daemon-proof-v1\n<port>\n<n>` keyed by the token, and the plugin sends the token only once that matches the
 value it computes. Until then it sends nothing but `GET /info`, and with no token for the project it stops and asks
 for one. A program that takes the port while `naht serve` is stopped cannot answer it, so it never sees the token and

@@ -1000,7 +1000,7 @@ suite("stop during a patch poll applies nothing", function()
 						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "Late.luau", class = "ModuleScript", content = "L" } },
 					}
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths)
 					acks += 1
 				end,
@@ -1210,7 +1210,7 @@ suite("a stop during apply leaves the patch cursor where it was", function()
 						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1371,7 +1371,7 @@ suite("a restarted daemon session drops the acks it was still owed", function()
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function(_, seqs, _sessionId)
 				for _, seq in seqs do
 					table.insert(ackedSeqs, seq)
@@ -1412,7 +1412,7 @@ suite("an ack is sent with the session the plugin is attached to", function()
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function(_, _seqs, sessionId)
 				ackedSession = sessionId
 			end,
@@ -1449,7 +1449,7 @@ suite("a daemon restart during an ack reconnects instead of retrying the ack", f
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function(_, _seqs, _sessionId)
 				ackCalls += 1
 				if ackCalls > 2 then
@@ -1639,7 +1639,7 @@ suite("a rejected text patch holds the cursor at its seq so the next poll asks f
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function() end,
 			},
 			root,
@@ -1674,7 +1674,7 @@ suite("a rejected text patch sets a Warning naming the path and reason", functio
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, paths)
 					table.insert(acks, paths)
 				end,
@@ -1717,7 +1717,7 @@ suite("a rejected patch that later applies ends in Connected", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1751,7 +1751,7 @@ suite("a conflict plus a success in one batch ends in Conflict", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1790,7 +1790,7 @@ suite("a later success on the conflicted path ends the Conflict", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -1865,7 +1865,7 @@ suite("the newest terrain snapshot arrives last across an epoch change", functio
 				end
 				table.insert(arrivals, call)
 			end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function() end,
 		}
 		local terrain = memoryTerrain(1)
@@ -2085,7 +2085,7 @@ suite("a 503 on ack keeps the applied paths and retries them", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, paths)
 					ackAttempts += 1
 					if ackAttempts == 1 then
@@ -2223,7 +2223,7 @@ suite("a stop between patch poll and apply writes nothing", function()
 						patches = { { seq = 1, kind = "Upsert", direction = "ToStudio", path = "A.luau", class = "ModuleScript", content = "A" } },
 					}
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths)
 					acks += 1
 				end,
@@ -2530,7 +2530,7 @@ local function echoConnection(syncEcho: boolean)
 				end
 				error("stop")
 			end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function(_, _paths) end,
 		},
 		root,
@@ -2586,7 +2586,7 @@ local function recordingClient(refuse: ((any) -> ())?)
 			end
 			table.insert(posts, changes)
 		end,
-		postInventory = function() return true end,
+		postInventory = function() return {} end,
 		postAck = noop,
 	}
 	return client, posts, attempts
@@ -2924,7 +2924,7 @@ suite("the daemon's answer to a rename queues nothing back", function()
 				end
 				error("stop")
 			end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = noop,
 		}
 		local connection = Connection.new(client, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
@@ -2990,7 +2990,7 @@ local function blobRecorder()
 		postBlobs = function(_, batch)
 			table.insert(blobs, batch[1].content)
 		end,
-		postInventory = function() return true end,
+		postInventory = function() return {} end,
 		postAck = noop,
 		postChanges = noop,
 	}
@@ -3128,7 +3128,7 @@ local function connectWithoutTerrainSync(terrain: any, onState: (string, string?
 			blobPosts += 1
 		end,
 		postChanges = noop,
-		postInventory = function() return true end,
+		postInventory = function() return {} end,
 		postAck = noop,
 	}
 	local connection = Connection.new(client, root, onState, deps(terrain, tree))
@@ -3182,7 +3182,7 @@ suite("the connection takes live terrain sync from the daemon's handshake", func
 			end,
 			postBlobs = noop,
 			postChanges = noop,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = noop,
 		}
 		local connection = Connection.new(client, root, noop, deps(terrain, tree))
@@ -3213,7 +3213,7 @@ local function connectWithReportedLimits(terrain: any, limits: any?, onState: (s
 			blobPosts += 1
 		end,
 		postChanges = noop,
-		postInventory = function() return true end,
+		postInventory = function() return {} end,
 		postAck = noop,
 	}
 	local connection = Connection.new(client, root, onState, deps(terrain, tree))
@@ -3372,7 +3372,7 @@ suite("a clean batch resets the rejected wait to its first step", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -3502,7 +3502,7 @@ suite("a same-named folder does not block a patch, so it is acked", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, paths)
 					acked = paths
 				end,
@@ -3583,7 +3583,7 @@ suite("start after a stop reconnects", function()
 				task.wait(0.01)
 				return { cursor = 0, patches = {} }
 			end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function() end,
 			postBlobs = function() end,
 			postChanges = function() end,
@@ -3683,7 +3683,7 @@ suite("a completed poll resets the reconnect backoff", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -3710,7 +3710,7 @@ suite("an apply that changes nothing records no echo", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -3735,7 +3735,7 @@ suite("an apply that writes records its echo", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths) end,
 			},
 			root,
@@ -4017,7 +4017,7 @@ suite("a refused ack is not retried", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, _paths)
 					ackAttempts += 1
 					if ackAttempts > 10 then
@@ -4064,7 +4064,7 @@ suite("a transient ack failure retries one entry per path", function()
 					end
 					error("stop")
 				end,
-				postInventory = function() return true end,
+				postInventory = function() return {} end,
 				postAck = function(_, paths)
 					ackAttempts += 1
 					table.insert(lengths, #paths)
@@ -4467,7 +4467,7 @@ local function abandoningConnection(onState: any, holds: { [number]: { done: boo
 				error("no blob poll expected")
 			end,
 			postBlobs = function(_, _blobs) end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function(_, _paths) end,
 		},
 		root,
@@ -4908,6 +4908,21 @@ suite("a 401 from the daemon is a token refusal that says whether the token was 
 	check("a 401 is never classed as a transient failure", not Support.isTransientFailure(errWrong))
 end)
 
+suite("an inventory reply names the scripts the daemon wants, and an empty reply names none", function()
+	local wanted = provenClient(fakeHttp(function()
+		return reply(200, '{"wanted": ["Kept.luau"]}')
+	end)):postInventory({}, "s1")
+	local predating = provenClient(fakeHttp(function()
+		return reply(200, "")
+	end)):postInventory({}, "s1")
+	local missing = provenClient(fakeHttp(function()
+		return reply(404, "")
+	end)):postInventory({}, "s1")
+	check("the wanted paths are returned from the reply", wanted ~= nil and #wanted == 1 and wanted[1] == "Kept.luau")
+	check("an empty 200 from a daemon that predates the wanted list names no path", predating ~= nil and #predating == 0)
+	check("a 404 from a daemon without /inventory posts nothing", missing == nil)
+end)
+
 suite("a token refusal on a poll stops the connection at TokenRequired without polling again", function()
 	local log, onState = stateLog()
 	local tree, root = studioWorld(true)
@@ -5252,7 +5267,7 @@ suite("an ack that failed is resent after a reconnect in the same session", func
 				return { cursor = 0, patches = {} }
 			end,
 			postBlobs = function(_, _blobs) end,
-			postInventory = function() return true end,
+			postInventory = function() return {} end,
 			postAck = function(_, seqs)
 				table.insert(ackBodies, seqs)
 				if #ackBodies == 1 then
@@ -5422,7 +5437,7 @@ local function inventoryClient()
 		postChanges = noop,
 		postInventory = function(_, scripts, _sessionId)
 			table.insert(posts, scripts)
-			return true
+			return {}
 		end,
 		postAck = noop,
 	}
@@ -5455,6 +5470,33 @@ local function attachedConnection(client: any, tree: any, root: any, onState: ((
 	return connection
 end
 
+suite("a script the daemon asks source for under a renamed folder is posted as an upsert", function()
+	local pushed: { { any } } = {}
+	local client = {
+		postChanges = function(_, changes)
+			table.insert(pushed, changes)
+		end,
+		postInventory = function(_, _scripts, _sessionId)
+			return { "Kept.luau" }
+		end,
+		postAck = noop,
+	}
+	local tree, root = studioWorld(true)
+	local script = place(tree, "ModuleScript", "Kept", root)
+	script.Source = "return 4"
+	local connection = attachedConnection(client, tree, root)
+	connection:_postInventory("s1")
+	connection:_flushPush(1)
+	local change = if pushed[1] ~= nil then pushed[1][1] else nil
+	check("the wanted script is posted once as an upsert", #pushed == 1 and change ~= nil and change.kind == "Upsert")
+	check(
+		"the upsert carries the path the daemon asked for and the source Studio holds",
+		change ~= nil and change.path == "Kept.luau" and change.content == "return 4",
+		if change ~= nil then change.path .. " " .. tostring(change.content) else "no upsert"
+	)
+	connection:stop()
+end)
+
 suite("a rename made while the plugin was stopped is posted as an inventory", function()
 	local tree, root = studioWorld(true)
 	local script = place(tree, "ModuleScript", "Old", root)
@@ -5472,7 +5514,7 @@ suite("a rename made while the plugin was stopped is posted as an inventory", fu
 		end,
 		postInventory = function(_, scripts, _sessionId)
 			posted = scripts
-			return true
+			return {}
 		end,
 	}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
 	connection.running = true
@@ -5508,7 +5550,7 @@ suite("an empty tree posts no inventory", function()
 		end,
 		postInventory = function(_, _changes, _sessionId)
 			posts += 1
-			return true
+			return {}
 		end,
 	}, root, noop, deps(extentsTerrainWith(extentsRegion), tree))
 	connection.running = true
@@ -5879,7 +5921,7 @@ suite("a daemon without the inventory route sets an inventory Warning", function
 		postChanges = noop,
 		postAck = noop,
 		postInventory = function(_, _scripts, _sessionId)
-			return false
+			return nil
 		end,
 	}
 	local log, onState = stateLog()
