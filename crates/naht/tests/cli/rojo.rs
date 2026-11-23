@@ -231,6 +231,49 @@ fn build_rejects_a_tree_path_naming_a_windows_device() -> io::Result<()> {
 
 #[cfg(unix)]
 #[test]
+fn build_rejects_a_tree_path_with_a_dot_segment() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = project_with_a_sibling_outside_the_root(dir.path())?;
+    fs::create_dir_all(root.join(".src"))?;
+    fs::write(root.join(".src").join("Mod.luau"), "return 1")?;
+    tree_config(&root, ".src")?;
+    let place = dir.path().join("game.rbxl");
+
+    assert!(matches!(
+        commands::build(&root, &place),
+        Err(CommandError::TreePathHidden { .. })
+    ));
+    assert!(!place.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn from_rojo_rejects_a_path_with_a_dot_segment() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().join("game");
+    fs::create_dir_all(root.join(".github").join("x"))?;
+    fs::write(
+        root.join("default.project.json"),
+        r#"{
+            "name": "Game",
+            "tree": {
+                "$className": "DataModel",
+                "ReplicatedStorage": { "Shared": { "$path": ".github/x" } }
+            }
+        }"#,
+    )?;
+
+    assert!(matches!(
+        commands::init(&root, true),
+        Err(CommandError::TreePathHidden { .. })
+    ));
+    assert!(!root.join("naht.toml").exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn from_rojo_rejects_a_path_naming_a_windows_device() -> io::Result<()> {
     let dir = tempfile::tempdir()?;
     let root = dir.path().join("game");

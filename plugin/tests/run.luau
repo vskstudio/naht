@@ -3657,6 +3657,20 @@ suite("a script-suffixed name is warned once", function()
 		check("a script-suffixed name is warned once", #warnings == 1, "warnings: " .. tostring(#warnings))
 end)
 
+suite("a script whose name starts with a dot is not synced and is warned once", function()
+		local tree, root = studioWorld(true)
+		local warnings: { string } = {}
+		local dependencies = deps(extentsTerrainWith(extentsRegion), tree)
+		dependencies.warn = function(message: string)
+			table.insert(warnings, message)
+		end
+		local connection = Connection.new({}, root, noop, dependencies)
+		local hidden = place(tree, "ModuleScript", ".Hidden", root)
+		check("a ModuleScript named .Hidden has no path", connection:_pathOf(hidden) == nil)
+		check("a dot-named script is warned once", connection:_pathOf(hidden) == nil and #warnings == 1, "warnings: " .. tostring(#warnings))
+		check("the warning names the dot name rule", #warnings == 1 and string.find(warnings[1], "starts with '.'", 1, true) ~= nil, warnings[1])
+end)
+
 suite("a completed poll resets the reconnect backoff", function()
 		local tree, root = studioWorld(true)
 		local polls = 0
