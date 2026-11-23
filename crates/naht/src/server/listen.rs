@@ -1,4 +1,5 @@
 use std::io;
+use std::mem;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -56,14 +57,16 @@ pub(super) async fn accept_until_cancelled(
     let queue = Arc::new(Semaphore::new(ANONYMOUS_QUEUE));
     let graceful = GracefulShutdown::new();
     let mut sheds = ShedLog::default();
+    let mut shed_flush = time::interval(SHED_REPORT_INTERVAL);
 
     loop {
         tokio::select! {
             () = shutdown.cancelled() => break,
+            _ = shed_flush.tick() => report_sheds(sheds.flush(Instant::now())),
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     if !admit(stream, &queue, &serving, graceful.watcher()) {
-                        sheds.record(Instant::now());
+                        report_sheds(sheds.record(Instant::now()));
                     }
                 }
                 Err(error) => {
@@ -74,31 +77,52 @@ pub(super) async fn accept_until_cancelled(
         }
     }
 
+    report_sheds(sheds.flush(Instant::now()));
     graceful.shutdown().await;
     Ok(())
 }
 
 #[derive(Default)]
 struct ShedLog {
-    since_report: u64,
+    pending: u64,
     last_report: Option<Instant>,
 }
 
 impl ShedLog {
-    fn record(&mut self, now: Instant) {
-        self.since_report = self.since_report.saturating_add(1);
-        let due = self
-            .last_report
-            .is_none_or(|last| now.duration_since(last) >= SHED_REPORT_INTERVAL);
-        if due {
-            tracing::warn!(
-                target: "naht::server",
-                shed = self.since_report,
-                "anonymous queue full, connections closed at accept"
-            );
-            self.since_report = 0;
-            self.last_report = Some(now);
+    fn record(&mut self, now: Instant) -> Option<u64> {
+        self.pending = self.pending.saturating_add(1);
+        if self.is_due(now) {
+            self.take(now)
+        } else {
+            None
         }
+    }
+
+    fn flush(&mut self, now: Instant) -> Option<u64> {
+        self.take(now)
+    }
+
+    fn is_due(&self, now: Instant) -> bool {
+        self.last_report
+            .is_none_or(|last| now.duration_since(last) >= SHED_REPORT_INTERVAL)
+    }
+
+    fn take(&mut self, now: Instant) -> Option<u64> {
+        if self.pending == 0 {
+            return None;
+        }
+        self.last_report = Some(now);
+        Some(mem::take(&mut self.pending))
+    }
+}
+
+fn report_sheds(count: Option<u64>) {
+    if let Some(shed) = count {
+        tracing::warn!(
+            target: "naht::server",
+            shed,
+            "anonymous queue full, connections closed at accept"
+        );
     }
 }
 

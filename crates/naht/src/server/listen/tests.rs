@@ -1,7 +1,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Extension;
 use axum::Router;
@@ -13,7 +13,7 @@ use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
 use super::super::slot::ConnectionSlot;
-use super::{ANONYMOUS_CONNECTIONS, ANONYMOUS_DEADLINE, accept_until_cancelled};
+use super::{ANONYMOUS_CONNECTIONS, accept_until_cancelled};
 
 const AUTHENTICATED_CAP: usize = 64;
 
@@ -22,6 +22,8 @@ const PING: &[u8] = b"GET /ping HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\
 const PROMOTE: &[u8] = b"GET /promote HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n";
 
 const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+const DOCUMENTED_DEADLINE: Duration = Duration::from_secs(2);
 
 const DEADLINE_SLACK: Duration = Duration::from_secs(5);
 
@@ -110,7 +112,7 @@ async fn a_new_connection_is_served_once_the_held_connections_expire(opening: &[
         stream.write_all(opening).await.unwrap();
         held.push(stream);
     }
-    sleep(ANONYMOUS_DEADLINE.saturating_add(DEADLINE_SLACK)).await;
+    sleep(DOCUMENTED_DEADLINE.saturating_add(DEADLINE_SLACK)).await;
 
     let mut fresh = TcpStream::connect(address).await.unwrap();
     fresh.write_all(PING).await.unwrap();
@@ -153,4 +155,20 @@ async fn a_promoted_connection_releases_its_seat_when_the_connection_ends() {
 
     shutdown.cancel();
     server.await.unwrap().unwrap();
+}
+
+#[test]
+fn a_shed_is_reported_at_once_and_later_sheds_are_reported_as_one_count() {
+    let start = Instant::now();
+    let at = |seconds: u64| start + Duration::from_secs(seconds);
+    let mut sheds = super::ShedLog::default();
+
+    assert_eq!(sheds.record(at(0)), Some(1));
+    assert_eq!(sheds.record(at(1)), None);
+    assert_eq!(sheds.record(at(2)), None);
+    assert_eq!(sheds.record(at(10)), Some(3));
+    assert_eq!(sheds.flush(at(11)), None);
+    assert_eq!(sheds.record(at(12)), None);
+    assert_eq!(sheds.flush(at(20)), Some(1));
+    assert_eq!(sheds.flush(at(30)), None);
 }
