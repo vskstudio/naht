@@ -60,6 +60,7 @@ impl<V: Vfs> Session<V> {
             journal: None,
             queue: BTreeMap::new(),
             unacked: BTreeMap::new(),
+            pending_relocations: BTreeMap::new(),
             next_seq: 0,
             studio_blobs: None,
             blob_queue: BTreeMap::new(),

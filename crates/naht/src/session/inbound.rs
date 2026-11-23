@@ -78,8 +78,17 @@ impl<V: Vfs> Session<V> {
     ///
     /// Returns [`SessionError`] when a change cannot be applied.
     pub fn apply_changes(&mut self, changes: Vec<Change>) -> Result<(), SessionError> {
+        self.apply_plan(changes, &[])
+    }
+
+    pub(super) fn apply_plan(
+        &mut self,
+        changes: Vec<Change>,
+        moves: &[(String, String)],
+    ) -> Result<(), SessionError> {
         let mut batch = Transaction::begin(self)?;
-        let deleted = batch.stage_text_changes(changes)?;
+        let mut deleted = batch.stage_text_changes(changes)?;
+        deleted.extend(batch.move_studio_deleted(moves)?);
         batch.reconcile_all()?;
         batch.remove_emptied_dirs(&deleted);
         batch.commit();
@@ -134,6 +143,7 @@ impl<V: Vfs> Session<V> {
         removals.retain(|path| !renamed.contains(path));
         let upserted: BTreeSet<String> = upserts.iter().map(|(path, _, _)| path.clone()).collect();
         let deleted: BTreeSet<String> = removals.iter().cloned().collect();
+        let mut emptied = self.relocate_pending(&upserted)?;
         let mut resolved_upserts = BTreeSet::new();
         for (path, class, content) in upserts {
             let path = self.batch_target(&path, &upserted, &deleted);
@@ -142,7 +152,6 @@ impl<V: Vfs> Session<V> {
             let instance = TextInstance::new(path.clone(), class, content);
             self.write_studio(path, Some(instance));
         }
-        let mut emptied = Vec::with_capacity(removals.len());
         for path in removals {
             let path = self.batch_target(&path, &resolved_upserts, &deleted);
             if resolved_upserts.contains(&path) {
@@ -449,6 +458,8 @@ impl<V: Vfs> Session<V> {
         }
     }
 }
+
+mod relocate;
 
 #[cfg(test)]
 mod tests;

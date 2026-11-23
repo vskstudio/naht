@@ -263,6 +263,16 @@ local function refusedPaths(self: Client, body: string?): { string }
 	return decoded.refused_paths
 end
 
+local function wantedPaths(self: Client, body: string?): { string }
+	local ok, decoded = pcall(function()
+		return self.http:JSONDecode(body or "")
+	end)
+	if not ok or type(decoded) ~= "table" or type(decoded.wanted) ~= "table" then
+		return {}
+	end
+	return decoded.wanted
+end
+
 function Client.postChanges(self: Client, changes: { Protocol.Change })
 	local response = request(self, {
 		Url = "/changes",
@@ -279,7 +289,7 @@ function Client.postChanges(self: Client, changes: { Protocol.Change })
 	end
 end
 
-function Client.postInventory(self: Client, scripts: { Protocol.InventoryEntry }, sessionId: string): boolean
+function Client.postInventory(self: Client, scripts: { Protocol.InventoryEntry }, sessionId: string): { string }?
 	local response = request(self, {
 		Url = "/inventory?session=" .. sessionId,
 		Method = "POST",
@@ -290,7 +300,7 @@ function Client.postInventory(self: Client, scripts: { Protocol.InventoryEntry }
 		error(Client.SESSION_CHANGED)
 	end
 	if response.StatusCode == 404 then
-		return false
+		return nil
 	end
 	if not response.Success then
 		error({
@@ -299,7 +309,7 @@ function Client.postInventory(self: Client, scripts: { Protocol.InventoryEntry }
 			refused = refusedPaths(self, response.Body),
 		})
 	end
-	return true
+	return wantedPaths(self, response.Body)
 end
 
 return Client

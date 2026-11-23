@@ -22,7 +22,7 @@ il a besoin de HTTP/2, que `HttpService` ne supporte pas.
 | `GET /info` | Handshake : version de protocole/serveur, nom du projet, id de session. Avec le token du projet, il déclenche un re-diff contre l'état persisté à la (re)connexion ; sans token, il répond seulement. |
 | `GET /patches` | Long-poll pour les patches texte système de fichiers → Studio. Maintenu ouvert jusqu'à ce qu'un changement soit prêt ou qu'un timeout s'écoule. Retourne un curseur + des patches ordonnés. Exige le paramètre de requête `session`. |
 | `POST /changes` | Éditions Studio → système de fichiers (un lot d'upserts/deletes). |
-| `POST /inventory` | Liste complète des scripts du plugin, envoyée une fois par session à l'attachement. Le daemon retire les scripts miroir que la liste ne nomme pas et écrit ceux qu'il n'a pas, si bien qu'un renommage fait pendant l'arrêt du plugin ne laisse pas d'ancien fichier. Exige le paramètre de requête `session`. Additif : pas de hausse de version de protocole. |
+| `POST /inventory` | Liste complète des scripts du plugin, envoyée une fois par session à l'attachement. Le daemon retire les scripts miroir que la liste ne nomme pas et écrit ceux qu'il n'a pas, si bien qu'un renommage fait pendant l'arrêt du plugin ne laisse pas d'ancien fichier. Un dossier renommé dans Studio est suivi par les scripts restés dessous, et la réponse liste les nouveaux chemins dont le plugin envoie ensuite la source en upsert. Exige le paramètre de requête `session`. Non publié, protocole 5 : le corps `200` passe de vide à `{"wanted": [...]}`, et un plugin antérieur l'ignore, si bien que les scripts qu'il aurait envoyés restent dans l'ancien dossier jusqu'à l'attachement suivant. |
 | `GET /blobs` | Long-poll pour le canal **blob terrain** (daemon → Studio). Gardé séparé de `/patches` parce que les blobs se synchronisent de façon opaque, sans diff/merge. Le curseur fait office d'acquittement : les patches de blob en file sous ce curseur sont retirés. Exige le paramètre de requête `session`. |
 | `POST /blobs` | Changements de blob Studio → daemon (voxels de terrain). |
 | `POST /ack` | Le plugin confirme, par numéro de séquence, quels patches il a réellement appliqués. Gate l'avancée de la base. Exige le paramètre de requête `session`. |
@@ -113,7 +113,7 @@ re-diffe et renvoie exactement ce qui manque, sans jamais supposer qu'un lot per
 
 ## Versionnage
 
-Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `5`). Il fait partie du handshake pour que les
+Le protocole porte un `PROTOCOL_VERSION` entier (actuellement `5`, non publié ; `4` dans la v0.5.0). Il fait partie du handshake pour que les
 deux moitiés puissent refuser de se parler à travers une frontière incompatible au lieu de corrompre l'état.
 
 Les headers client `x-naht-client` et `x-naht-place-id` sont obligatoires sur chaque requête. Depuis la version `3`,
@@ -125,7 +125,7 @@ La version `4` ajoute le token du projet. Toutes les routes sauf `GET /info` exi
 token correspondant reçoit `401`. Un plugin de version `3` s'arrête à son message de mise à jour. Mets à jour la CLI, le
 plugin et le daemon ensemble.
 
-La version `5` ajoute la preuve du daemon. `GET /info?nonce=<n>` répond avec `proof`, le HMAC-SHA256 de
+Le protocole `5`, non publié (absent de la v0.5.0), ajoute la preuve du daemon. `GET /info?nonce=<n>` répond avec `proof`, le HMAC-SHA256 de
 `naht-daemon-proof-v1\n<port>\n<n>` dont la clé est le token, et le plugin n'envoie le token qu'une fois cette valeur
 égale à celle qu'il calcule. D'ici là il n'envoie rien d'autre que `GET /info`, et sans token pour le projet il
 s'arrête et le demande. Un programme qui prend le port pendant que `naht serve` est arrêté ne sait pas y répondre,

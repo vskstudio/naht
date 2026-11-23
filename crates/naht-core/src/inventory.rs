@@ -20,3 +20,11 @@ pub struct InventoryBatch {
     /// The scripts, in the order the plugin listed them.
     pub scripts: Vec<InventoryEntry>,
 }
+
+/// The JSON reply to `POST /inventory`: the paths whose Studio content the daemon is waiting for
+/// before it moves the file under a renamed folder, which the plugin answers with an upsert.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct InventoryReply {
+    /// The new, project-relative paths whose Studio source the daemon still needs.
+    pub wanted: Vec<String>,
+}

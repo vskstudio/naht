@@ -54,8 +54,14 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   the handshake. `naht serve` re-diffs the disk once at startup, so an edit made while no daemon ran
   reaches Studio on the next attach.
 - **Studio renames, moves and live terrain** (#76): renames and reparents in Studio are written to disk,
-  and live terrain edits sync. On attach the plugin posts its placed script inventory, which only ever
-  applies detected renames and never deletes or overwrites a file.
+  and live terrain edits sync. On attach the plugin posts its placed script inventory, which applies detected
+  renames. A folder is followed as renamed only when the evidence is unambiguous: each `(class, fingerprint)`
+  key has exactly one listed create and one unlisted script, the folder's pairs all land in one new folder, no
+  listed script is left under the old one, and every unpaired create lies under the new folder. Twins, a split
+  folder or an unrelated unpaired create infer nothing. Under a folder that qualifies, a script Studio deleted
+  moves with its disk bytes and stays as a script Studio deleted while stopped does in a folder that was not
+  renamed, and a script whose Studio content changed moves only once that content arrives through `/changes`, so
+  no side's content is lost. A folder whose scripts all changed is not followed (an open limit).
 - **Place binding** (#76): a project binds to the first published place that attaches, and another place
   is refused with a 403. Unpublished places never bind. `[serve] place_id` pins the place, and
   `naht unbind` clears the binding without touching the rest of the state. A project shared between two
@@ -94,7 +100,7 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   no em or en dash (#63), clippy with warnings denied, tests, rustdoc with warnings denied, full
   `cargo deny` and workspace `cargo machete`.
 
-## Protocol 3 (unreleased)
+## Protocols 3 and 4 (shipped in v0.5.0)
 
 - **Sequenced text patches**: each `GET /patches` patch carries its queue `seq` beside its fields
   (`SequencedPatch`, flattened on the wire). `POST /ack` takes `{seqs: [...]}` in place of `{paths: [...]}`:
@@ -114,11 +120,17 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   `400`, and a batch whose valid changes fail to apply is `500` with the Studio mirror restored to its state
   before the batch.
 
-- **`POST /inventory` response**: takes the same `{changes: [...]}` body as `/changes` and a `session` query parameter. It is answered `200` with an empty body when the listing applies (an empty listing changes nothing), `400` with `{"refused_paths": [...]}` when it holds a `Delete` or a refused path, `409` for another session's id, and `404` from a daemon that predates the route, which the plugin reports as a warning rather than a failure.
+- **`POST /inventory` response**: takes a MessagePack `{scripts: [{path, class, hash}]}` body and a `session` query parameter. It is answered `200` with an empty body when the listing applies, `400` with `{"refused_paths": [...]}` when it holds a `Delete` or a refused path, and `409` for another session's id.
 - **Body limits**: at most two POST bodies are read and handled at once, each capped at 64 MiB (`413`), with
   a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 shipped in v0.4.0
-  with the old `Ack` and `PatchBatch` shapes, so the sequenced shapes above and these limits ship as version 3,
-  and `PROTOCOL_VERSION` is `3`.
+  with the old `Ack` and `PatchBatch` shapes, so the sequenced shapes above and these limits shipped as version 3.
+  v0.5.0 declares `PROTOCOL_VERSION` 4.
+
+## Protocol 5 (unreleased)
+
+Nothing in this section is in v0.5.0, whose `PROTOCOL_VERSION` is 4. The handshake compares versions for equality, so this travels with protocol 5 and is not released yet. The `[[tree]]` refusal (`TreePathHidden`) is new here; the project path rule already refused a dot segment in v0.5.0.
+
+- **`POST /inventory` response**: takes a MessagePack `{scripts: [{path, class, hash}]}` body and a `session` query parameter. It is answered `200` with `{"wanted": [...]}` when the listing applies: `wanted` names the new paths of scripts under a renamed folder whose Studio source the daemon still needs, and is empty when there are none (an empty listing changes nothing), `400` with `{"refused_paths": [...]}` when it holds a `Delete` or a refused path, `409` for another session's id, and `404` from a daemon that predates the route, which the plugin reports as a warning rather than a failure. The handshake compares versions for equality, so the `wanted` reply is unreleased and travels with protocol 5. A plugin built before the `wanted` list discards the reply, and a new plugin against an older daemon reads the empty `200` as no wanted paths.
 - **Dot names are refused** (#79): a path segment that starts with `.` fails the project path rule, so every
   `/changes` and `/inventory` path and every `[[tree]]` path in `naht.toml` refuses it, and the plugin does not
   sync a script whose name starts with `.` and warns once. The scanner and the watcher ignore dot entries inside a

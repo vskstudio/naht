@@ -167,6 +167,24 @@ impl<V: Vfs> Session<V> {
         self.emit(Outbound::Unacked(key.to_owned(), pending));
     }
 
+    pub(super) fn rekey_patches(&mut self, from: &str, to: &str) {
+        self.emit(Outbound::Rekey {
+            from: from.to_owned(),
+            to: to.to_owned(),
+        });
+    }
+
+    fn rekey(&mut self, from: &str, to: &str) {
+        if let Some((seq, mut patch)) = self.queue.remove(from) {
+            to.clone_into(&mut patch.path);
+            self.queue.insert(to.to_owned(), (seq, patch));
+        }
+        if let Some(mut patch) = self.unacked.remove(from) {
+            to.clone_into(&mut patch.path);
+            self.unacked.insert(to.to_owned(), patch);
+        }
+    }
+
     pub(super) fn record_event(
         &mut self,
         path: String,
@@ -205,6 +223,7 @@ impl<V: Vfs> Session<V> {
             Outbound::Unacked(key, None) => {
                 self.unacked.remove(&key);
             }
+            Outbound::Rekey { from, to } => self.rekey(&from, &to),
         }
     }
 

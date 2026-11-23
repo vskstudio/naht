@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use naht_core::inventory::{InventoryBatch, InventoryEntry};
+use naht_core::inventory::{InventoryBatch, InventoryEntry, InventoryReply};
 use naht_core::protocol;
 use naht_core::vfs::validate_source_path;
 
@@ -29,10 +29,10 @@ pub(super) async fn inventory(
     })
     .await
     {
-        Ok(()) => {
+        Ok(wanted) => {
             tracing::info!(target: "naht::server", count, "inventory reconciled from Studio");
             state.wake_all_long_polls();
-            StatusCode::OK.into_response()
+            Json(InventoryReply { wanted }).into_response()
         }
         Err(rejection) => rejection.into_response(),
     }
@@ -41,7 +41,7 @@ pub(super) async fn inventory(
 fn apply_inventory_batch(
     session: &mut Session,
     scripts: &[InventoryEntry],
-) -> Result<(), Rejection> {
+) -> Result<Vec<String>, Rejection> {
     let refused: Vec<String> = scripts
         .iter()
         .filter(|script| is_refused_script(session, &script.path))
