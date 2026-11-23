@@ -23,7 +23,13 @@ its group or others can read is tightened to 0600 when the daemon loads it, so a
 read it and cannot call the daemon. On Windows the file inherits the access rules of the `.naht` directory,
 and Naht adds no further restriction. When the project sets `serve.place_id`, requests from a session bound to another place are
 refused, which guards against syncing source into the wrong game. Writes are limited to paths that map to
-Studio scripts or terrain blobs, and request bodies and concurrency are bounded.
+Studio scripts or terrain blobs, and request bodies and concurrency are bounded. Connections that have not
+passed the token take one of 16 seats, which close two seconds after they take it, so a caller without the token
+cannot hold the seats that the authenticated connections use. Such a caller can still delay a newcomer: a newcomer
+waits up to 20 seconds for a seat and is then closed. A local process that keeps about 272 tokenless connections
+(16 seated and 256 waiting) open makes a new connection close at accept time, including the plugin's, and the plugin
+retries with its backoff of 1 to 15 seconds. Below that point, a newcomer waits up to 20 seconds (see
+[`docs/architecture.md`](docs/architecture.md), section 11).
 
 The gate is not authentication against the account that runs the daemon. A process running as that account
 can read `.naht/token`, and it can read and write the project files directly, so the operating system account
@@ -46,6 +52,13 @@ plugin holds back every other request until the next handshake proves it again.
   plugin sees, a request can still reach a process that took the port in that instant. The daemon would have to
   exit and the other process bind the port before the plugin's next request, which already fails with a refused
   connection when nothing listens. Details are in [`docs/architecture.md`](docs/architecture.md), section 11.
+- **Connection slots for the project account (residual, not solved).** A process running as the project account holds
+  the token and can fill the authenticated connection pool (`[limits] connections`, 64 by default), so the plugin waits
+  for a seat. Callers without the token cannot take the authenticated pool, but a local process that keeps about
+  272 tokenless connections open (16 seated and 256 waiting) closes new connections at accept time, including the
+  plugin's; the plugin retries with its 1 to 15 second backoff. Below that point a newcomer waits up to 20 seconds. A
+  `GET /info` that waits past two seconds for the session lock is cut. Measured numbers and the bounds are in
+  [`docs/architecture.md`](docs/architecture.md), section 11.
 
 ## Supported versions
 

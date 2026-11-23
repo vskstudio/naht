@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 mod adoption;
+mod flood;
 mod instances;
 mod limits;
 mod offline;

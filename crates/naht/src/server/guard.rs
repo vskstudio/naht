@@ -15,6 +15,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
+use super::slot::ConnectionSlot;
 use super::{AppState, BODY_LIMIT, INFO_ROUTE, INVENTORY_ROUTE};
 use crate::session::SessionError;
 
@@ -276,6 +277,11 @@ pub(super) async fn guard(
     match decision {
         Ok(authenticated) => {
             if authenticated {
+                if let Some(slot) = request.extensions().get::<Arc<ConnectionSlot>>()
+                    && !slot.promote().await
+                {
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
                 request.extensions_mut().insert(Authenticated);
             }
             next.run(request).await

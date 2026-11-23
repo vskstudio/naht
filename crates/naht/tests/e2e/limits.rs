@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
 use naht_core::protocol::{
@@ -9,10 +9,33 @@ use naht_core::protocol::{
 use reqwest::{Client, RequestBuilder, StatusCode};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::task::JoinSet;
+use tokio::time::{sleep, timeout};
 
+use super::flood::{
+    authenticated_request, hold_authenticated, request_on_open, served_within, timed,
+    tokenless_request, try_read_response,
+};
 use super::{Daemon, init, wire};
 
+const ANONYMOUS_POOL: usize = 16;
+
+const FLOOD_STALLS: usize = 64;
+
+const ANONYMOUS_DEADLINE: Duration = Duration::from_secs(2);
+
+const DEADLINE_MARGIN: Duration = Duration::from_secs(3);
+
+const NEWCOMER_BOUND: Duration = Duration::from_secs(9);
+
+const LONG_POLL_CEILING: Duration = Duration::from_secs(60);
+
+const HELD_CURSOR: u64 = u64::MAX;
+
 const PROBE_WAIT: Duration = Duration::from_secs(1);
+const PROBE_MARGIN: Duration = Duration::from_millis(100);
+const MIN_OBSERVATION: Duration = Duration::from_secs(1);
+const OBSERVED_FOR: Duration = ANONYMOUS_DEADLINE.saturating_sub(PROBE_MARGIN);
 const RELEASE_WAIT: Duration = Duration::from_secs(5);
 const WARNING: &str = "large deletion reconciled";
 
@@ -92,6 +115,18 @@ async fn stall(daemon: &Daemon) -> TcpStream {
     stream
 }
 
+async fn seated(address: String, request: String) -> TcpStream {
+    let mut stream = TcpStream::connect(&address).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let response = try_read_response(&mut stream).await;
+    assert_eq!(
+        response.map(|(status, _)| status),
+        Some(200),
+        "a connection that should hold an anonymous seat was not answered"
+    );
+    stream
+}
+
 async fn probe(daemon: &Daemon, wait: Duration) -> Result<reqwest::Response, reqwest::Error> {
     let client = Client::builder()
         .timeout(wait)
@@ -165,27 +200,152 @@ async fn the_configured_inventory_body_limit_is_enforced_at_its_boundary() {
 }
 
 #[tokio::test]
-async fn the_configured_connection_cap_holds_back_the_connection_past_it() {
+async fn a_full_anonymous_pool_holds_the_seventeenth_connection_until_a_seat_frees() {
+    let root = project("");
+    let daemon = Daemon::start(root.path()).await;
+    let addr = daemon.base.trim_start_matches("http://").to_owned();
+    let request = tokenless_request(&daemon, "/info");
+
+    let started = Instant::now();
+    let mut seating = JoinSet::new();
+    for _ in 0..ANONYMOUS_POOL {
+        seating.spawn(seated(addr.clone(), request.clone()));
+    }
+    let mut seated_sockets = Vec::new();
+    while let Some(joined) = seating.join_next().await {
+        seated_sockets.push(joined.expect("seating an anonymous connection panicked"));
+    }
+
+    let mut seventeenth = TcpStream::connect(&addr).await.unwrap();
+    seventeenth.write_all(request.as_bytes()).await.unwrap();
+    let window = (started + OBSERVED_FOR).saturating_duration_since(Instant::now());
+    assert!(
+        window >= MIN_OBSERVATION,
+        "the {ANONYMOUS_POOL} anonymous seats took {:?} to fill, too slow to observe the connection past them before the first seat expires",
+        started.elapsed()
+    );
+    let early = timeout(window, try_read_response(&mut seventeenth)).await;
+    let answered_at = started.elapsed();
+    let served = if let Ok(response) = early {
+        assert!(
+            answered_at >= ANONYMOUS_DEADLINE,
+            "the connection past the {ANONYMOUS_POOL} anonymous seats was answered or closed at {answered_at:?}, before the seats could expire"
+        );
+        response
+    } else {
+        let served_by = started + ANONYMOUS_DEADLINE + Duration::from_secs(2);
+        timeout(
+            served_by.saturating_duration_since(Instant::now()),
+            try_read_response(&mut seventeenth),
+        )
+        .await
+        .ok()
+        .flatten()
+    };
+    assert_eq!(
+        served.map(|(status, _)| status),
+        Some(200),
+        "the queued connection was not served once the stalled seats expired"
+    );
+    drop(seated_sockets);
+}
+
+#[tokio::test]
+async fn tokenless_connections_filling_the_anonymous_pool_do_not_block_a_new_authenticated_connection()
+ {
+    let root = project("");
+    let daemon = Daemon::start(root.path()).await;
+
+    let mut stalled = Vec::new();
+    for _ in 0..FLOOD_STALLS {
+        stalled.push(stall(&daemon).await);
+    }
+    let addr = daemon.base.trim_start_matches("http://").to_owned();
+    let request = authenticated_request(&daemon, "/heartbeat");
+    let (on_newcomer, (attempts, newcomer)) =
+        timed(served_within(&addr, &request, NEWCOMER_BOUND)).await;
+    let mut newcomer = newcomer.unwrap_or_else(|| {
+        panic!("a new authenticated connection was not served within {NEWCOMER_BOUND:?} ({attempts} attempts)")
+    });
+    assert!(
+        on_newcomer <= NEWCOMER_BOUND,
+        "a new authenticated connection took {on_newcomer:?} behind {FLOOD_STALLS} stalls"
+    );
+
+    sleep(ANONYMOUS_DEADLINE.saturating_add(DEADLINE_MARGIN)).await;
+    let status = timeout(PROBE_WAIT, request_on_open(&mut newcomer, &request)).await;
+    assert_eq!(
+        status.ok(),
+        Some(200),
+        "a promoted connection was closed by the anonymous deadline"
+    );
+    drop(stalled);
+}
+
+#[tokio::test]
+async fn a_promoted_connection_outlives_the_anonymous_deadline() {
+    let root = project("");
+    let daemon = Daemon::start(root.path()).await;
+    let mut promoted = hold_authenticated(&daemon).await;
+
+    sleep(ANONYMOUS_DEADLINE.saturating_add(DEADLINE_MARGIN)).await;
+    let status = timeout(
+        PROBE_WAIT,
+        request_on_open(&mut promoted, &authenticated_request(&daemon, "/heartbeat")),
+    )
+    .await;
+    assert_eq!(
+        status.ok(),
+        Some(200),
+        "a promoted connection was closed at the anonymous deadline"
+    );
+}
+
+#[tokio::test]
+async fn a_promoted_connection_serves_a_long_poll_held_past_the_anonymous_deadline() {
+    let root = project("");
+    let daemon = Daemon::start(root.path()).await;
+    let mut promoted = hold_authenticated(&daemon).await;
+
+    let path = format!("/patches?cursor={HELD_CURSOR}&session={}", daemon.session);
+    let (held, status) = timed(timeout(
+        LONG_POLL_CEILING,
+        request_on_open(&mut promoted, &authenticated_request(&daemon, &path)),
+    ))
+    .await;
+    assert!(
+        held > ANONYMOUS_DEADLINE.saturating_add(DEADLINE_MARGIN),
+        "the long poll returned after {held:?}, before it outlived the anonymous deadline"
+    );
+    assert_eq!(
+        status.ok(),
+        Some(200),
+        "a long poll held past the anonymous deadline was cut"
+    );
+}
+
+#[tokio::test]
+async fn the_configured_connection_cap_holds_back_the_authenticated_connection_past_it() {
     let root = project("connections = 2\n");
     let daemon = Daemon::start(root.path()).await;
 
-    let first = stall(&daemon).await;
+    let first = hold_authenticated(&daemon).await;
     assert!(
         probe(&daemon, PROBE_WAIT).await.is_ok(),
-        "one stalled connection blocked a cap of two"
+        "one authenticated connection blocked a cap of two"
     );
-    let second = stall(&daemon).await;
+    let second = hold_authenticated(&daemon).await;
     assert!(
         probe(&daemon, PROBE_WAIT)
             .await
             .is_err_and(|error| error.is_timeout()),
-        "a third connection was served past the cap of two"
+        "a third authenticated connection was served past the cap of two"
     );
 
     drop(first);
     assert!(
         probe(&daemon, RELEASE_WAIT).await.is_ok(),
-        "the held connection did not release its slot"
+        "the held authenticated connection did not release its slot"
     );
     drop(second);
 }
