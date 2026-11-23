@@ -56,9 +56,13 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   reaches Studio on the next attach.
 - **Studio renames, moves and live terrain** (#76): renames and reparents in Studio are written to disk,
   and live terrain edits sync. On attach the plugin posts its placed script inventory, which applies detected
-  renames. Under a folder renamed in Studio, the scripts left behind follow it: a script Studio deleted moves
-  with its disk bytes, and a script whose Studio content changed moves only once that content arrives through
-  `/changes`, so no side's content is lost.
+  renames. A folder is followed as renamed only when the evidence is unambiguous: each `(class, fingerprint)`
+  key has exactly one listed create and one unlisted script, the folder's pairs all land in one new folder, no
+  listed script is left under the old one, and every unpaired create lies under the new folder. Twins, a split
+  folder or an unrelated unpaired create infer nothing. Under a folder that qualifies, a script Studio deleted
+  moves with its disk bytes and stays as a script Studio deleted while stopped does in a folder that was not
+  renamed, and a script whose Studio content changed moves only once that content arrives through `/changes`, so
+  no side's content is lost. A folder whose scripts all changed is not followed (an open limit).
 - **Place binding** (#76): a project binds to the first published place that attaches, and another place
   is refused with a 403. Unpublished places never bind. `[serve] place_id` pins the place, and
   `naht unbind` clears the binding without touching the rest of the state. A project shared between two
@@ -117,7 +121,7 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   `400`, and a batch whose valid changes fail to apply is `500` with the Studio mirror restored to its state
   before the batch.
 
-- **`POST /inventory` response**: takes the same `{changes: [...]}` body as `/changes` and a `session` query parameter. It is answered `200` with `{"wanted": [...]}` when the listing applies: `wanted` names the new paths of scripts under a renamed folder whose Studio source the daemon still needs, and is empty when there are none (an empty listing changes nothing), `400` with `{"refused_paths": [...]}` when it holds a `Delete` or a refused path, `409` for another session's id, and `404` from a daemon that predates the route, which the plugin reports as a warning rather than a failure.
+- **`POST /inventory` response**: takes a MessagePack `{scripts: [{path, class, hash}]}` body and a `session` query parameter. It is answered `200` with `{"wanted": [...]}` when the listing applies: `wanted` names the new paths of scripts under a renamed folder whose Studio source the daemon still needs, and is empty when there are none (an empty listing changes nothing), `400` with `{"refused_paths": [...]}` when it holds a `Delete` or a refused path, `409` for another session's id, and `404` from a daemon that predates the route, which the plugin reports as a warning rather than a failure. The protocol version stays at 5 because the handshake compares versions for equality, so a bump would break mixed builds. A plugin built before the `wanted` list discards the reply, and a new plugin against an older daemon reads the empty `200` as no wanted paths.
 - **Body limits**: at most two POST bodies are read and handled at once, each capped at 64 MiB (`413`), with
   a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 shipped in v0.4.0
   with the old `Ack` and `PatchBatch` shapes, so the sequenced shapes above and these limits ship as version 3,
