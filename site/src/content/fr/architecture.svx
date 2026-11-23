@@ -59,7 +59,7 @@ Toutes les erreurs de `naht-core` sont typées avec `thiserror`. Pas d'`unwrap()
 ### `naht` (binaire) : CLI + daemon
 
 - Le serveur HTTP localhost (`axum`) auquel le plugin parle.
-- Le watcher de fichiers (`notify-debouncer-full`). Sous Linux, il surveille la racine du projet et chaque dossier que le parcours retient, si bien que `node_modules`, `target` et les dossiers cachés ne sont jamais surveillés. Sous macOS et Windows, c'est une seule surveillance récursive sur la racine.
+- Le watcher de fichiers (`notify-debouncer-full`). Sous Linux, il surveille la racine du projet et chaque dossier que le parcours retient, si bien que `node_modules`, `target` et les dossiers cachés ne sont jamais surveillés. Quand un changement nomme un dossier, ou un dossier qui le contient, les surveillances de ce dossier sont relâchées puis rétablies. Sous macOS et Windows, c'est une seule surveillance récursive sur la racine.
 - L'orchestration de session et la possession de la base de données SQLite.
 - Toutes les [commandes CLI](#/docs/cli) : `init`, `serve`, `pull`, `build`, `status`, `resolve`,
   `package-plugin`.
