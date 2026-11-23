@@ -9,8 +9,12 @@ use naht_core::protocol::{
 use reqwest::{Client, RequestBuilder, StatusCode};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::time::timeout;
 
+use super::flood::{authenticated_request, hold_authenticated, request_on_open};
 use super::{Daemon, init, wire};
+
+const ANONYMOUS_POOL: usize = 16;
 
 const PROBE_WAIT: Duration = Duration::from_secs(1);
 const RELEASE_WAIT: Duration = Duration::from_secs(5);
@@ -165,27 +169,53 @@ async fn the_configured_inventory_body_limit_is_enforced_at_its_boundary() {
 }
 
 #[tokio::test]
-async fn the_configured_connection_cap_holds_back_the_connection_past_it() {
+async fn tokenless_connections_filling_the_anonymous_pool_do_not_block_an_authenticated_request() {
+    let root = project("");
+    let daemon = Daemon::start(root.path()).await;
+    let mut established = hold_authenticated(&daemon).await;
+
+    let mut stalled = Vec::new();
+    for _ in 0..ANONYMOUS_POOL {
+        stalled.push(stall(&daemon).await);
+    }
+    let served = timeout(
+        PROBE_WAIT,
+        request_on_open(
+            &mut established,
+            &authenticated_request(&daemon, "/heartbeat"),
+        ),
+    )
+    .await;
+    assert_eq!(
+        served.ok(),
+        Some(200),
+        "tokenless connections filling the anonymous pool blocked an established authenticated connection"
+    );
+    drop(stalled);
+}
+
+#[tokio::test]
+async fn the_configured_connection_cap_holds_back_the_authenticated_connection_past_it() {
     let root = project("connections = 2\n");
     let daemon = Daemon::start(root.path()).await;
 
-    let first = stall(&daemon).await;
+    let first = hold_authenticated(&daemon).await;
     assert!(
         probe(&daemon, PROBE_WAIT).await.is_ok(),
-        "one stalled connection blocked a cap of two"
+        "one authenticated connection blocked a cap of two"
     );
-    let second = stall(&daemon).await;
+    let second = hold_authenticated(&daemon).await;
     assert!(
         probe(&daemon, PROBE_WAIT)
             .await
             .is_err_and(|error| error.is_timeout()),
-        "a third connection was served past the cap of two"
+        "a third authenticated connection was served past the cap of two"
     );
 
     drop(first);
     assert!(
         probe(&daemon, RELEASE_WAIT).await.is_ok(),
-        "the held connection did not release its slot"
+        "the held authenticated connection did not release its slot"
     );
     drop(second);
 }
