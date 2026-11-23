@@ -332,12 +332,27 @@ function Placement._postInventory(self, sessionId: string)
 		)
 		return
 	end
-	if not posted then
+	if posted == nil then
 		self:_setWarning("inventory", "naht: this daemon predates renames made while the plugin was stopped, update naht to apply them")
 		return
 	end
 	self.inventorySession = sessionId
 	self:_clearWarning("inventory")
+	self:_queueWanted(posted)
+end
+
+function Placement._queueWanted(self, wanted: { string })
+	for _, path in wanted do
+		for script, placedPath in self.placed do
+			if placedPath == path and CLASS_SUFFIX[script.ClassName] ~= nil and isUnder(self.root, script) then
+				self:_queue(path, self.protocol.upsert(path, script.ClassName, (script :: any).Source))
+				break
+			end
+		end
+	end
+	if #wanted > 0 then
+		self:_schedulePush()
+	end
 end
 
 function Placement._removeScript(self, script: Instance)

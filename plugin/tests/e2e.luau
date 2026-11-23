@@ -282,6 +282,49 @@ local function renamedWhileStopped(root, port, log)
 	stopDaemon(second)
 end
 
+local function renamedFolderWhileStopped(root, port, log)
+	local init = process.exec(BIN, { "init", root })
+	if not init.ok then
+		error("naht init failed: " .. init.stderr)
+	end
+	fs.writeDir(root .. "/src/OldDir")
+	fs.writeFile(root .. "/src/OldDir/Kept.luau", "return 7")
+	fs.writeFile(root .. "/src/OldDir/Changed.luau", "return 2")
+	fs.writeFile(root .. "/src/OldDir/Gone.luau", "return 9")
+
+	local first = startDaemon(root, port, log)
+	local info = first.client:info()
+	local initial = first.client:patches(0, info.session_id)
+	ackAll(first.client, info.session_id, initial)
+	stopDaemon(first)
+
+	local second = startDaemon(root, port, log)
+	local restarted = second.client:info()
+	local wanted = second.client:postInventory({
+		entryOf("src/NewDir/Kept.luau", "return 7"),
+		entryOf("src/NewDir/Changed.luau", "return 3"),
+	}, restarted.session_id)
+	check(
+		"an inventory asks for the changed script under the renamed folder",
+		wanted ~= nil and #wanted == 1 and wanted[1] == "src/NewDir/Changed.luau"
+	)
+	check("the changed script stays under the old folder until Studio sends it", fs.isFile(root .. "/src/OldDir/Changed.luau"))
+	second.client:postChanges({ Protocol.upsert("src/NewDir/Changed.luau", "ModuleScript", "return 3") })
+	check(
+		"the upsert moves the changed script under the renamed folder with Studio's content",
+		fs.isFile(root .. "/src/NewDir/Changed.luau") and fs.readFile(root .. "/src/NewDir/Changed.luau") == "return 3"
+	)
+	check(
+		"the scripts the folder kept and Studio deleted both follow it",
+		fs.isFile(root .. "/src/NewDir/Kept.luau")
+			and fs.readFile(root .. "/src/NewDir/Kept.luau") == "return 7"
+			and fs.isFile(root .. "/src/NewDir/Gone.luau")
+			and fs.readFile(root .. "/src/NewDir/Gone.luau") == "return 9"
+	)
+	check("the old folder is removed once it is empty", not fs.isDir(root .. "/src/OldDir"))
+	stopDaemon(second)
+end
+
 local function unsavedEdits(root, port, log)
 	local init = process.exec(BIN, { "init", root })
 	if not init.ok then
@@ -479,6 +522,7 @@ local function main()
 		check("the rename-while-stopped scenario ran to completion", false, tostring(renamedErr))
 	end
 	local extra = {
+		{ name = "renamed-folder", run = renamedFolderWhileStopped },
 		{ name = "unsaved", run = unsavedEdits },
 		{ name = "hidden", run = hiddenNameRefused },
 		{ name = "other-place", run = otherPlaceRefused },
