@@ -59,7 +59,21 @@ jobs:
           toolchain: 1.99.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Token tests (protected DACL)
-        run: cargo test --locked -p naht --lib token
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo test --locked -p naht --lib token 2>&1 | tee "$RUNNER_TEMP/token.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/token.log"
+      - name: Fresh-project lock test (owner-only state directory)
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo test --locked -p naht --lib a_fresh_project_lock_creates_an_owner_only_state_directory 2>&1 | tee "$RUNNER_TEMP/fresh-project.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/fresh-project.log"
 
   site:
     name: site build + test
