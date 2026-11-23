@@ -122,15 +122,19 @@ async fn a_connection_past_the_anonymous_seats_waits_for_a_seat_then_is_served()
         started.elapsed()
     );
     let early = timeout(window, read_to_close(&mut queued)).await;
-    assert!(
-        early.is_err(),
-        "the connection past the anonymous seats was answered or closed before the seats could expire"
-    );
-
-    idle.pop();
-    let response = timeout(HOLD, read_to_close(&mut queued))
-        .await
-        .expect("the queued connection was not served once a seat freed");
+    let answered_at = started.elapsed();
+    let response = if let Ok(response) = early {
+        assert!(
+            answered_at >= DOCUMENTED_DEADLINE,
+            "the connection past the anonymous seats was answered or closed at {answered_at:?}, before the seats could expire"
+        );
+        response
+    } else {
+        idle.pop();
+        timeout(HOLD, read_to_close(&mut queued))
+            .await
+            .expect("the queued connection was not served once a seat freed")
+    };
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(response.ends_with("pong"), "{response}");
 

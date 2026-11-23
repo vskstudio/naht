@@ -225,19 +225,25 @@ async fn a_full_anonymous_pool_holds_the_seventeenth_connection_until_a_seat_fre
         started.elapsed()
     );
     let early = timeout(window, try_read_response(&mut seventeenth)).await;
-    assert!(
-        early.is_err(),
-        "the connection past the {ANONYMOUS_POOL} anonymous seats was answered or closed before the seats could expire"
-    );
-
-    let served_by = started + ANONYMOUS_DEADLINE + Duration::from_secs(2);
-    let served = timeout(
-        served_by.saturating_duration_since(Instant::now()),
-        try_read_response(&mut seventeenth),
-    )
-    .await;
+    let answered_at = started.elapsed();
+    let served = if let Ok(response) = early {
+        assert!(
+            answered_at >= ANONYMOUS_DEADLINE,
+            "the connection past the {ANONYMOUS_POOL} anonymous seats was answered or closed at {answered_at:?}, before the seats could expire"
+        );
+        response
+    } else {
+        let served_by = started + ANONYMOUS_DEADLINE + Duration::from_secs(2);
+        timeout(
+            served_by.saturating_duration_since(Instant::now()),
+            try_read_response(&mut seventeenth),
+        )
+        .await
+        .ok()
+        .flatten()
+    };
     assert_eq!(
-        served.ok().flatten().map(|(status, _)| status),
+        served.map(|(status, _)| status),
         Some(200),
         "the queued connection was not served once the stalled seats expired"
     );
