@@ -51,6 +51,10 @@ pub(super) enum Outbound {
     Queue(Patch),
     QueueBlob(BlobPatch),
     Unacked(String, Option<Patch>),
+    Rekey {
+        from: String,
+        to: String,
+    },
 }
 
 pub(super) struct Transaction<'a, V: Vfs> {

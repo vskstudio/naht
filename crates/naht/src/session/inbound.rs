@@ -78,8 +78,17 @@ impl<V: Vfs> Session<V> {
     ///
     /// Returns [`SessionError`] when a change cannot be applied.
     pub fn apply_changes(&mut self, changes: Vec<Change>) -> Result<(), SessionError> {
+        self.apply_plan(changes, &[])
+    }
+
+    pub(super) fn apply_plan(
+        &mut self,
+        changes: Vec<Change>,
+        moves: &[(String, String)],
+    ) -> Result<(), SessionError> {
         let mut batch = Transaction::begin(self)?;
-        let deleted = batch.stage_text_changes(changes)?;
+        let mut deleted = batch.stage_text_changes(changes)?;
+        deleted.extend(batch.move_studio_deleted(moves)?);
         batch.reconcile_all()?;
         batch.remove_emptied_dirs(&deleted);
         batch.commit();
