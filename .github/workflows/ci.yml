@@ -59,7 +59,7 @@ jobs:
           toolchain: 1.99.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Token tests (protected DACL)
-        run: cargo test --locked -p naht token
+        run: cargo test --locked -p naht --lib token
 
   site:
     name: site build + test
