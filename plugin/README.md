@@ -154,7 +154,8 @@ from an unproven program. With no token stored for the project id the first answ
 `TokenRequired` and asks for one. A mismatch stops at `TokenRequired` with a message saying the program on the port
 could not prove it holds the token, and a token typed then is proven the same way before it is sent or saved. It
 is saved under the project id of the handshake that proved it, and it stays in memory when the daemon reports a
-project with no stored token, so the user does not type it twice. An
+project with no stored token, so the user does not type it twice. When the daemon reports a project that has a
+stored token, that stored token replaces a typed one not yet proven, since it was proven when it was saved. An
 `/info` answer over 1 MiB is refused before it is decoded. After a transport failure the plugin holds back every
 request but `/info` until the next handshake proves the daemon again.
 

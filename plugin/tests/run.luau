@@ -6137,15 +6137,45 @@ suite("a typed token survives a switch to a project with no stored token and is 
 		return reply(200, provenInfo(serving, "typed-token", options.Url))
 	end)
 	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
-	pcall(function()
+	local okFirst, errFirst = pcall(function()
 		client:info()
 	end)
+	check(
+		"the first handshake with nothing stored asks for the token",
+		not okFirst and Support.isTokenRefusal(errFirst) and errFirst.message == Client.TOKEN_REQUIRED,
+		tostring(errFirst)
+	)
 	client:setToken("typed-token")
 	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
 	client:info()
 	check("the typed token is kept across the switch", client.token == "typed-token", tostring(client.token))
 	check("the proven token is saved under the project that proved it", saved["p-2"] == "typed-token", tostring(saved["p-2"]))
 	check("nothing is saved under the project that never proved it", saved["p-1"] == nil, tostring(saved["p-1"]))
+end)
+
+suite("a token stored for the project the daemon switches to wins over a typed token not yet proven", function()
+	local saved: { [string]: string } = { ["p-2"] = "token-two" }
+	local store = {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, token: string)
+			saved[projectId] = token
+		end,
+	}
+	local serving = fromHex(GOLDEN.server_info)
+	local http = fakeHttp(function(options)
+		return reply(200, provenInfo(serving, "token-two", options.Url))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
+	pcall(function()
+		client:info()
+	end)
+	client:setToken("typed-token")
+	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
+	client:info()
+	check("the stored token of the new project replaces the typed one", client.token == "token-two", tostring(client.token))
+	check("the typed token is saved nowhere", saved["p-1"] == nil and saved["p-2"] == "token-two", tostring(saved["p-1"]))
 end)
 
 suite("the client takes the proof port from the daemon URL and refuses a URL without one", function()
