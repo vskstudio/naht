@@ -95,7 +95,7 @@ pub enum CommandError {
     },
     /// A `[[tree]]` source path, or a migrated Rojo `$path`, has a segment starting with `.`.
     #[error(
-        "`[[tree]]` path `{path}` has a segment starting with `.`, which the scanner and the watcher ignore"
+        "`[[tree]]` path `{path}` has a segment starting with `.`, which the scanner and the watcher ignore: rename that folder or change the path"
     )]
     TreePathHidden {
         /// The path as written in the project configuration.
