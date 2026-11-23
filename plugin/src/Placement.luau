@@ -342,12 +342,16 @@ function Placement._postInventory(self, sessionId: string)
 end
 
 function Placement._queueWanted(self, wanted: { string })
+	local scriptsByPath: { [string]: Instance } = {}
+	for script, placedPath in self.placed do
+		if scriptsByPath[placedPath] == nil and CLASS_SUFFIX[script.ClassName] ~= nil and isUnder(self.root, script) then
+			scriptsByPath[placedPath] = script
+		end
+	end
 	for _, path in wanted do
-		for script, placedPath in self.placed do
-			if placedPath == path and CLASS_SUFFIX[script.ClassName] ~= nil and isUnder(self.root, script) then
-				self:_queue(path, self.protocol.upsert(path, script.ClassName, (script :: any).Source))
-				break
-			end
+		local script = scriptsByPath[path]
+		if script ~= nil then
+			self:_queue(path, self.protocol.upsert(path, script.ClassName, (script :: any).Source))
 		end
 	end
 	if #wanted > 0 then
