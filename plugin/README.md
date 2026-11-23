@@ -152,7 +152,9 @@ the daemon URL, which must name one. Only a match lets the second `GET /info`, a
 `x-naht-token`; until then the plugin sends nothing else, so it posts no inventory or change and applies no patch
 from an unproven program. With no token stored for the project id the first answer names, the handshake stops at
 `TokenRequired` and asks for one. A mismatch stops at `TokenRequired` with a message saying the program on the port
-could not prove it holds the token, and a token typed then is proven the same way before it is sent or saved. An
+could not prove it holds the token, and a token typed then is proven the same way before it is sent or saved. It
+is saved under the project id of the handshake that proved it, and it stays in memory when the daemon reports a
+project with no stored token, so the user does not type it twice. An
 `/info` answer over 1 MiB is refused before it is decoded. After a transport failure the plugin holds back every
 request but `/info` until the next handshake proves the daemon again.
 

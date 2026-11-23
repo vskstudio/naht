@@ -100,8 +100,8 @@ function Client.setToken(self: Client, token: string)
 	self.unsaved = true
 end
 
-local function saveProvenToken(self: Client)
-	local store, projectId, token = self.store, self.projectId, self.token
+local function saveProvenToken(self: Client, projectId: string?)
+	local store, token = self.store, self.token
 	if not self.unsaved or store == nil or projectId == nil or token == nil then
 		return
 	end
@@ -165,8 +165,11 @@ function Client.info(self: Client): any
 	local switched = self.projectId ~= info.project_id
 	self.projectId = info.project_id
 	if self.store ~= nil and (self.token == nil or switched) then
-		self.token = self.store.load(info.project_id)
-		self.unsaved = false
+		local stored = self.store.load(info.project_id)
+		if stored ~= nil or not self.unsaved then
+			self.token = stored
+			self.unsaved = false
+		end
 	end
 	if self.token == nil then
 		error(handshakeRefusal(Client.TOKEN_REQUIRED))
@@ -185,7 +188,7 @@ function Client.info(self: Client): any
 		self.verified = false
 		error(handshakeRefusal(Client.PROOF_FAILED))
 	end
-	saveProvenToken(self)
+	saveProvenToken(self, info.project_id)
 	return confirmed
 end
 

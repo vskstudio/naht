@@ -6122,6 +6122,32 @@ suite("a program on the port that reports a project with no stored token gets no
 	check("the program never saw a token", not tokenSent(squatter))
 end)
 
+suite("a typed token survives a switch to a project with no stored token and is saved under the project that proves it", function()
+	local saved: { [string]: string } = {}
+	local store = {
+		load = function(projectId: string): string?
+			return saved[projectId]
+		end,
+		save = function(projectId: string, token: string)
+			saved[projectId] = token
+		end,
+	}
+	local serving = fromHex(GOLDEN.server_info)
+	local http = fakeHttp(function(options)
+		return reply(200, provenInfo(serving, "typed-token", options.Url))
+	end)
+	local client = Client.new("http://127.0.0.1:34872", placeReader(123), http, store)
+	pcall(function()
+		client:info()
+	end)
+	client:setToken("typed-token")
+	serving = fromHex((string.gsub(GOLDEN.server_info, "a3702d31", "a3702d32")))
+	client:info()
+	check("the typed token is kept across the switch", client.token == "typed-token", tostring(client.token))
+	check("the proven token is saved under the project that proved it", saved["p-2"] == "typed-token", tostring(saved["p-2"]))
+	check("nothing is saved under the project that never proved it", saved["p-1"] == nil, tostring(saved["p-1"]))
+end)
+
 suite("the client takes the proof port from the daemon URL and refuses a URL without one", function()
 	check("a URL ending in a slash keeps its port", Client.new("http://127.0.0.1:34872/", placeReader(123), fakeHttp(noop)).port == 34872)
 	check("an IPv6 host keeps its port", Client.new("http://[::1]:40000", placeReader(123), fakeHttp(noop)).port == 40000)
