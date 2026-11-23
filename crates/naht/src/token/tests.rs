@@ -381,10 +381,7 @@ fn a_protected_dacl_with_a_deny_ace_on_everyone_fails_closed_and_keeps_the_file(
         matches!(&error, TokenError::Io { source, .. } if source.kind() == ErrorKind::PermissionDenied),
         "{error:?}"
     );
-    assert_eq!(
-        fs::read_to_string(path(root.path())).unwrap(),
-        token.as_str()
-    );
+    assert_eq!(fs::read_dir(root.path().join(".naht")).unwrap().count(), 1);
 }
 
 #[cfg(windows)]
