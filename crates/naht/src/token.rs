@@ -211,7 +211,6 @@ fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
     if owner_only::is_file_owner_only(path).map_err(access_error)? {
         return Ok(());
     }
-    owner_only::restrict_file(path).map_err(access_error)?;
     tracing::warn!(
         target: "naht::token",
         path = %path.display(),
