@@ -24,6 +24,14 @@ courant, tu n'écris *aucune* config. La structure *est* le mapping. Les excepti
 La règle `init.*` est la façon d'attacher des enfants à un script : un dossier avec un `init.luau` se
 transforme en ce script, et tout le reste du dossier en devient les enfants.
 
+### Noms
+
+Un nom est celui du fichier ou du dossier sans son suffixe de classe, donc `Util.luau` s'appelle `Util`.
+Naht ne synchronise pas un nom qui commence par un point (`.Hidden.luau`, `.cache/`) : le scanner et le
+watcher ignorent ces entrées, et le plugin Studio saute le script et prévient une fois. Un nom ne peut pas
+non plus contenir `/ \ : < > " | ? *` ni un caractère de contrôle, ni être un nom de périphérique Windows
+comme `CON` ou `LPT1`, sur toutes les plateformes.
+
 ### Exemple
 
 ```
