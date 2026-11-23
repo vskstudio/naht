@@ -42,6 +42,39 @@ jobs:
       - name: Quality chain
         run: ./scripts/check.sh
 
+  windows-token:
+    name: windows token file permissions
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Token tests (protected DACL)
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo test --locked -p naht --lib token 2>&1 | tee "$RUNNER_TEMP/token.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/token.log"
+      - name: Fresh-project lock test (owner-only state directory)
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo test --locked -p naht --lib a_fresh_project_lock_creates_an_owner_only_state_directory 2>&1 | tee "$RUNNER_TEMP/fresh-project.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/fresh-project.log"
+
   site:
     name: site build + test
     runs-on: ubuntu-24.04

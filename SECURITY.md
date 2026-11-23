@@ -20,8 +20,10 @@ web page in the user's browser cannot read or write project files through the da
 `GET /info` also needs the project token in the `x-naht-token` header. The token is 32 random bytes in
 `.naht/token`. On Unix the file is created with owner-only permissions (mode 0600), and an existing file that
 its group or others can read is tightened to 0600 when the daemon loads it, so another local account cannot
-read it and cannot call the daemon. On Windows the file inherits the access rules of the `.naht` directory,
-and Naht adds no further restriction. When the project sets `serve.place_id`, requests from a session bound to another place are
+read it and cannot call the daemon. On Windows the file is created with a protected DACL that grants access to
+the current user alone. The `.naht` directory is made owner-only the same way before any token is created, so the token file inherits that DACL from its first moment. An existing file or directory whose DACL differs is tightened when the daemon loads it. When the token file's DACL denies this account but this account owns the file, the daemon repairs the DACL on start and logs a warning. This is reasoned from the owner's implicit WRITE_DAC; the owner-repair test covers an extra allow ACE, not a deny ACE. Only a file owned by another account, which this account cannot open, makes the daemon refuse to start; the message names the file and gives the `takeown` or delete steps. That residual is recorded in `docs/architecture.md` section 11.
+On either platform an administrator (or root on Unix) can still take ownership of the file. On Windows, an account that already has write access to the project can plant a token file it owns and grant this account WRITE_DAC, and the daemon then adopts that token; the owner check that would close this is not implemented, because an elevated run creates files owned by BUILTIN\Administrators (`docs/architecture.md` section 11).
+When the project sets `serve.place_id`, requests from a session bound to another place are
 refused, which guards against syncing source into the wrong game. Writes are limited to paths that map to
 Studio scripts or terrain blobs, and request bodies and concurrency are bounded. Connections that have not
 passed the token take one of 16 seats, which close two seconds after they take it, so a caller without the token

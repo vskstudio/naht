@@ -31,6 +31,25 @@ stores it in the plugin settings. A 401 means the daemon did not receive a token
 - **"token rejected"**: the value does not match `.naht/token`, for example after that file was deleted and made
   again. Run `naht token` in this project and enter the value it prints. The plugin asks again on the next attempt.
 
+## "the token file denies this account access" (Windows)
+
+On Windows the access rules of `.naht/token` can deny the current account, for example after a tool added a deny entry to it. If this account owns the file, `naht serve` repairs the rules when it starts and logs one warning; the token does not change. If another account owns the file, for example one created from an elevated shell, `naht serve` refuses to start and names the file. Then take ownership of it from a command prompt in the project with `takeown /F .naht\token`, and run `naht serve` again. Or delete `.naht/token`, run `naht serve` to make a new token, then run `naht token` and enter the value it prints in the plugin.
+
+## "the state directory denies this account access" (Windows)
+
+On Windows the access rules of the `.naht` directory can deny the current account. If this account owns the directory, `naht serve` repairs the rules when it starts and logs one warning. If another account owns it, for example one created from an elevated shell, `naht serve` refuses to start and names the directory. That directory holds the token and `.naht/state.db`, which keeps the bases, the recorded conflicts and the place binding. Take ownership first, from a command prompt in the project:
+
+```bat
+takeown /F .naht /R /D Y
+icacls .naht /reset /T /C
+```
+
+Then run `naht serve` again: it makes `.naht` owner-only when it starts. Until then `.naht` is loose: the reset gives it the rules inherited from its parent. The next `naht serve` tightens it and logs once that the directory was open to other accounts. Deleting `.naht` instead also deletes that sync state, so do it only if you accept losing the bases, the recorded conflicts and the place binding.
+
+## "the state directory is a junction or symbolic link" (Windows)
+
+On Windows `naht` refuses a `.naht` that is a junction or a symbolic link, before it reads or changes any access rule, so the directory the link points to is left alone. Replace the link with a real directory, then run `naht serve` again. Removing the link does not delete its target, but the new `.naht` starts empty: copy `state.db` from the target into it if you want to keep the sync state.
+
 ## "could not prove it holds this project's token"
 
 Before it sends the token, the plugin asks the program on the port to prove it holds that token, and this one could

@@ -32,6 +32,25 @@ garde dans les réglages du plugin. Un 401 veut dire que le daemon n'a pas reçu
   recréation de ce fichier. Lance `naht token` dans ce projet et saisis la valeur affichée. Le plugin te la redemande à la
   prochaine tentative.
 
+## « le fichier de token refuse l'accès à ce compte » (Windows)
+
+Sous Windows, les règles d'accès de `.naht/token` peuvent refuser l'accès au compte courant, par exemple après l'ajout d'une entrée de refus. Si ce compte possède le fichier, `naht serve` remet les règles en ordre au démarrage et journalise un seul avertissement ; le token ne change pas. Si un autre compte possède le fichier, par exemple un fichier créé depuis une invite élevée, `naht serve` refuse de démarrer et nomme le fichier. Prends alors d'abord la propriété du fichier, depuis une invite de commandes dans le projet, avec `takeown /F .naht\token`, puis relance `naht serve`. Ou supprime `.naht/token`, lance `naht serve` pour créer un nouveau token, puis lance `naht token` et saisis la valeur affichée dans le plugin.
+
+## « le dossier d'état refuse l'accès à ce compte » (Windows)
+
+Sous Windows, les règles d'accès du dossier `.naht` peuvent refuser l'accès au compte courant. Si ce compte possède le dossier, `naht serve` remet les règles en ordre au démarrage et journalise un seul avertissement. Si un autre compte le possède, par exemple un dossier créé depuis une invite élevée, `naht serve` refuse de démarrer et nomme le dossier. Ce dossier contient le token et `.naht/state.db`, qui garde les bases, les conflits enregistrés et le rattachement à la place. Prends d'abord la propriété du dossier, depuis une invite de commandes dans le projet :
+
+```bat
+takeown /F .naht /R /D Y
+icacls .naht /reset /T /C
+```
+
+Puis relance `naht serve` : il remet `.naht` en accès réservé au propriétaire au démarrage. Jusque-là, `.naht` est ouvert : le reset lui rend les règles héritées de son parent. Le prochain `naht serve` le resserre et journalise une seule fois que le dossier était ouvert à d'autres comptes. Supprimer `.naht` à la place supprime aussi cet état de synchronisation : ne le fais que si tu acceptes de perdre les bases, les conflits enregistrés et le rattachement à la place.
+
+## « le dossier d'état est une jonction ou un lien symbolique » (Windows)
+
+Sous Windows, `naht` refuse un `.naht` qui est une jonction ou un lien symbolique, avant de lire ou de modifier la moindre règle d'accès : le dossier vers lequel il pointe reste intact. Remplace le lien par un vrai dossier, puis relance `naht serve`. Supprimer le lien ne supprime pas le dossier cible, mais le nouveau `.naht` démarre vide : copie `state.db` depuis le dossier cible si tu veux garder l'état de synchronisation.
+
 ## « could not prove it holds this project's token »
 
 Avant d'envoyer le token, le plugin demande au programme qui écoute sur le port de prouver qu'il le détient, et celui-ci

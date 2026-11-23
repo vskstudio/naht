@@ -1,7 +1,7 @@
-use std::fs;
-
 use super::{Token, TokenError, load_or_create, path, read};
+#[cfg(unix)]
 use crate::test_logs::LogBuffer;
+use std::fs;
 
 #[test]
 fn generated_tokens_are_64_lowercase_hex_digits_and_differ() {

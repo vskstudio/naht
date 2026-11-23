@@ -46,7 +46,7 @@ Le daemon vérifie chaque route avant son handler. Une requête reçoit `403`, o
 
 Ces contrôles arrêtent les navigateurs et le DNS rebinding. Toutes les routes sauf `GET /info` exigent aussi le
 token du projet dans `x-naht-token`, que le daemon crée dans `.naht/token`, lisible sous Unix par son seul propriétaire :
-sous Unix, les autres comptes d'une machine partagée ne peuvent pas l'appeler. Sous Windows, le fichier hérite des droits du dossier `.naht`. Le token ne protège pas contre un processus du même
+sous Unix, les autres comptes d'une machine partagée ne peuvent pas l'appeler. Sous Windows, le daemon le crée avec une liste de droits qui n'accorde l'accès qu'à l'utilisateur courant, si bien que les autres comptes ne peuvent ni lire le token ni appeler le daemon avec. Le token ne protège pas contre un processus du même
 compte, qui peut lire ce fichier. Le modèle de menace est dans `SECURITY.md`.
 
 Les écritures sont aussi contrôlées. `POST /changes` prend une map MessagePack `{changes: [...]}`, où chaque

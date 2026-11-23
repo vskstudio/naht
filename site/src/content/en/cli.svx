@@ -48,7 +48,7 @@ plugin's connection. Leave it running while you work. Only one daemon runs per p
 
 ## `naht token [path]`
 
-Print the project's token, the value the Studio plugin asks for once. The token lives in `.naht/token`, which `naht serve` creates on its first run and reuses after. On Unix only the file's owner can read it. On Windows the file inherits the access rules of the `.naht` directory.
+Print the project's token, the value the Studio plugin asks for once. The token lives in `.naht/token`, which `naht serve` creates on its first run and reuses after. On Unix only the file's owner can read it. On Windows the file grants access to the current user alone. An administrator can still take ownership of it on either platform.
 
 ```sh
 naht token                # print the token of the project in the current directory

@@ -1,12 +1,13 @@
 //! The per-project token that gates every daemon route except `GET /info` (architecture §7).
 //!
 //! `naht serve` creates `.naht/token` on its first run and reuses it after. The file holds 32 random
-//! bytes as 64 lowercase hex digits, readable only by its owner on Unix. The plugin sends the token in
-//! the `x-naht-token` header; `naht token` prints it.
+//! bytes as 64 lowercase hex digits, readable only by its owner: mode 0600 on Unix, and on Windows a
+//! protected DACL that grants only the current user. The plugin sends the token in the `x-naht-token`
+//! header; `naht token` prints it.
 
 use std::fmt::{self, Formatter};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use hmac::{Hmac, KeyInit, Mac};
@@ -88,6 +89,42 @@ pub enum TokenError {
         #[source]
         source: io::Error,
     },
+    /// The token file cannot be opened by this account, which in practice means another account owns it.
+    #[error(
+        "the token file `{}` cannot be opened by this account, so `naht serve` cannot read or repair the token. This happens when another account owns the file, for example one created from an elevated shell. Take ownership first from a command prompt with `takeown /F \"{}\"`, then run `naht serve` again. To start over instead, delete the file, run `naht serve` to make a new token, and enter the new token in the plugin.",
+        path.display(),
+        path.display()
+    )]
+    Denied {
+        /// The token file.
+        path: PathBuf,
+    },
+    /// The state directory could not be read or written.
+    #[error("cannot use the state directory `{}`", path.display())]
+    StateDirIo {
+        /// The state directory.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The state directory cannot be opened by this account, which in practice means another account owns it.
+    #[error(
+        "the state directory `{}` cannot be opened by this account, so `naht serve` cannot use it. This happens when another account owns the directory, for example one created from an elevated shell. Take ownership first from a command prompt: `takeown /F \"{}\" /R /D Y`, then `icacls \"{}\" /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
+        path.display(),
+        path.display(),
+        path.display()
+    )]
+    StateDirDenied {
+        /// The state directory.
+        path: PathBuf,
+    },
+    /// The state directory is a junction or symbolic link, which `naht` refuses to follow.
+    #[error("the state directory `{}` is a junction or symbolic link: replace it with a real directory and run `naht serve` again", path.display())]
+    StateDirReparsePoint {
+        /// The state directory.
+        path: PathBuf,
+    },
     /// The token file does not hold a well-formed token, typically after a crash while it was written.
     #[error("the token file `{}` holds no token: delete it and run `naht serve` to make a new one", path.display())]
     Malformed {
@@ -117,14 +154,13 @@ pub fn path(root: &Path) -> PathBuf {
 ///
 /// Returns [`TokenError`] when the file exists but holds no token, or cannot be read or created.
 pub fn load_or_create(root: &Path) -> Result<Loaded, TokenError> {
-    match read(root) {
-        Ok(token) => {
-            restrict_to_owner(&path(root))?;
-            Ok(Loaded {
-                token,
-                created: false,
-            })
-        }
+    #[cfg(windows)]
+    prepare_state_dir(root)?;
+    match restrict_to_owner(&path(root)) {
+        Ok(()) => read(root).map(|token| Loaded {
+            token,
+            created: false,
+        }),
         Err(error) if error.is_missing() => create(root).map(|token| Loaded {
             token,
             created: true,
@@ -169,7 +205,99 @@ fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
+    let access_error = |source| windows_access_error(path, source);
+    if owner_only::is_file_owner_only(path).map_err(access_error)? {
+        return Ok(());
+    }
+    owner_only::restrict_file(path).map_err(access_error)?;
+    tracing::warn!(
+        target: "naht::token",
+        path = %path.display(),
+        "the token file was open to other accounts; it is now owner-only"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_access_error(path: &Path, source: io::Error) -> TokenError {
+    if source.kind() == io::ErrorKind::PermissionDenied {
+        return TokenError::Denied {
+            path: path.to_path_buf(),
+        };
+    }
+    TokenError::Io {
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+/// Make the `.naht` state directory of the project at `root` owner-only, before anything is
+/// created inside it.
+///
+/// # Errors
+///
+/// Returns [`TokenError::StateDirReparsePoint`] when `.naht` is a junction or symbolic link,
+/// [`TokenError::StateDirDenied`] when its access rules deny this account, and
+/// [`TokenError::StateDirIo`] for any other failure.
+#[cfg(windows)]
+pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
+    let dir = root.join(".naht");
+    fs::create_dir_all(root).map_err(|source| state_dir_io(&dir, source))?;
+    match fs::create_dir(&dir) {
+        Ok(()) => owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source)),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            refuse_reparse_point(&dir)?;
+            let owner_only_now = owner_only::is_dir_owner_only(&dir)
+                .map_err(|source| state_dir_access(&dir, source))?;
+            if owner_only_now {
+                return Ok(());
+            }
+            owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
+            tracing::warn!(
+                target: "naht::token",
+                path = %dir.display(),
+                "the state directory was open to other accounts; it is now owner-only"
+            );
+            Ok(())
+        }
+        Err(error) => Err(state_dir_io(&dir, error)),
+    }
+}
+
+#[cfg(windows)]
+fn refuse_reparse_point(dir: &Path) -> Result<(), TokenError> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let metadata = fs::symlink_metadata(dir).map_err(|source| state_dir_access(dir, source))?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+        return Ok(());
+    }
+    Err(TokenError::StateDirReparsePoint {
+        path: dir.to_path_buf(),
+    })
+}
+
+#[cfg(windows)]
+fn state_dir_access(dir: &Path, source: io::Error) -> TokenError {
+    if source.kind() == io::ErrorKind::PermissionDenied {
+        return TokenError::StateDirDenied {
+            path: dir.to_path_buf(),
+        };
+    }
+    state_dir_io(dir, source)
+}
+
+#[cfg(windows)]
+fn state_dir_io(path: &Path, source: io::Error) -> TokenError {
+    TokenError::StateDirIo {
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn restrict_to_owner(_path: &Path) -> Result<(), TokenError> {
     Ok(())
 }
@@ -184,26 +312,37 @@ fn create(root: &Path) -> Result<Token, TokenError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_error)?;
     }
-    let mut file = private_file(&path).map_err(io_error)?;
-    file.write_all(token.as_str().as_bytes())
-        .map_err(io_error)?;
-    file.sync_all().map_err(io_error)?;
+    write_new(&path, token.as_str()).map_err(io_error)?;
     Ok(token)
 }
 
 #[cfg(unix)]
-fn private_file(path: &Path) -> io::Result<fs::File> {
+fn write_new(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(path)
+        .open(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
 }
 
-#[cfg(not(unix))]
-fn private_file(path: &Path) -> io::Result<fs::File> {
-    OpenOptions::new().write(true).create_new(true).open(path)
+#[cfg(windows)]
+fn write_new(path: &Path, text: &str) -> io::Result<()> {
+    owner_only::write_new(path, text)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn write_new(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -236,5 +375,15 @@ impl Token {
     }
 }
 
+#[cfg(all(test, windows))]
+mod acl_fixtures;
+#[cfg(all(test, windows))]
+pub(crate) use acl_fixtures::{assert_dacl_is, assert_only_owner_is_granted, owner_sid_text};
+#[cfg(all(test, windows))]
+mod dacl_tests;
+#[cfg(windows)]
+mod owner_only;
+#[cfg(all(test, windows))]
+mod state_dir_tests;
 #[cfg(test)]
 mod tests;
