@@ -9,11 +9,12 @@ use naht_core::protocol::{
 use reqwest::{Client, RequestBuilder, StatusCode};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
 
 use super::flood::{
-    SETUP_ATTEMPTS, authenticated_request, hold_authenticated, request_on_open, served_within,
-    timed, tokenless_request, try_read_response,
+    authenticated_request, hold_authenticated, request_on_open, served_within, timed,
+    tokenless_request, try_read_response,
 };
 use super::{Daemon, init, wire};
 
@@ -33,6 +34,8 @@ const HELD_CURSOR: u64 = u64::MAX;
 
 const PROBE_WAIT: Duration = Duration::from_secs(1);
 const PROBE_MARGIN: Duration = Duration::from_millis(500);
+const MIN_OBSERVATION: Duration = Duration::from_secs(1);
+const OBSERVED_FOR: Duration = ANONYMOUS_DEADLINE.saturating_sub(PROBE_MARGIN);
 const RELEASE_WAIT: Duration = Duration::from_secs(5);
 const WARNING: &str = "large deletion reconciled";
 
@@ -112,13 +115,9 @@ async fn stall(daemon: &Daemon) -> TcpStream {
     stream
 }
 
-async fn seated(daemon: &Daemon) -> TcpStream {
-    let addr = daemon.base.trim_start_matches("http://");
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    stream
-        .write_all(tokenless_request(daemon, "/info").as_bytes())
-        .await
-        .unwrap();
+async fn seated(address: String, request: String) -> TcpStream {
+    let mut stream = TcpStream::connect(&address).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
     let response = try_read_response(&mut stream).await;
     assert_eq!(
         response.map(|(status, _)| status),
@@ -203,52 +202,46 @@ async fn the_configured_inventory_body_limit_is_enforced_at_its_boundary() {
 #[tokio::test]
 async fn a_full_anonymous_pool_holds_the_seventeenth_connection_until_a_seat_frees() {
     let root = project("");
-    for _ in 0..SETUP_ATTEMPTS {
-        let daemon = Daemon::start(root.path()).await;
-        let addr = daemon.base.trim_start_matches("http://").to_owned();
+    let daemon = Daemon::start(root.path()).await;
+    let addr = daemon.base.trim_start_matches("http://").to_owned();
+    let request = tokenless_request(&daemon, "/info");
 
-        let started = Instant::now();
-        let mut seated_sockets = Vec::new();
-        for _ in 0..ANONYMOUS_POOL {
-            seated_sockets.push(seated(&daemon).await);
-        }
-        let mut seventeenth = TcpStream::connect(&addr).await.unwrap();
-        seventeenth
-            .write_all(tokenless_request(&daemon, "/info").as_bytes())
-            .await
-            .unwrap();
-        let before_first_seat_expires = ANONYMOUS_DEADLINE
-            .saturating_sub(started.elapsed())
-            .saturating_sub(PROBE_MARGIN);
-        if before_first_seat_expires.is_zero() {
-            continue;
-        }
-        let early = timeout(
-            before_first_seat_expires,
-            try_read_response(&mut seventeenth),
-        )
-        .await;
-        assert!(
-            early.is_err(),
-            "the connection past the {ANONYMOUS_POOL} anonymous seats was answered or closed before the seats could expire"
-        );
-        let served_by = started + ANONYMOUS_DEADLINE + Duration::from_secs(2);
-        let served = timeout(
-            served_by.saturating_duration_since(Instant::now()),
-            try_read_response(&mut seventeenth),
-        )
-        .await;
-        assert_eq!(
-            served.ok().flatten().map(|(status, _)| status),
-            Some(200),
-            "the queued connection was not served once the stalled seats expired"
-        );
-        drop(seated_sockets);
-        return;
+    let started = Instant::now();
+    let mut seating = JoinSet::new();
+    for _ in 0..ANONYMOUS_POOL {
+        seating.spawn(seated(addr.clone(), request.clone()));
     }
-    panic!(
-        "in {SETUP_ATTEMPTS} attempts the connection past the {ANONYMOUS_POOL} anonymous seats was never held while they were full"
+    let mut seated_sockets = Vec::new();
+    while let Some(joined) = seating.join_next().await {
+        seated_sockets.push(joined.expect("seating an anonymous connection panicked"));
+    }
+
+    let mut seventeenth = TcpStream::connect(&addr).await.unwrap();
+    seventeenth.write_all(request.as_bytes()).await.unwrap();
+    let window = (started + OBSERVED_FOR).saturating_duration_since(Instant::now());
+    assert!(
+        window >= MIN_OBSERVATION,
+        "the {ANONYMOUS_POOL} anonymous seats took {:?} to fill, too slow to observe the connection past them before the first seat expires",
+        started.elapsed()
     );
+    let early = timeout(window, try_read_response(&mut seventeenth)).await;
+    assert!(
+        early.is_err(),
+        "the connection past the {ANONYMOUS_POOL} anonymous seats was answered or closed before the seats could expire"
+    );
+
+    let served_by = started + ANONYMOUS_DEADLINE + Duration::from_secs(2);
+    let served = timeout(
+        served_by.saturating_duration_since(Instant::now()),
+        try_read_response(&mut seventeenth),
+    )
+    .await;
+    assert_eq!(
+        served.ok().flatten().map(|(status, _)| status),
+        Some(200),
+        "the queued connection was not served once the stalled seats expired"
+    );
+    drop(seated_sockets);
 }
 
 #[tokio::test]

@@ -8,7 +8,7 @@ use axum::Router;
 use axum::routing::get;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
@@ -33,7 +33,11 @@ const SERVED_WAIT: Duration = Duration::from_secs(1);
 
 const PROBE_MARGIN: Duration = Duration::from_millis(500);
 
-const SETUP_ATTEMPTS: usize = 5;
+const SEATS: usize = 16;
+
+const MIN_OBSERVATION: Duration = Duration::from_secs(1);
+
+const OBSERVED_FOR: Duration = DOCUMENTED_DEADLINE.saturating_sub(PROBE_MARGIN);
 
 const HOLD: Duration = Duration::from_secs(3);
 
@@ -93,59 +97,62 @@ async fn spawn_server(
 
 #[tokio::test]
 async fn a_connection_past_the_anonymous_seats_waits_for_a_seat_then_is_served() {
-    for _ in 0..SETUP_ATTEMPTS {
-        let (address, shutdown, server) = spawn_server(ping_router(), AUTHENTICATED_CAP).await;
-
-        let started = Instant::now();
-        let mut idle = Vec::new();
-        for _ in 0..ANONYMOUS_CONNECTIONS {
-            let mut seat = TcpStream::connect(address).await.unwrap();
-            seat.write_all(KEEP_ALIVE_PING).await.unwrap();
-            timeout(SERVED_WAIT, read_pong(&mut seat))
-                .await
-                .expect("a connection that should hold an anonymous seat was not answered");
-            idle.push(seat);
-        }
-
-        let mut queued = TcpStream::connect(address).await.unwrap();
-        queued.write_all(PING).await.unwrap();
-        let before_first_seat_expires = DOCUMENTED_DEADLINE
-            .saturating_sub(started.elapsed())
-            .saturating_sub(PROBE_MARGIN);
-        if before_first_seat_expires.is_zero() {
-            drop(idle);
-            shutdown.cancel();
-            server.await.unwrap().unwrap();
-            continue;
-        }
-        let early = timeout(before_first_seat_expires, read_to_close(&mut queued)).await;
-        assert!(
-            early.is_err(),
-            "the connection past the anonymous seats was answered or closed before the seats could expire"
-        );
-
-        idle.pop();
-        let response = timeout(HOLD, read_to_close(&mut queued))
-            .await
-            .expect("the queued connection was not served once a seat freed");
-        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-        assert!(response.ends_with("pong"), "{response}");
-
-        idle.clear();
-        shutdown.cancel();
-        server.await.unwrap().unwrap();
-        return;
-    }
-    panic!(
-        "in {SETUP_ATTEMPTS} attempts a connection past the anonymous seats was never held while they were full"
+    assert_eq!(
+        ANONYMOUS_CONNECTIONS, SEATS,
+        "this test pins the anonymous pool at {SEATS} seats"
     );
+    let (address, shutdown, server) = spawn_server(ping_router(), AUTHENTICATED_CAP).await;
+
+    let started = Instant::now();
+    let mut seating = JoinSet::new();
+    for _ in 0..SEATS {
+        seating.spawn(seat(address));
+    }
+    let mut idle = Vec::new();
+    while let Some(joined) = seating.join_next().await {
+        idle.push(joined.expect("seating an anonymous connection panicked"));
+    }
+
+    let mut queued = TcpStream::connect(address).await.unwrap();
+    queued.write_all(PING).await.unwrap();
+    let window = (started + OBSERVED_FOR).saturating_duration_since(Instant::now());
+    assert!(
+        window >= MIN_OBSERVATION,
+        "the {SEATS} anonymous seats took {:?} to fill, too slow to observe the connection past them before the first seat expires",
+        started.elapsed()
+    );
+    let early = timeout(window, read_to_close(&mut queued)).await;
+    assert!(
+        early.is_err(),
+        "the connection past the anonymous seats was answered or closed before the seats could expire"
+    );
+
+    idle.pop();
+    let response = timeout(HOLD, read_to_close(&mut queued))
+        .await
+        .expect("the queued connection was not served once a seat freed");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("pong"), "{response}");
+
+    idle.clear();
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}
+
+async fn seat(address: SocketAddr) -> TcpStream {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    stream.write_all(KEEP_ALIVE_PING).await.unwrap();
+    timeout(SERVED_WAIT, read_pong(&mut stream))
+        .await
+        .expect("a connection that should hold an anonymous seat was not answered");
+    stream
 }
 
 async fn a_new_connection_is_served_once_the_held_connections_expire(opening: &[u8]) {
     let (address, shutdown, server) = spawn_server(ping_router(), AUTHENTICATED_CAP).await;
 
     let mut held = Vec::new();
-    for _ in 0..ANONYMOUS_CONNECTIONS {
+    for _ in 0..SEATS {
         let mut stream = TcpStream::connect(address).await.unwrap();
         stream.write_all(opening).await.unwrap();
         held.push(stream);
