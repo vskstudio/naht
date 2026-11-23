@@ -379,6 +379,8 @@ impl Token {
 mod acl_fixtures;
 #[cfg(all(test, windows))]
 pub(crate) use acl_fixtures::{assert_dacl_is, assert_only_owner_is_granted, owner_sid_text};
+#[cfg(all(test, windows))]
+mod dacl_tests;
 #[cfg(windows)]
 mod owner_only;
 #[cfg(all(test, windows))]
