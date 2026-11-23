@@ -26,17 +26,12 @@ local CHILDLESS_FLAT = "src/Dir.luau"
 local OTHER_PLACE_ID = 999
 local READY_ATTEMPTS = 300
 local STOP_ATTEMPTS = 300
-local PORT_ATTEMPTS = 5
 local EDIT_ATTEMPTS = 3
 local TICK = 0.05
 local WORK = process.cwd .. "/target/e2e-" .. tostring(math.random(100000000, 999999999))
 
 local failures = 0
 local daemons = {}
-
-local function randomPort(): number
-	return math.random(20000, 60000)
-end
 
 local function check(name, ok, detail)
 	if ok then
@@ -125,34 +120,19 @@ local function spawn(root, port, log)
 	return pid
 end
 
-local function bindFailed(log)
-	return string.find(readLog(log), "cannot bind", 1, true) ~= nil
-end
-
 local function startDaemon(root, port, log)
-	local candidate = port
-	for _ = 1, PORT_ATTEMPTS do
-		local base = "http://127.0.0.1:" .. tostring(candidate)
-		local pid = spawn(root, candidate, log)
-		for _ = 1, READY_ATTEMPTS do
-			if isAlive(base) then
-				local daemon = { pid = pid, base = base }
-				table.insert(daemons, daemon)
-				daemon.client = Client.new(base, function(): number return PLACE_ID end, httpBridge())
-				daemon.client:setToken(readToken(root))
-				return daemon
-			end
-			if bindFailed(log) then
-				break
-			end
-			task.wait(TICK)
+	local base = "http://127.0.0.1:" .. tostring(port)
+	local daemon = { pid = spawn(root, port, log), base = base }
+	table.insert(daemons, daemon)
+	for _ = 1, READY_ATTEMPTS do
+		if isAlive(base) then
+			daemon.client = Client.new(base, function(): number return PLACE_ID end, httpBridge())
+			daemon.client:setToken(readToken(root))
+			return daemon
 		end
-		if not bindFailed(log) then
-			error("naht serve did not answer on " .. base .. "\n" .. readLog(log))
-		end
-		candidate = randomPort()
+		task.wait(TICK)
 	end
-	error("naht serve found no free port in " .. tostring(PORT_ATTEMPTS) .. " tries\n" .. readLog(log))
+	error("naht serve did not answer on " .. base .. "\n" .. readLog(log))
 end
 
 local function stopDaemon(daemon)
@@ -387,7 +367,7 @@ local function otherPlaceRefused(root, port, log)
 	bound.client:postInventory({ entryOf(KEEP_FILE, "return 1") }, boundInfo.session_id)
 	stopDaemon(bound)
 
-	local other = startDaemon(root, randomPort(), log)
+	local other = startDaemon(root, math.random(20000, 32767), log)
 	local otherClient = Client.new(other.base, function(): number return OTHER_PLACE_ID end, httpBridge())
 	local infoOk, infoErr = pcall(otherClient.info, otherClient)
 	check(
@@ -486,7 +466,7 @@ end
 local function main()
 	local root = WORK .. "/demo"
 	local log = WORK .. "/naht.log"
-	local port = randomPort()
+	local port = math.random(20000, 32767)
 	fs.writeDir(WORK)
 
 	local ok, err = pcall(scenario, root, port, log)
@@ -494,7 +474,7 @@ local function main()
 		check("the daemon scenario ran to completion", false, tostring(err))
 	end
 	local renamedLog = WORK .. "/renamed.log"
-	local renamedOk, renamedErr = pcall(renamedWhileStopped, WORK .. "/renamed", randomPort(), renamedLog)
+	local renamedOk, renamedErr = pcall(renamedWhileStopped, WORK .. "/renamed", math.random(20000, 32767), renamedLog)
 	if not renamedOk then
 		check("the rename-while-stopped scenario ran to completion", false, tostring(renamedErr))
 	end
@@ -506,7 +486,7 @@ local function main()
 		{ name = "childless-init", run = childlessInitKept },
 	}
 	for _, scenarioEntry in extra do
-		local scenarioOk, scenarioErr = pcall(scenarioEntry.run, WORK .. "/" .. scenarioEntry.name, randomPort(), WORK .. "/" .. scenarioEntry.name .. ".log")
+		local scenarioOk, scenarioErr = pcall(scenarioEntry.run, WORK .. "/" .. scenarioEntry.name, math.random(20000, 32767), WORK .. "/" .. scenarioEntry.name .. ".log")
 		if not scenarioOk then
 			check(scenarioEntry.name .. " scenario ran to completion", false, tostring(scenarioErr))
 		end
