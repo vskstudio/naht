@@ -80,6 +80,9 @@ fn a_state_directory_denied_to_this_account_names_the_fix() {
     assert!(matches!(error, TokenError::StateDirDenied { .. }), "{text}");
     assert!(text.contains("delete the directory"), "{text}");
     assert!(text.contains("run `naht serve`"), "{text}");
+
+    set_dacl(&state_dir, &format!("D:P(A;OICI;FA;;;{owner})"), true);
+    fs::remove_dir(&state_dir).unwrap();
 }
 
 fn assert_only_owner_is_granted(file: &Path) {
