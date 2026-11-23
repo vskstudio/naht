@@ -33,7 +33,6 @@ const HELD_CURSOR: u64 = u64::MAX;
 
 const PROBE_WAIT: Duration = Duration::from_secs(1);
 const PROBE_MARGIN: Duration = Duration::from_millis(500);
-const STALL_SETTLE: Duration = Duration::from_millis(200);
 const RELEASE_WAIT: Duration = Duration::from_secs(5);
 const WARNING: &str = "large deletion reconciled";
 
@@ -110,6 +109,22 @@ async fn stall(daemon: &Daemon) -> TcpStream {
         .write_all(format!("GET /info HTTP/1.1\r\nHost: {addr}\r\n").as_bytes())
         .await
         .unwrap();
+    stream
+}
+
+async fn seated(daemon: &Daemon) -> TcpStream {
+    let addr = daemon.base.trim_start_matches("http://");
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(tokenless_request(daemon, "/info").as_bytes())
+        .await
+        .unwrap();
+    let response = try_read_response(&mut stream).await;
+    assert_eq!(
+        response.map(|(status, _)| status),
+        Some(200),
+        "a connection that should hold an anonymous seat was not answered"
+    );
     stream
 }
 
@@ -193,11 +208,10 @@ async fn a_full_anonymous_pool_holds_the_seventeenth_connection_until_a_seat_fre
         let addr = daemon.base.trim_start_matches("http://").to_owned();
 
         let started = Instant::now();
-        let mut stalled = Vec::new();
+        let mut seated_sockets = Vec::new();
         for _ in 0..ANONYMOUS_POOL {
-            stalled.push(stall(&daemon).await);
+            seated_sockets.push(seated(&daemon).await);
         }
-        sleep(STALL_SETTLE).await;
         let mut seventeenth = TcpStream::connect(&addr).await.unwrap();
         seventeenth
             .write_all(tokenless_request(&daemon, "/info").as_bytes())
@@ -214,12 +228,13 @@ async fn a_full_anonymous_pool_holds_the_seventeenth_connection_until_a_seat_fre
             try_read_response(&mut seventeenth),
         )
         .await;
-        if early.is_ok() {
-            drop(stalled);
-            continue;
-        }
+        assert!(
+            early.is_err(),
+            "the connection past the {ANONYMOUS_POOL} anonymous seats was answered or closed before the seats could expire"
+        );
+        let served_by = started + ANONYMOUS_DEADLINE + Duration::from_secs(2);
         let served = timeout(
-            ANONYMOUS_DEADLINE.saturating_add(DEADLINE_MARGIN),
+            served_by.saturating_duration_since(Instant::now()),
             try_read_response(&mut seventeenth),
         )
         .await;
@@ -228,7 +243,7 @@ async fn a_full_anonymous_pool_holds_the_seventeenth_connection_until_a_seat_fre
             Some(200),
             "the queued connection was not served once the stalled seats expired"
         );
-        drop(stalled);
+        drop(seated_sockets);
         return;
     }
     panic!(

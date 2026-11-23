@@ -349,7 +349,7 @@ async fn a_newcomer_behind_silent_seats_is_served_when_a_seat_frees_at_the_deadl
     write_report(&report);
 
     assert!(
-        matches!(newcomer, Ok(Some(_))) && waited < SEAT_DEADLINE + SLACK,
+        matches!(newcomer, Ok(Some(_))) && waited < SEAT_DEADLINE + Duration::from_secs(1),
         "a newcomer behind silent seats was not served at the {SEAT_DEADLINE:?} deadline (answered after {waited:?})"
     );
 }

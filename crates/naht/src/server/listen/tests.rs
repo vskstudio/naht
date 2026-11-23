@@ -19,6 +19,8 @@ const AUTHENTICATED_CAP: usize = 64;
 
 const PING: &[u8] = b"GET /ping HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n";
 
+const KEEP_ALIVE_PING: &[u8] = b"GET /ping HTTP/1.1\r\nHost: test\r\n\r\n";
+
 const PROMOTE: &[u8] = b"GET /promote HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n";
 
 const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -39,6 +41,18 @@ async fn read_to_close(stream: &mut TcpStream) -> String {
     let mut response = Vec::new();
     stream.read_to_end(&mut response).await.unwrap();
     String::from_utf8_lossy(&response).into_owned()
+}
+
+async fn read_pong(stream: &mut TcpStream) {
+    let mut response = Vec::new();
+    while !response.ends_with(b"pong") {
+        let read = stream.read_buf(&mut response).await.unwrap();
+        assert!(
+            read > 0,
+            "the connection closed before its answer: {}",
+            String::from_utf8_lossy(&response)
+        );
+    }
 }
 
 fn ping_router() -> Router {
@@ -85,9 +99,13 @@ async fn a_connection_past_the_anonymous_seats_waits_for_a_seat_then_is_served()
         let started = Instant::now();
         let mut idle = Vec::new();
         for _ in 0..ANONYMOUS_CONNECTIONS {
-            idle.push(TcpStream::connect(address).await.unwrap());
+            let mut seat = TcpStream::connect(address).await.unwrap();
+            seat.write_all(KEEP_ALIVE_PING).await.unwrap();
+            timeout(SERVED_WAIT, read_pong(&mut seat))
+                .await
+                .expect("a connection that should hold an anonymous seat was not answered");
+            idle.push(seat);
         }
-        sleep(Duration::from_millis(200)).await;
 
         let mut queued = TcpStream::connect(address).await.unwrap();
         queued.write_all(PING).await.unwrap();
@@ -101,12 +119,10 @@ async fn a_connection_past_the_anonymous_seats_waits_for_a_seat_then_is_served()
             continue;
         }
         let early = timeout(before_first_seat_expires, read_to_close(&mut queued)).await;
-        if early.is_ok() {
-            drop(idle);
-            shutdown.cancel();
-            server.await.unwrap().unwrap();
-            continue;
-        }
+        assert!(
+            early.is_err(),
+            "the connection past the anonymous seats was answered or closed before the seats could expire"
+        );
 
         idle.pop();
         let response = timeout(HOLD, read_to_close(&mut queued))
