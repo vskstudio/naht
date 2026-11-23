@@ -17,6 +17,8 @@ use crate::session::transaction::{DiskChange, Journal};
 use crate::session::{Session, SessionError};
 use crate::test_logs::LogBuffer;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod case_volume;
 mod folder_shape;
 mod renames;
 
