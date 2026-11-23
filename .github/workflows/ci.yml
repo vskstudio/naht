@@ -183,4 +183,10 @@ jobs:
           toolchain: 1.99.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Case-only folder rename tests
-        run: cargo test --locked -p naht case_volume -j 2
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo test --locked -p naht --lib case_volume 2>&1 | tee "$RUNNER_TEMP/case-volume.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/case-volume.log"
