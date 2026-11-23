@@ -120,6 +120,13 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   a 15-second read timer (`408`) and `400` for a truncated or malformed body. Version 2 shipped in v0.4.0
   with the old `Ack` and `PatchBatch` shapes, so the sequenced shapes above and these limits ship as version 3,
   and `PROTOCOL_VERSION` is `3`.
+- **Dot names are refused** (#79): a path segment that starts with `.` fails the project path rule, so every
+  `/changes` and `/inventory` path and every `[[tree]]` path in `naht.toml` refuses it, and the plugin does not
+  sync a script whose name starts with `.` and warns once. The scanner and the watcher ignore dot entries inside a
+  tree, so a dot-named file or folder under a tree was never synced and loses nothing. The tree folder itself is
+  different: `naht build` and `init --from-rojo` read a `[[tree]]` folder whose name starts with `.` and migrate
+  it, so this is a breaking change. `naht serve`, `naht build` and `init --from-rojo` now all refuse such a
+  `[[tree]]` path with `TreePathHidden`, which names the path. The fix is to rename the folder or change the path.
 
 ---
 
