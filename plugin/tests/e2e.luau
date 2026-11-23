@@ -412,16 +412,24 @@ local function tokenRefused(root, port, log)
 	local info = daemon.client:info()
 
 	local bare = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())
-	local missingOk, missingErr = pcall(bare.patches, bare, 0, info.session_id)
+	local missingOk, missingErr = pcall(bare.info, bare)
 	check(
-		"a request without the token is refused with a 401",
-		not missingOk and type(missingErr) == "table" and missingErr.tokenRefused == true and missingErr.status == 401,
-		tostring(if type(missingErr) == "table" then missingErr.status else missingErr)
+		"a client with no token stops at the handshake and asks for it",
+		not missingOk and type(missingErr) == "table" and missingErr.tokenRefused == true and missingErr.message == Client.TOKEN_REQUIRED,
+		if type(missingErr) == "table" then tostring(missingErr.message) else tostring(missingErr)
 	)
+	local heldPoll, heldPollErr = pcall(bare.patches, bare, 0, info.session_id)
+	check("a client with no token holds back its poll", not heldPoll and heldPollErr == Client.UNVERIFIED, tostring(heldPollErr))
+
+	local tokenless = request("GET", daemon.base .. "/patches?cursor=0&session=" .. info.session_id, {
+		["x-naht-client"] = "plugin",
+		["x-naht-place-id"] = tostring(PLACE_ID),
+	})
+	check("a request without the token is refused with a 401", tokenless.status == 401, tostring(tokenless.status))
 	check(
 		"a request without the token is told the daemon needs it",
-		not missingOk and type(missingErr) == "table" and missingErr.message == Client.TOKEN_REQUIRED,
-		if type(missingErr) == "table" then tostring(missingErr.message) else tostring(missingErr)
+		string.find(tokenless.body, "token required", 1, true) ~= nil,
+		tokenless.body
 	)
 
 	local wrong = Client.new(daemon.base, function(): number return PLACE_ID end, httpBridge())

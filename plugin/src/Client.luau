@@ -15,7 +15,8 @@ Client.PROOF_FAILED =
 Client.UNVERIFIED = "naht: request held back: the daemon has not proven it holds the token yet"
 Client.HANDSHAKE_CHANGED = "naht: the daemon changed during the handshake, retrying"
 
-local DEFAULT_PORT = 80
+Client.UNPORTED_URL = "naht: the daemon URL must name its port"
+Client.INFO_BODY_LIMIT = 1048576
 
 local TOKEN_REQUIRED_BODY = "token required"
 
@@ -34,15 +35,26 @@ export type Client = typeof(setmetatable(
 		verified: boolean,
 		projectId: string?,
 		store: TokenStore?,
+		unsaved: boolean,
 	},
 	Client
 ))
 
+local function portOf(baseUrl: string): number
+	local authority = string.match(baseUrl, "^%a[%w+.-]*://([^/?#]*)")
+	local port = if authority ~= nil then tonumber(string.match(authority, ":(%d+)$")) else nil
+	if port == nil then
+		error(Client.UNPORTED_URL .. ": " .. baseUrl, 0)
+	end
+	return port
+end
+
 function Client.new(baseUrl: string, readPlaceId: () -> number, http: any?, store: TokenStore?): Client
 	return setmetatable({
 		baseUrl = baseUrl,
-		port = tonumber(string.match(baseUrl, ":(%d+)/?$")) or DEFAULT_PORT,
+		port = portOf(baseUrl),
 		verified = false,
+		unsaved = false,
 		readPlaceId = readPlaceId,
 		http = http or game:GetService("HttpService"),
 		store = store,
@@ -61,11 +73,12 @@ local function request(self: Client, options: { [string]: any }, withholdToken: 
 	local headers = options.Headers or {}
 	headers["x-naht-client"] = "plugin"
 	headers["x-naht-place-id"] = tostring(self.readPlaceId())
-	if self.token ~= nil and not withholdToken then
-		if not self.verified then
+	if not withholdToken then
+		local token = self.token
+		if not self.verified or token == nil then
 			error(Client.UNVERIFIED, 0)
 		end
-		headers[Protocol.TOKEN_HEADER] = self.token
+		headers[Protocol.TOKEN_HEADER] = token
 	end
 	options.Headers = headers
 	local ok, response = pcall(function()
@@ -84,9 +97,16 @@ end
 function Client.setToken(self: Client, token: string)
 	self.token = token
 	self.verified = false
-	if self.store ~= nil and self.projectId ~= nil then
-		self.store.save(self.projectId, token)
+	self.unsaved = true
+end
+
+local function saveProvenToken(self: Client)
+	local store, projectId, token = self.store, self.projectId, self.token
+	if not self.unsaved or store == nil or projectId == nil or token == nil then
+		return
 	end
+	store.save(projectId, token)
+	self.unsaved = false
 end
 
 function Client.isOutdatedPluginError(err: string): boolean
@@ -123,6 +143,9 @@ local function fetchInfo(self: Client, nonce: string, withholdToken: boolean): a
 	if not response.Success then
 		error("naht: /info returned " .. tostring(response.StatusCode))
 	end
+	if #response.Body > Client.INFO_BODY_LIMIT then
+		error("naht: /info answered more than " .. tostring(Client.INFO_BODY_LIMIT) .. " bytes")
+	end
 	return Protocol.assertCompatible(Protocol.decodeInfo(response.Body))
 end
 
@@ -131,8 +154,8 @@ local function proves(self: Client, info: any, nonce: string): boolean
 	return token ~= nil and info.proof == Hmac.proof(token, self.port, nonce)
 end
 
-local function proofFailure(): { status: number, message: string, tokenRefused: boolean }
-	return { status = 401, message = Client.PROOF_FAILED, tokenRefused = true }
+local function handshakeRefusal(message: string): { status: number, message: string, tokenRefused: boolean }
+	return { status = 401, message = message, tokenRefused = true }
 end
 
 function Client.info(self: Client): any
@@ -143,12 +166,13 @@ function Client.info(self: Client): any
 	self.projectId = info.project_id
 	if self.store ~= nil and (self.token == nil or switched) then
 		self.token = self.store.load(info.project_id)
+		self.unsaved = false
 	end
 	if self.token == nil then
-		return info
+		error(handshakeRefusal(Client.TOKEN_REQUIRED))
 	end
 	if not proves(self, info, nonce) then
-		error(proofFailure())
+		error(handshakeRefusal(Client.PROOF_FAILED))
 	end
 	self.verified = true
 	local confirmNonce = newNonce(self)
@@ -159,8 +183,9 @@ function Client.info(self: Client): any
 	end
 	if not proves(self, confirmed, confirmNonce) then
 		self.verified = false
-		error(proofFailure())
+		error(handshakeRefusal(Client.PROOF_FAILED))
 	end
+	saveProvenToken(self)
 	return confirmed
 end
 

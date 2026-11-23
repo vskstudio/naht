@@ -131,5 +131,6 @@ daemon and the plugin together.
 
 Protocol 5 adds the daemon proof. `GET /info?nonce=<n>` answers with `proof`, the HMAC-SHA256 of
 `naht-daemon-proof-v1\n<port>\n<n>` keyed by the token, and the plugin sends the token only once that matches the
-value it computes. A program that takes the port while `naht serve` is stopped cannot answer it, so it never sees the
-token. Upgrade the CLI, the daemon and the plugin together.
+value it computes. Until then it sends nothing but `GET /info`, and with no token for the project it stops and asks
+for one. A program that takes the port while `naht serve` is stopped cannot answer it, so it never sees the token and
+cannot push patches into Studio. Upgrade the CLI, the daemon and the plugin together.

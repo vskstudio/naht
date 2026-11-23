@@ -34,8 +34,11 @@ The plugin sends the token only to a daemon that proves it holds it. Each handsh
 `GET /info` without the token, and the daemon answers with the HMAC-SHA256 of that nonce and its port, keyed by the
 token. The plugin computes the same value with the token it stored and sends the token only when both match, so a
 process that binds the port while `naht serve` is stopped never receives it. The port is part of the proof, so a
-process on the plugin's port cannot relay the nonce to a daemon serving another port. A transport failure drops the
-proof, and the plugin holds back every request carrying the token until the next handshake proves it again.
+process on the plugin's port cannot relay the nonce to a daemon serving another port. Until a handshake is proven
+the plugin sends nothing past `GET /info`: no inventory, no push, no poll, so such a process cannot feed patches
+into Studio either, and a plugin with no token stored for the project id it is told stops and asks for one. A
+token the user types is saved only once a daemon has proven it. A transport failure drops the proof, and the
+plugin holds back every other request until the next handshake proves it again.
 
 ## Known risks
 
