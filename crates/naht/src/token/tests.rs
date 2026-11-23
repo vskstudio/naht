@@ -310,7 +310,7 @@ fn set_protected_dacl(file: &Path, sddl: &str) {
 
     let descriptor = ConvertStringSecurityDescriptorToSecurityDescriptor(sddl).unwrap();
     let mut handle = fs::OpenOptions::new()
-        .access_mode(AccessRights::WriteDac.bits())
+        .access_mode((AccessRights::ReadControl | AccessRights::WriteDac).bits())
         .open(file)
         .unwrap();
     SetSecurityInfo(
