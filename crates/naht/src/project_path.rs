@@ -9,6 +9,12 @@ pub(crate) fn stays_inside_project(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
+pub(crate) fn has_hidden_segment(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(component, Component::Normal(name) if name.to_str().is_some_and(|name| name.starts_with('.')))
+    })
+}
+
 pub(crate) fn has_portable_tree_path(path: &str) -> bool {
     !path.contains('\\') && path.split('/').all(is_portable_name)
 }

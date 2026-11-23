@@ -28,6 +28,8 @@ local READY_ATTEMPTS = 300
 local STOP_ATTEMPTS = 300
 local EDIT_ATTEMPTS = 3
 local TICK = 0.05
+local TEST_PORT_LOW = 20000
+local TEST_PORT_HIGH = 32767
 local WORK = process.cwd .. "/target/e2e-" .. tostring(math.random(100000000, 999999999))
 
 local failures = 0
@@ -410,7 +412,7 @@ local function otherPlaceRefused(root, port, log)
 	bound.client:postInventory({ entryOf(KEEP_FILE, "return 1") }, boundInfo.session_id)
 	stopDaemon(bound)
 
-	local other = startDaemon(root, math.random(20000, 60000), log)
+	local other = startDaemon(root, math.random(TEST_PORT_LOW, TEST_PORT_HIGH), log)
 	local otherClient = Client.new(other.base, function(): number return OTHER_PLACE_ID end, httpBridge())
 	local infoOk, infoErr = pcall(otherClient.info, otherClient)
 	check(
@@ -509,7 +511,7 @@ end
 local function main()
 	local root = WORK .. "/demo"
 	local log = WORK .. "/naht.log"
-	local port = math.random(20000, 60000)
+	local port = math.random(TEST_PORT_LOW, TEST_PORT_HIGH)
 	fs.writeDir(WORK)
 
 	local ok, err = pcall(scenario, root, port, log)
@@ -517,7 +519,7 @@ local function main()
 		check("the daemon scenario ran to completion", false, tostring(err))
 	end
 	local renamedLog = WORK .. "/renamed.log"
-	local renamedOk, renamedErr = pcall(renamedWhileStopped, WORK .. "/renamed", math.random(20000, 60000), renamedLog)
+	local renamedOk, renamedErr = pcall(renamedWhileStopped, WORK .. "/renamed", math.random(TEST_PORT_LOW, TEST_PORT_HIGH), renamedLog)
 	if not renamedOk then
 		check("the rename-while-stopped scenario ran to completion", false, tostring(renamedErr))
 	end
@@ -530,7 +532,7 @@ local function main()
 		{ name = "childless-init", run = childlessInitKept },
 	}
 	for _, scenarioEntry in extra do
-		local scenarioOk, scenarioErr = pcall(scenarioEntry.run, WORK .. "/" .. scenarioEntry.name, math.random(20000, 60000), WORK .. "/" .. scenarioEntry.name .. ".log")
+		local scenarioOk, scenarioErr = pcall(scenarioEntry.run, WORK .. "/" .. scenarioEntry.name, math.random(TEST_PORT_LOW, TEST_PORT_HIGH), WORK .. "/" .. scenarioEntry.name .. ".log")
 		if not scenarioOk then
 			check(scenarioEntry.name .. " scenario ran to completion", false, tostring(scenarioErr))
 		end

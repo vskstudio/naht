@@ -24,6 +24,13 @@ write *no* config at all. The layout *is* the mapping. Exceptions live in `naht.
 The `init.*` rule is how you attach children to a script: a folder with an `init.luau` turns into that
 script, and everything else in the folder becomes its children.
 
+### Names
+
+A name is the file or folder name without its class suffix, so `Util.luau` is named `Util`. Naht does not
+sync a name that starts with a dot (`.Hidden.luau`, `.cache/`): the scanner and the watcher ignore such
+entries, and the Studio plugin skips the script and warns once. A name also cannot hold `/ \ : < > " | ? *`
+or a control character, and cannot be a Windows device name such as `CON` or `LPT1`, on any host.
+
 ### Example
 
 ```
