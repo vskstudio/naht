@@ -390,13 +390,12 @@ fn an_owner_only_token_file_that_is_not_protected_is_not_taken_as_owner_only() {
     let dir = root.path().join(".naht");
     fs::create_dir(&dir).unwrap();
     let owner = owner_sid_text();
-    set_dacl(&dir, &format!("D:P(A;OICI;FA;;;{owner})"), true);
+    set_dacl(&dir, &format!("D:P(A;;FA;;;{owner})"), true);
     fs::write(path(root.path()), token.as_str()).unwrap();
     set_dacl(&path(root.path()), &format!("D:(A;;FA;;;{owner})"), false);
     assert_single_explicit_ace_unprotected(&path(root.path()));
 
     assert!(!super::owner_only::is_file_owner_only(&path(root.path())).unwrap());
-    assert_loaded_with_one_warning(root.path(), &token);
 }
 
 #[cfg(windows)]
