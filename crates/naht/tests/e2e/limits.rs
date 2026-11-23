@@ -33,7 +33,7 @@ const LONG_POLL_CEILING: Duration = Duration::from_secs(60);
 const HELD_CURSOR: u64 = u64::MAX;
 
 const PROBE_WAIT: Duration = Duration::from_secs(1);
-const PROBE_MARGIN: Duration = Duration::from_millis(500);
+const PROBE_MARGIN: Duration = Duration::from_millis(100);
 const MIN_OBSERVATION: Duration = Duration::from_secs(1);
 const OBSERVED_FOR: Duration = ANONYMOUS_DEADLINE.saturating_sub(PROBE_MARGIN);
 const RELEASE_WAIT: Duration = Duration::from_secs(5);

@@ -31,7 +31,7 @@ const DEADLINE_SLACK: Duration = Duration::from_secs(1);
 
 const SERVED_WAIT: Duration = Duration::from_secs(1);
 
-const PROBE_MARGIN: Duration = Duration::from_millis(500);
+const PROBE_MARGIN: Duration = Duration::from_millis(100);
 
 const SEATS: usize = 16;
 
