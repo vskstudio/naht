@@ -47,6 +47,7 @@ mod handshake;
 mod inventory;
 mod listen;
 mod refuse;
+mod slot;
 
 use guard::{Gate, PostGate, guard, limit_post_bodies};
 use handshake::ServedPort;
