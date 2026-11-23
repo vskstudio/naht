@@ -22,14 +22,14 @@ fn folder_session_over_case_folding_disk(
     Session::assemble(RootedVfs::new("", vfs), store, "demo", None, false).unwrap()
 }
 
-fn renamed_folder_listing(changed_content: &str) -> Vec<InventoryEntry> {
+pub(super) fn renamed_folder_listing(changed_content: &str) -> Vec<InventoryEntry> {
     vec![
         inventory_entry("Tree/NewDir/Kept.luau", "ModuleScript", "return 7"),
         inventory_entry("Tree/NewDir/Changed.luau", "ModuleScript", changed_content),
     ]
 }
 
-fn old_folder_scripts() -> [(&'static str, &'static str); 2] {
+pub(super) fn old_folder_scripts() -> [(&'static str, &'static str); 2] {
     [
         ("Tree/OldDir/Kept.luau", "return 7"),
         ("Tree/OldDir/Changed.luau", "return 2"),

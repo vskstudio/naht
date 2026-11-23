@@ -2,6 +2,7 @@ use super::*;
 use naht_core::hash::source_fingerprint;
 use naht_core::inventory::InventoryEntry;
 
+mod folder_guards;
 mod folder_moves;
 
 struct CaseFoldingVfs {
