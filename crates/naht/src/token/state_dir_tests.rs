@@ -2,8 +2,11 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use super::acl_fixtures::assert_only_owner_is_granted;
+use super::acl_fixtures::{
+    assert_only_owner_is_granted, assert_single_explicit_ace_unprotected, owner_sid_text, set_dacl,
+};
 use super::{TokenError, owner_only, path, prepare_state_dir, state_dir_access};
+use crate::test_logs::captured_logs;
 
 #[test]
 fn a_file_created_in_the_owner_only_state_directory_is_owner_only_before_any_set() {
@@ -65,4 +68,25 @@ fn a_state_directory_denied_to_this_account_names_the_fix_and_the_state_it_holds
     assert!(text.contains("run `naht serve` again"), "{text}");
     assert!(text.contains("deletes `state.db`"), "{text}");
     assert!(text.contains("place binding"), "{text}");
+}
+
+#[test]
+fn a_state_directory_that_is_not_protected_is_not_taken_as_owner_only() {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir(&dir).unwrap();
+    let owner = owner_sid_text();
+    set_dacl(root.path(), &format!("D:P(A;;FA;;;{owner})"), true);
+    set_dacl(&dir, &format!("D:(A;OICI;FA;;;{owner})"), false);
+    assert_single_explicit_ace_unprotected(&dir);
+
+    assert!(!owner_only::is_dir_owner_only(&dir).unwrap());
+    let (logs, dispatch) = captured_logs();
+    with_default(&dispatch, || prepare_state_dir(root.path()).unwrap());
+    assert!(owner_only::is_dir_owner_only(&dir).unwrap());
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("WARN"), "{text}");
 }
