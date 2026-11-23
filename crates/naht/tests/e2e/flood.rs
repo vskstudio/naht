@@ -127,74 +127,6 @@ async fn flood(address: String, stop: Arc<AtomicBool>) {
     }
 }
 
-async fn silent_flood(address: String, stop: Arc<AtomicBool>) {
-    let mut buffer = [0_u8; 64];
-    while !stop.load(Ordering::Relaxed) {
-        let Ok(mut stream) = TcpStream::connect(&address).await else {
-            continue;
-        };
-        while stream.read(&mut buffer).await.is_ok_and(|read| read > 0) {}
-    }
-}
-
-pub(super) async fn a_newcomer_resolves_under_a_silent_flood(flooders: usize) {
-    let root = tempfile::tempdir().unwrap();
-    init(root.path());
-    let daemon = Daemon::start(root.path()).await;
-    let address_of_daemon = address(&daemon);
-    let stop = Arc::new(AtomicBool::new(false));
-    let floods: Vec<JoinHandle<()>> = (0..flooders)
-        .map(|_| tokio::spawn(silent_flood(address_of_daemon.clone(), Arc::clone(&stop))))
-        .collect();
-    sleep(SETTLE).await;
-
-    let authenticated = authenticated_request(&daemon, "/heartbeat");
-    let (on_newcomer, newcomer) = timed(timeout(
-        SILENT_NEWCOMER_BOUND,
-        attempt(&address_of_daemon, &authenticated),
-    ))
-    .await;
-
-    stop.store(true, Ordering::Relaxed);
-    for flood in floods {
-        flood.abort();
-    }
-
-    let served = matches!(newcomer, Ok(Some(_)));
-    let mut report = String::new();
-    writeln!(
-        report,
-        "silent_flooders={flooders} silent_newcomer_ms={} silent_newcomer_served={served} silent_newcomer_resolved={}",
-        on_newcomer.as_millis(),
-        newcomer.is_ok(),
-    )
-    .unwrap();
-    if let Some(path) = env::var_os(REPORT_VARIABLE) {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .expect("the flood report could not be opened");
-        file.write_all(report.as_bytes())
-            .expect("the flood report could not be written");
-    }
-
-    assert!(
-        newcomer.is_ok(),
-        "a new authenticated connection was neither served nor closed within {SILENT_NEWCOMER_BOUND:?} under {flooders} silent connections"
-    );
-}
-
-#[tokio::test]
-async fn a_newcomer_resolves_under_a_silent_flood_of_two_hundred_and_fifty_six_connections() {
-    a_newcomer_resolves_under_a_silent_flood(256).await;
-}
-
-#[tokio::test]
-async fn a_newcomer_resolves_under_a_silent_flood_of_three_hundred_connections() {
-    a_newcomer_resolves_under_a_silent_flood(300).await;
-}
-
 pub(super) async fn timed<T: Future>(work: T) -> (Duration, T::Output) {
     let started = Instant::now();
     let output = work.await;
@@ -290,4 +222,146 @@ const NEWCOMER_BOUND: Duration = Duration::from_secs(20);
 
 const QUEUED_NEWCOMER_BOUND: Duration = Duration::from_secs(30);
 
-const SILENT_NEWCOMER_BOUND: Duration = Duration::from_secs(35);
+const SEATS: usize = 16;
+
+const QUEUE: usize = 256;
+
+const SLACK: Duration = Duration::from_secs(5);
+
+const SEAT_DEADLINE: Duration = Duration::from_secs(2);
+
+const QUEUE_WAIT: Duration = Duration::from_secs(30);
+
+const REFUSAL_BOUND: Duration = Duration::from_secs(1);
+
+const WAIT_CAP_LOWER: Duration = Duration::from_secs(28);
+
+const WAIT_CAP_UPPER: Duration = Duration::from_secs(33);
+
+const WAIT_CAP_GIVE_UP: Duration = Duration::from_secs(40);
+
+async fn started(root: &tempfile::TempDir) -> Daemon {
+    init(root.path());
+    Daemon::start(root.path()).await
+}
+
+async fn hold_silent(address: &str, count: usize) -> Vec<TcpStream> {
+    let mut held = Vec::with_capacity(count);
+    for _ in 0..count {
+        held.push(TcpStream::connect(address).await.unwrap());
+    }
+    held
+}
+
+fn write_report(line: &str) {
+    if let Some(path) = env::var_os(REPORT_VARIABLE) {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("the flood report could not be opened");
+        file.write_all(line.as_bytes())
+            .expect("the flood report could not be written");
+    }
+}
+
+#[tokio::test]
+async fn a_newcomer_is_refused_at_accept_once_the_queue_is_full() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = started(&root).await;
+    let address_of_daemon = address(&daemon);
+    let held = hold_silent(&address_of_daemon, SEATS + QUEUE + 28).await;
+    sleep(SETTLE).await;
+
+    let (refused_in, newcomer) = timed(timeout(
+        QUEUE_WAIT + SLACK,
+        attempt(
+            &address_of_daemon,
+            &authenticated_request(&daemon, "/heartbeat"),
+        ),
+    ))
+    .await;
+    drop(held);
+
+    let mut report = String::new();
+    writeln!(
+        report,
+        "queue_refusal_ms={} queue_refusal_served={}",
+        refused_in.as_millis(),
+        matches!(newcomer, Ok(Some(_))),
+    )
+    .unwrap();
+    write_report(&report);
+
+    assert!(
+        matches!(newcomer, Ok(None)) && refused_in < REFUSAL_BOUND,
+        "a newcomer behind a full queue was not refused at accept (answered after {refused_in:?})"
+    );
+}
+
+#[tokio::test]
+async fn a_newcomer_behind_silent_seats_is_served_when_a_seat_frees_at_the_deadline() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = started(&root).await;
+    let address_of_daemon = address(&daemon);
+    let held = hold_silent(&address_of_daemon, SEATS).await;
+    sleep(SETTLE).await;
+
+    let (waited, newcomer) = timed(timeout(
+        QUEUE_WAIT,
+        attempt(
+            &address_of_daemon,
+            &authenticated_request(&daemon, "/heartbeat"),
+        ),
+    ))
+    .await;
+    drop(held);
+
+    let mut report = String::new();
+    writeln!(
+        report,
+        "seat_deadline_ms={} seat_deadline_served={}",
+        waited.as_millis(),
+        matches!(newcomer, Ok(Some(_))),
+    )
+    .unwrap();
+    write_report(&report);
+
+    assert!(
+        matches!(newcomer, Ok(Some(_))) && waited < SEAT_DEADLINE + SLACK,
+        "a newcomer behind silent seats was not served at the {SEAT_DEADLINE:?} deadline (answered after {waited:?})"
+    );
+}
+
+#[tokio::test]
+async fn a_newcomer_queued_behind_silent_connections_is_cut_at_the_wait_cap() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = started(&root).await;
+    let address_of_daemon = address(&daemon);
+    let held = hold_silent(&address_of_daemon, SEATS + 250).await;
+
+    let (waited, newcomer) = timed(timeout(
+        WAIT_CAP_GIVE_UP,
+        attempt(
+            &address_of_daemon,
+            &authenticated_request(&daemon, "/heartbeat"),
+        ),
+    ))
+    .await;
+    drop(held);
+
+    let mut report = String::new();
+    writeln!(
+        report,
+        "wait_cap_ms={} wait_cap_served={}",
+        waited.as_millis(),
+        matches!(newcomer, Ok(Some(_))),
+    )
+    .unwrap();
+    write_report(&report);
+
+    assert!(
+        matches!(newcomer, Ok(None)) && (WAIT_CAP_LOWER..WAIT_CAP_UPPER).contains(&waited),
+        "a newcomer queued behind silent connections was not cut at the {QUEUE_WAIT:?} wait cap (answered after {waited:?})"
+    );
+}
