@@ -48,6 +48,19 @@ soit tu tournes sur un autre port :
 naht serve --port 40000
 ```
 
+## « cannot watch the project directory »
+
+Sous Linux, `naht serve` garde une surveillance inotify par dossier du projet, et le noyau refuse de nouvelles
+surveillances une fois `fs.inotify.max_user_watches` atteint. Le message nomme cette limite. Relève-la, puis relance
+`naht serve` :
+
+```sh
+sudo sysctl fs.inotify.max_user_watches=524288
+```
+
+Pour garder la nouvelle valeur après un redémarrage, écris `fs.inotify.max_user_watches=524288` dans un fichier de
+`/etc/sysctl.d/`.
+
 ## « This project is bound to place N » (403)
 
 La première place publiée qui se connecte est enregistrée dans `.naht/state.db`, et le daemon refuse toute autre

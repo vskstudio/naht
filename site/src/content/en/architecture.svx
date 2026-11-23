@@ -59,7 +59,7 @@ All `naht-core` errors are typed with `thiserror`. No `unwrap()`/`expect()` on f
 ### `naht` (binary): CLI + daemon
 
 - The localhost HTTP server (`axum`) that the plugin talks to.
-- The file watcher (`notify-debouncer-full`). On Linux it watches the project root and each directory the walk keeps, so `node_modules`, `target` and dot-directories are never watched. When a change names a directory, or a directory above it, that directory's watches are released and set up again. On macOS and Windows it is one recursive watch on the root.
+- The file watcher (`notify-debouncer-full`). On Linux it watches the project root and each directory the walk keeps, so `node_modules`, `target` and dot-directories are never watched. When a change names a directory, or a directory above it, that directory's watches are released and set up again. On macOS and Windows it is one recursive watch on the root, so events under `node_modules`, `target` and dot-directories still arrive there and are then discarded.
 - Session orchestration and ownership of the SQLite database.
 - All [CLI commands](#/docs/cli): `init`, `serve`, `pull`, `build`, `status`, `resolve`,
   `package-plugin`.
