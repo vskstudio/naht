@@ -239,6 +239,7 @@ async fn assert_writes_after_replacement_are_seen(replace: impl FnOnce(&Path)) {
 #[derive(Default)]
 struct RefusingWatch {
     refused: Option<(PathBuf, fn() -> notify::Error)>,
+    released: Vec<PathBuf>,
 }
 
 #[cfg(target_os = "linux")]
@@ -250,7 +251,8 @@ impl directories::DirectoryWatch for RefusingWatch {
         }
     }
 
-    fn unwatch_directory(&mut self, _path: &Path) -> notify::Result<()> {
+    fn unwatch_directory(&mut self, path: &Path) -> notify::Result<()> {
+        self.released.push(path.to_path_buf());
         Ok(())
     }
 }
@@ -279,6 +281,7 @@ fn start_fails_when_the_kernel_refuses_a_directory_for_a_reason_other_than_it_va
     let (_dir, root) = project_with_src();
     let mut watch = RefusingWatch {
         refused: Some((root.join("src"), out_of_watches)),
+        ..RefusingWatch::default()
     };
     let error = directories::start_with(&mut watch, &root).unwrap_err();
     assert!(matches!(error.0.kind, notify::ErrorKind::MaxFilesWatch));
@@ -290,6 +293,7 @@ fn start_skips_a_directory_that_vanished_before_its_watch_was_added() {
     let (_dir, root) = project_with_src();
     let mut watch = RefusingWatch {
         refused: Some((root.join("src"), vanished)),
+        ..RefusingWatch::default()
     };
     let watched = directories::start_with(&mut watch, &root).unwrap();
     assert!(!watched.contains(&root.join("src")));
@@ -312,6 +316,69 @@ fn a_refresh_reports_a_directory_the_kernel_refuses_and_leaves_it_unwatched() {
     assert!(!watched.contains(&root.join("src")));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_touched_directory_releases_and_rewatches_the_watches_under_it() {
+    use std::collections::BTreeSet;
+
+    let (_dir, root) = project_with_src();
+    let nested = root.join("src").join("a").join("b");
+    fs::create_dir_all(&nested).unwrap();
+    let mut watch = RefusingWatch::default();
+    let mut watched = directories::start_with(&mut watch, &root).unwrap();
+    watch.released.clear();
+    let touched = BTreeSet::from([root.join("src").join("a")]);
+    directories::sync(&mut watch, &mut watched, &root, &touched).unwrap();
+    assert!(
+        watch.released.contains(&nested),
+        "a watch under a touched directory was kept: {:?}",
+        watch.released
+    );
+    assert!(watched.contains(&nested));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_in_a_new_directory_under_a_renamed_parent_is_seen() {
+    let (_dir, state, root) = watched_project();
+    fs::create_dir_all(root.join("src").join("a").join("b")).unwrap();
+    let _watch = spawn(&root, Arc::clone(&state)).unwrap();
+    time::sleep(Duration::from_millis(300)).await;
+    fs::rename(root.join("src").join("a"), root.join("src").join("z")).unwrap();
+    let deep = root.join("src").join("z").join("new").join("deep");
+    fs::create_dir_all(&deep).unwrap();
+    fs::write(deep.join("Early.luau"), "return 1").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/z/new/deep/Early.luau").await,
+        "a file in a new directory under a renamed parent was never queued"
+    );
+    fs::write(deep.join("Late.luau"), "return 2").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/z/new/deep/Late.luau").await,
+        "a write after the renamed parent's batch was never seen"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_in_a_new_child_of_a_parent_removed_and_recreated_is_seen() {
+    let (_dir, state, root) = watched_project();
+    fs::create_dir_all(root.join("src").join("a").join("b")).unwrap();
+    let _watch = spawn(&root, Arc::clone(&state)).unwrap();
+    time::sleep(Duration::from_millis(300)).await;
+    fs::remove_dir_all(root.join("src").join("a")).unwrap();
+    let child = root.join("src").join("a").join("new");
+    fs::create_dir_all(&child).unwrap();
+    fs::write(child.join("Early.luau"), "return 1").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/a/new/Early.luau").await,
+        "a file in a new child of a recreated parent was never queued"
+    );
+    fs::write(child.join("Late.luau"), "return 2").unwrap();
+    assert!(
+        wait_for_patch(&state, "src/a/new/Late.luau").await,
+        "a write after the recreated parent's batch was never seen"
+    );
+}
+
 fn watched_project() -> (tempfile::TempDir, Arc<AppState>, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
@@ -331,4 +398,29 @@ async fn wait_for_patch(state: &AppState, relative: &str) -> bool {
         time::sleep(Duration::from_millis(50)).await;
     }
     false
+}
+
+#[cfg(target_os = "linux")]
+fn nested_directories(root: &Path, count: usize) {
+    for index in 0..count {
+        fs::create_dir_all(
+            root.join(format!("g{}", index % 100))
+                .join(format!("d{index}")),
+        )
+        .unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn starting_the_watch_on_ten_thousand_directories_stays_fast() {
+    let (_dir, state, root) = watched_project();
+    nested_directories(&root, 10_000);
+    let started = Instant::now();
+    let _watch = spawn(&root, Arc::clone(&state)).unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "starting the watch on 10000 directories took {elapsed:?}, the bound is 5 s"
+    );
 }

@@ -1,16 +1,23 @@
 //! The directories the Linux watcher keeps a watch on: the project root and every directory the
 //! walk keeps, so the ignored names are never registered with the kernel.
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use naht_core::walk::is_ignored_entry;
-use notify_debouncer_full::DebouncedEvent;
-use notify_debouncer_full::notify::{self, ErrorKind, EventKind, RecursiveMode};
+use notify_debouncer_full::notify::{
+    self, Config, ErrorKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _,
+    WatcherKind,
+};
+use notify_debouncer_full::{
+    DebounceEventHandler, DebouncedEvent, Debouncer, RecommendedCache, new_debouncer_opt,
+};
 
-use super::{Debounced, WatchError};
+use super::{DEBOUNCE, WatchError};
 
 pub(super) type Directories = BTreeSet<PathBuf>;
 
@@ -19,7 +26,43 @@ pub(super) trait DirectoryWatch {
     fn unwatch_directory(&mut self, path: &Path) -> notify::Result<()>;
 }
 
-impl DirectoryWatch for Debounced {
+thread_local! {
+    static CONSTRUCTED: RefCell<Option<Inotify>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Inotify(Arc<Mutex<RecommendedWatcher>>);
+
+impl Inotify {
+    fn lock(&self) -> MutexGuard<'_, RecommendedWatcher> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl notify::Watcher for Inotify {
+    fn new<F: notify::EventHandler>(event_handler: F, config: Config) -> notify::Result<Self> {
+        let inotify = Self(Arc::new(Mutex::new(RecommendedWatcher::new(
+            event_handler,
+            config,
+        )?)));
+        CONSTRUCTED.with_borrow_mut(|slot| *slot = Some(inotify.clone()));
+        Ok(inotify)
+    }
+
+    fn watch(&mut self, path: &Path, recursive_mode: RecursiveMode) -> notify::Result<()> {
+        self.lock().watch(path, recursive_mode)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        self.lock().unwatch(path)
+    }
+
+    fn kind() -> WatcherKind {
+        RecommendedWatcher::kind()
+    }
+}
+
+impl DirectoryWatch for Inotify {
     fn watch_directory(&mut self, path: &Path) -> notify::Result<()> {
         self.watch(path, RecursiveMode::NonRecursive)
     }
@@ -27,6 +70,22 @@ impl DirectoryWatch for Debounced {
     fn unwatch_directory(&mut self, path: &Path) -> notify::Result<()> {
         self.unwatch(path)
     }
+}
+
+pub(super) fn debounce(
+    handler: impl DebounceEventHandler,
+) -> Result<(Debouncer<Inotify, RecommendedCache>, Inotify), WatchError> {
+    let debouncer = new_debouncer_opt::<_, Inotify, RecommendedCache>(
+        DEBOUNCE,
+        None,
+        handler,
+        RecommendedCache::new(),
+        Config::default(),
+    )?;
+    let watch = CONSTRUCTED
+        .with_borrow_mut(Option::take)
+        .ok_or_else(|| notify::Error::generic("the debouncer did not build its watcher"))?;
+    Ok((debouncer, watch))
 }
 
 pub(super) fn start_with(
@@ -49,11 +108,7 @@ pub(super) fn sync(
     touched: &BTreeSet<PathBuf>,
 ) -> notify::Result<Vec<(PathBuf, notify::Error)>> {
     let wanted = directories_to_watch(root).map_err(notify::Error::io)?;
-    let released: Vec<PathBuf> = directories
-        .iter()
-        .filter(|directory| !wanted.contains(*directory) || touched.contains(*directory))
-        .cloned()
-        .collect();
+    let released = released_directories(directories, &wanted, touched);
     for directory in released {
         release(watch, &directory);
         directories.remove(&directory);
@@ -72,6 +127,27 @@ pub(super) fn sync(
         }
     }
     Ok(failures)
+}
+
+fn released_directories(
+    directories: &Directories,
+    wanted: &Directories,
+    touched: &BTreeSet<PathBuf>,
+) -> BTreeSet<PathBuf> {
+    let mut released: BTreeSet<PathBuf> = directories
+        .iter()
+        .filter(|directory| !wanted.contains(*directory))
+        .cloned()
+        .collect();
+    for path in touched {
+        released.extend(
+            directories
+                .range(path.clone()..)
+                .take_while(|directory| directory.starts_with(path))
+                .cloned(),
+        );
+    }
+    released
 }
 
 pub(super) fn touched_paths(events: &[DebouncedEvent]) -> BTreeSet<PathBuf> {

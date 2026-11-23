@@ -13,17 +13,21 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 #[cfg(not(target_os = "linux"))]
+use notify_debouncer_full::new_debouncer;
+#[cfg(not(target_os = "linux"))]
+use notify_debouncer_full::notify::RecommendedWatcher;
+#[cfg(not(target_os = "linux"))]
 use notify_debouncer_full::notify::RecursiveMode;
-use notify_debouncer_full::notify::{self, EventKind, RecommendedWatcher};
+use notify_debouncer_full::notify::{self, EventKind};
 use notify_debouncer_full::{
-    DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache, new_debouncer,
+    DebounceEventHandler, DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache,
 };
 use thiserror::Error;
 
 use crate::server::AppState;
 use crate::session::Session;
 #[cfg(target_os = "linux")]
-use directories::Directories;
+use directories::{Directories, Inotify};
 use naht_core::walk::is_ignored_name;
 use tokio::runtime::Handle;
 
@@ -39,13 +43,18 @@ pub struct WatchError(#[from] notify::Error);
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
 
-type Debounced = Debouncer<RecommendedWatcher, RecommendedCache>;
-
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
 struct Watches {
-    debouncer: Debounced,
-    #[cfg(target_os = "linux")]
+    _debouncer: Debouncer<Inotify, RecommendedCache>,
+    watch: Inotify,
     directories: Directories,
+}
+
+#[cfg(not(target_os = "linux"))]
+#[derive(Debug)]
+struct Watches {
+    _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
 }
 
 /// Keeps the filesystem watch alive for as long as it is held.
@@ -74,48 +83,44 @@ pub(crate) fn spawn_observed(
     let shared: Arc<Mutex<Option<Watches>>> = Arc::new(Mutex::new(None));
     let weak_shared: Weak<Mutex<Option<Watches>>> = Arc::downgrade(&shared);
     let mut guard = shared.lock().unwrap_or_else(PoisonError::into_inner);
-    let debouncer = new_debouncer(
-        DEBOUNCE,
-        None,
-        move |result: DebounceEventResult| match result {
-            Ok(events) => {
-                observe(&events);
-                let project_events = events
-                    .iter()
-                    .filter(|event| is_project_event(&watched_root, event))
-                    .count();
-                if project_events == 0 {
-                    return;
-                }
-                tracing::debug!(target: "naht::watcher", batch = project_events, "filesystem batch");
-                if let Some(slot) = weak_shared.upgrade() {
-                    refresh(&slot, &watched_root, &events);
-                }
-                let state = Arc::clone(&state);
-                let tasks = state.tasks().clone();
-                tasks.spawn_on(
-                    async move {
-                        match state.with_session(Session::rescan).await {
-                            Ok(Ok(())) => {}
-                            Ok(Err(error)) => {
-                                tracing::warn!(target: "naht::watcher", ?error, "rescan failed");
-                            }
-                            Err(error) => {
-                                tracing::warn!(target: "naht::watcher", %error, "rescan task failed");
-                            }
+    let handler = move |result: DebounceEventResult| match result {
+        Ok(events) => {
+            observe(&events);
+            let project_events = events
+                .iter()
+                .filter(|event| is_project_event(&watched_root, event))
+                .count();
+            if project_events == 0 {
+                return;
+            }
+            tracing::debug!(target: "naht::watcher", batch = project_events, "filesystem batch");
+            if let Some(slot) = weak_shared.upgrade() {
+                refresh(&slot, &watched_root, &events);
+            }
+            let state = Arc::clone(&state);
+            let tasks = state.tasks().clone();
+            tasks.spawn_on(
+                async move {
+                    match state.with_session(Session::rescan).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            tracing::warn!(target: "naht::watcher", ?error, "rescan failed");
                         }
-                        state.notify_patches();
-                        state.notify_blobs();
-                    },
-                    &runtime,
-                );
-            }
-            Err(errors) => {
-                tracing::warn!(target: "naht::watcher", count = errors.len(), "watch error batch");
-            }
-        },
-    )?;
-    *guard = Some(Watches::start(debouncer, root)?);
+                        Err(error) => {
+                            tracing::warn!(target: "naht::watcher", %error, "rescan task failed");
+                        }
+                    }
+                    state.notify_patches();
+                    state.notify_blobs();
+                },
+                &runtime,
+            );
+        }
+        Err(errors) => {
+            tracing::warn!(target: "naht::watcher", count = errors.len(), "watch error batch");
+        }
+    };
+    *guard = Some(Watches::start(handler, root)?);
     drop(guard);
     Ok(WatchGuard { _watches: shared })
 }
@@ -127,26 +132,21 @@ fn refresh(shared: &Mutex<Option<Watches>>, root: &Path, events: &[DebouncedEven
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Watches {
-    #[cfg(target_os = "linux")]
-    fn start(mut debouncer: Debounced, root: &Path) -> Result<Self, WatchError> {
-        let directories = directories::start_with(&mut debouncer, root)?;
+    fn start(handler: impl DebounceEventHandler, root: &Path) -> Result<Self, WatchError> {
+        let (debouncer, mut watch) = directories::debounce(handler)?;
+        let directories = directories::start_with(&mut watch, root)?;
         Ok(Self {
-            debouncer,
+            _debouncer: debouncer,
+            watch,
             directories,
         })
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn start(mut debouncer: Debounced, root: &Path) -> Result<Self, WatchError> {
-        debouncer.watch(root, RecursiveMode::Recursive)?;
-        Ok(Self { debouncer })
-    }
-
-    #[cfg(target_os = "linux")]
     fn refresh(&mut self, root: &Path, events: &[DebouncedEvent]) {
         let touched = directories::touched_paths(events);
-        match directories::sync(&mut self.debouncer, &mut self.directories, root, &touched) {
+        match directories::sync(&mut self.watch, &mut self.directories, root, &touched) {
             Ok(failures) => {
                 for (directory, error) in failures {
                     tracing::error!(target: "naht::watcher", ?error, path = %directory.display(), "cannot watch directory, its changes are not seen");
@@ -157,8 +157,18 @@ impl Watches {
             }
         }
     }
+}
 
-    #[cfg(not(target_os = "linux"))]
+#[cfg(not(target_os = "linux"))]
+impl Watches {
+    fn start(handler: impl DebounceEventHandler, root: &Path) -> Result<Self, WatchError> {
+        let mut debouncer = new_debouncer(DEBOUNCE, None, handler)?;
+        debouncer.watch(root, RecursiveMode::Recursive)?;
+        Ok(Self {
+            _debouncer: debouncer,
+        })
+    }
+
     fn refresh(&mut self, _root: &Path, _events: &[DebouncedEvent]) {}
 }
 
