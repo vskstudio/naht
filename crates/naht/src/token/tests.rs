@@ -210,7 +210,7 @@ fn a_token_file_open_to_other_accounts_is_restricted_with_one_warning() {
 }
 
 #[cfg(windows)]
-fn captured_logs() -> (LogBuffer, tracing::Dispatch) {
+pub(super) fn captured_logs() -> (LogBuffer, tracing::Dispatch) {
     let logs = LogBuffer::default();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
@@ -269,7 +269,7 @@ fn a_new_token_file_has_the_owner_only_dacl_before_any_token_byte_is_written() {
 }
 
 #[cfg(windows)]
-fn owner_sid_text() -> String {
+pub(super) fn owner_sid_text() -> String {
     use windows_permissions::utilities::current_process_sid;
     use windows_permissions::wrappers::ConvertSidToStringSid;
 
@@ -281,7 +281,7 @@ fn owner_sid_text() -> String {
 }
 
 #[cfg(windows)]
-fn set_dacl(file: &Path, sddl: &str, protected: bool) {
+pub(super) fn set_dacl(file: &Path, sddl: &str, protected: bool) {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_permissions::constants::{AccessRights, SeObjectType, SecurityInformation};
     use windows_permissions::wrappers::{
@@ -291,6 +291,7 @@ fn set_dacl(file: &Path, sddl: &str, protected: bool) {
     let descriptor = ConvertStringSecurityDescriptorToSecurityDescriptor(sddl).unwrap();
     let mut handle = fs::OpenOptions::new()
         .access_mode((AccessRights::ReadControl | AccessRights::WriteDac).bits())
+        .custom_flags(super::owner_only::FILE_FLAG_BACKUP_SEMANTICS)
         .open(file)
         .unwrap();
     SetSecurityInfo(
@@ -310,6 +311,42 @@ fn set_dacl(file: &Path, sddl: &str, protected: bool) {
 }
 
 #[cfg(windows)]
+pub(super) fn assert_dacl_is(file: &Path, sddl: &str, protected: bool) {
+    use super::owner_only::protection_and_aces;
+    use windows_permissions::constants::{SeObjectType, SecurityInformation};
+    use windows_permissions::wrappers::{
+        ConvertStringSecurityDescriptorToSecurityDescriptor, GetNamedSecurityInfo,
+    };
+
+    let read = GetNamedSecurityInfo(
+        file,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl,
+    )
+    .unwrap()
+    .as_sddl()
+    .unwrap()
+    .to_string_lossy()
+    .into_owned();
+    let expected = ConvertStringSecurityDescriptorToSecurityDescriptor(sddl)
+        .unwrap()
+        .as_sddl()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        protection_and_aces(&read).map(|shape| shape.0),
+        Some(protected),
+        "{read}"
+    );
+    assert_eq!(
+        protection_and_aces(&read),
+        protection_and_aces(&expected),
+        "{read}"
+    );
+}
+
+#[cfg(windows)]
 fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str, protected: bool) {
     use tracing::dispatcher::with_default;
 
@@ -320,6 +357,7 @@ fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str, protected: bool) 
     super::owner_only::restrict_dir(&dir).unwrap();
     fs::write(path(root.path()), token.as_str()).unwrap();
     set_dacl(&path(root.path()), sddl, protected);
+    assert_dacl_is(&path(root.path()), sddl, protected);
     let (logs, dispatch) = captured_logs();
 
     let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
@@ -429,43 +467,6 @@ fn a_loose_state_directory_is_tightened_with_one_warning() {
     let text = logs.text();
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.contains("state directory"), "{text}");
-}
-
-#[cfg(windows)]
-#[test]
-fn a_file_created_in_the_owner_only_state_directory_is_owner_only_before_any_set() {
-    let root = tempfile::tempdir().unwrap();
-    let dir = root.path().join(".naht");
-    fs::create_dir(&dir).unwrap();
-    super::owner_only::restrict_dir(&dir).unwrap();
-
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path(root.path()))
-        .unwrap();
-
-    assert_only_owner_is_granted(&path(root.path()));
-}
-
-#[cfg(windows)]
-fn assert_only_owner_is_granted(file: &Path) {
-    use windows_permissions::constants::{SeObjectType, SecurityInformation};
-    use windows_permissions::utilities::current_process_sid;
-    use windows_permissions::wrappers::{EqualSid, GetNamedSecurityInfo};
-
-    let descriptor = GetNamedSecurityInfo(
-        file,
-        SeObjectType::SE_FILE_OBJECT,
-        SecurityInformation::Dacl,
-    )
-    .unwrap();
-    let sddl = descriptor.as_sddl().unwrap().to_string_lossy().into_owned();
-    let dacl = descriptor.dacl().unwrap();
-    let only_ace = dacl.get_ace(0).expect("the DACL has no ACE");
-    assert!(dacl.get_ace(1).is_none(), "more than one ACE: {sddl}");
-    let owner = current_process_sid().unwrap();
-    assert!(EqualSid(only_ace.sid().unwrap(), &owner), "{sddl}");
 }
 
 const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";

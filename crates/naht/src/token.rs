@@ -98,6 +98,30 @@ pub enum TokenError {
         /// The token file.
         path: PathBuf,
     },
+    /// The state directory could not be read or written.
+    #[error("cannot use the state directory `{}`", path.display())]
+    StateDirIo {
+        /// The state directory.
+        path: PathBuf,
+        /// The underlying I/O failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The state directory's access rules deny this account access, so it cannot be secured or used.
+    #[error(
+        "the state directory `{}` denies this account access, so `naht serve` cannot use it: delete the directory, run `naht serve` to make a new token, and enter the new token in the plugin",
+        path.display()
+    )]
+    StateDirDenied {
+        /// The state directory.
+        path: PathBuf,
+    },
+    /// The state directory is a junction or symbolic link, which `naht` refuses to follow.
+    #[error("the state directory `{}` is a junction or symbolic link: replace it with a real directory and run `naht serve` again", path.display())]
+    StateDirReparsePoint {
+        /// The state directory.
+        path: PathBuf,
+    },
     /// The token file does not hold a well-formed token, typically after a crash while it was written.
     #[error("the token file `{}` holds no token: delete it and run `naht serve` to make a new one", path.display())]
     Malformed {
@@ -128,7 +152,7 @@ pub fn path(root: &Path) -> PathBuf {
 /// Returns [`TokenError`] when the file exists but holds no token, or cannot be read or created.
 pub fn load_or_create(root: &Path) -> Result<Loaded, TokenError> {
     #[cfg(windows)]
-    secure_state_dir(root)?;
+    prepare_state_dir(root)?;
     match restrict_to_owner(&path(root)) {
         Ok(()) => read(root).map(|token| Loaded {
             token,
@@ -206,21 +230,28 @@ fn windows_access_error(path: &Path, source: io::Error) -> TokenError {
     }
 }
 
+/// Make the `.naht` state directory of the project at `root` owner-only, before anything is
+/// created inside it.
+///
+/// # Errors
+///
+/// Returns [`TokenError::StateDirReparsePoint`] when `.naht` is a junction or symbolic link,
+/// [`TokenError::StateDirDenied`] when its access rules deny this account, and
+/// [`TokenError::StateDirIo`] for any other failure.
 #[cfg(windows)]
-fn secure_state_dir(root: &Path) -> Result<(), TokenError> {
+pub fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
     let dir = root.join(".naht");
-    let io_error = |source| TokenError::Io {
-        path: dir.clone(),
-        source,
-    };
-    fs::create_dir_all(root).map_err(io_error)?;
+    fs::create_dir_all(root).map_err(|source| state_dir_io(&dir, source))?;
     match fs::create_dir(&dir) {
-        Ok(()) => owner_only::restrict_dir(&dir).map_err(io_error),
+        Ok(()) => owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source)),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if owner_only::is_dir_owner_only(&dir).map_err(io_error)? {
+            refuse_reparse_point(&dir)?;
+            let owner_only_now = owner_only::is_dir_owner_only(&dir)
+                .map_err(|source| state_dir_access(&dir, source))?;
+            if owner_only_now {
                 return Ok(());
             }
-            owner_only::restrict_dir(&dir).map_err(io_error)?;
+            owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
             tracing::warn!(
                 target: "naht::token",
                 path = %dir.display(),
@@ -228,7 +259,38 @@ fn secure_state_dir(root: &Path) -> Result<(), TokenError> {
             );
             Ok(())
         }
-        Err(error) => Err(io_error(error)),
+        Err(error) => Err(state_dir_io(&dir, error)),
+    }
+}
+
+#[cfg(windows)]
+fn refuse_reparse_point(dir: &Path) -> Result<(), TokenError> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let metadata = fs::symlink_metadata(dir).map_err(|source| state_dir_access(dir, source))?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+        return Ok(());
+    }
+    Err(TokenError::StateDirReparsePoint {
+        path: dir.to_path_buf(),
+    })
+}
+
+#[cfg(windows)]
+fn state_dir_access(dir: &Path, source: io::Error) -> TokenError {
+    if source.kind() == io::ErrorKind::PermissionDenied {
+        return TokenError::StateDirDenied {
+            path: dir.to_path_buf(),
+        };
+    }
+    state_dir_io(dir, source)
+}
+
+#[cfg(windows)]
+fn state_dir_io(path: &Path, source: io::Error) -> TokenError {
+    TokenError::StateDirIo {
+        path: path.to_path_buf(),
+        source,
     }
 }
 
@@ -312,5 +374,7 @@ impl Token {
 
 #[cfg(windows)]
 mod owner_only;
+#[cfg(all(test, windows))]
+mod state_dir_tests;
 #[cfg(test)]
 mod tests;

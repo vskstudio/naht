@@ -13,7 +13,7 @@ use windows_permissions::{LocalBox, SecurityDescriptor};
 
 const FILE_DACL: &str = "D:P(A;;FA;;;{sid})";
 const DIR_DACL: &str = "D:P(A;OICI;FA;;;{sid})";
-const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+pub(super) const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 
 pub(super) fn is_file_owner_only(path: &Path) -> io::Result<bool> {
     matches_dacl(path, FILE_DACL)
@@ -41,7 +41,7 @@ fn matches_dacl(path: &Path, template: &str) -> io::Result<bool> {
     Ok(current_shape.is_some() && current_shape == protection_and_aces(&expected))
 }
 
-fn protection_and_aces(sddl: &str) -> Option<(bool, &str)> {
+pub(super) fn protection_and_aces(sddl: &str) -> Option<(bool, &str)> {
     let body = sddl.strip_prefix("D:")?;
     let (flags, aces) = body.split_at_checked(body.find('(')?)?;
     Some((flags.contains('P'), aces))
