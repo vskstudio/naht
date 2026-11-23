@@ -81,7 +81,7 @@ Plafonds appliqués par le démon. Chaque clé est facultative et prend la valeu
 terrain_voxels = 1048576        # voxels qu'une poussée de terrain en direct peut contenir
 inventory_body_bytes = 67108864 # taille maximale d'un corps POST /inventory, en octets
 mass_delete_warn = 25           # suppressions dans une réconciliation qui déclenchent un avertissement
-connections = 64                # connexions que le démon sert en même temps
+connections = 64                # connexions authentifiées que le démon sert en même temps
 ```
 
 | Clé | Type | Défaut | Plafond | Rôle |
@@ -89,7 +89,7 @@ connections = 64                # connexions que le démon sert en même temps
 | `terrain_voxels` | entier | `1048576` | `8388608` | Nombre maximal de voxels qu'une poussée de terrain en direct peut contenir. Le plugin lit cette valeur auprès du démon et applique donc le même plafond. Une poussée plus grande est refusée avec `413`, et le plugin demande alors de lancer `naht build`. Un blob dont l'en-tête est illisible est refusé avec `400`. |
 | `inventory_body_bytes` | entier | `67108864` (64 MiB) | `134217728` (128 MiB) | Taille maximale d'un corps `POST /inventory`, en octets. Un corps plus grand reçoit `413`. Les autres routes gardent la limite de 64 MiB. |
 | `mass_delete_warn` | entier | `25` | `100000` | Une réconciliation qui supprime au moins ce nombre de fichiers journalise un avertissement, pour que vous puissiez vérifier que le changement était voulu. |
-| `connections` | entier | `64` | `1024` | Connexions que la boucle d'acceptation sert en même temps. Une connexion au-delà du plafond attend qu'une place se libère. |
+| `connections` | entier | `64` | `1024` | Connexions authentifiées que la boucle d'acceptation sert en même temps. Une connexion au-delà du plafond attend qu'une place se libère. Les connexions qui n'ont pas encore présenté le jeton ont leur propre réserve de 16 places et n'utilisent jamais celles-ci. |
 
 <Callout type="important">
 

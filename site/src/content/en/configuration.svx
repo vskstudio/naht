@@ -78,7 +78,7 @@ Caps the daemon enforces. Each key is optional and defaults to the value below. 
 terrain_voxels = 1048576        # voxels one live terrain push may carry
 inventory_body_bytes = 67108864 # largest POST /inventory body, in bytes
 mass_delete_warn = 25           # deletions in one reconcile that trigger a warning
-connections = 64                # connections the daemon serves at once
+connections = 64                # authenticated connections the daemon serves at once
 ```
 
 | Key | Type | Default | Ceiling | Purpose |
@@ -86,7 +86,7 @@ connections = 64                # connections the daemon serves at once
 | `terrain_voxels` | integer | `1048576` | `8388608` | Most voxels one live terrain push may carry. The plugin reads this value from the daemon, so it enforces the same cap. A larger push is refused with `413`, and the plugin then asks you to run `naht build`. A blob whose header cannot be read is refused with `400`. |
 | `inventory_body_bytes` | integer | `67108864` (64 MiB) | `134217728` (128 MiB) | Largest `POST /inventory` body, in bytes. A larger body gets `413`. Every other route keeps the 64 MiB limit. |
 | `mass_delete_warn` | integer | `25` | `100000` | A reconcile that deletes at least this many files logs a warning, so you can check the change was intended. |
-| `connections` | integer | `64` | `1024` | Connections the accept loop serves at once. A connection past the cap waits until a slot frees. |
+| `connections` | integer | `64` | `1024` | Authenticated connections the accept loop serves at once. A connection past the cap waits until a slot frees. Connections that have not passed the token have their own pool of 16 and never take these slots. |
 
 <Callout type="important">
 

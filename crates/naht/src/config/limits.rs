@@ -28,7 +28,7 @@ pub struct Limits {
     pub inventory_body_bytes: usize,
     /// How many deletions in one reconcile make the daemon warn that the change looks mass.
     pub mass_delete_warn: usize,
-    /// How many connections the accept loop serves at once.
+    /// How many authenticated connections the accept loop serves at once. Tokenless connections have their own pool of 16.
     pub connections: usize,
 }
 
@@ -60,7 +60,7 @@ pub struct LimitsConfig {
     pub inventory_body_bytes: Option<usize>,
     /// How many deletions in one reconcile make the daemon warn.
     pub mass_delete_warn: Option<usize>,
-    /// How many connections the accept loop serves at once.
+    /// How many authenticated connections the accept loop serves at once. Tokenless connections have their own pool of 16.
     pub connections: Option<usize>,
 }
 
