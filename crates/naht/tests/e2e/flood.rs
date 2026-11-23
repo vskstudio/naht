@@ -220,7 +220,7 @@ async fn an_authenticated_request_is_served_under_a_flood_of_two_hundred_tokenle
 
 const NEWCOMER_BOUND: Duration = Duration::from_secs(20);
 
-const QUEUED_NEWCOMER_BOUND: Duration = Duration::from_secs(30);
+const QUEUED_NEWCOMER_BOUND: Duration = Duration::from_secs(20);
 
 const SEATS: usize = 16;
 
@@ -230,13 +230,15 @@ const SLACK: Duration = Duration::from_secs(5);
 
 const SEAT_DEADLINE: Duration = Duration::from_secs(2);
 
-const QUEUE_WAIT: Duration = Duration::from_secs(30);
+const QUEUE_WAIT: Duration = Duration::from_secs(20);
 
 const REFUSAL_BOUND: Duration = Duration::from_secs(1);
 
-const WAIT_CAP_LOWER: Duration = Duration::from_secs(28);
+const WAIT_CAP_LOWER: Duration = Duration::from_secs(18);
 
-const WAIT_CAP_UPPER: Duration = Duration::from_secs(33);
+const WAIT_CAP_UPPER: Duration = Duration::from_secs(23);
+
+const WAIT_CAP_POSITION: usize = 224;
 
 const WAIT_CAP_GIVE_UP: Duration = Duration::from_secs(40);
 
@@ -338,7 +340,7 @@ async fn a_newcomer_queued_behind_silent_connections_is_cut_at_the_wait_cap() {
     let root = tempfile::tempdir().unwrap();
     let daemon = started(&root).await;
     let address_of_daemon = address(&daemon);
-    let held = hold_silent(&address_of_daemon, SEATS + 250).await;
+    let held = hold_silent(&address_of_daemon, SEATS + WAIT_CAP_POSITION).await;
 
     let (waited, newcomer) = timed(timeout(
         WAIT_CAP_GIVE_UP,

@@ -26,7 +26,7 @@ pub(super) const ANONYMOUS_CONNECTIONS: usize = 16;
 
 pub(super) const ANONYMOUS_QUEUE: usize = 256;
 
-pub(super) const ANONYMOUS_QUEUE_WAIT: Duration = Duration::from_secs(30);
+pub(super) const ANONYMOUS_QUEUE_WAIT: Duration = Duration::from_secs(20);
 
 pub(super) const ANONYMOUS_DEADLINE: Duration = Duration::from_secs(2);
 

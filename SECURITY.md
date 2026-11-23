@@ -26,9 +26,9 @@ refused, which guards against syncing source into the wrong game. Writes are lim
 Studio scripts or terrain blobs, and request bodies and concurrency are bounded. Connections that have not
 passed the token take one of 16 seats, which close two seconds after they take it, so a caller without the token
 cannot hold the seats that the authenticated connections use. Such a caller can still delay a newcomer: a newcomer
-waits up to 30 seconds for a seat and is then closed. A local process that keeps about 272 tokenless connections
+waits up to 20 seconds for a seat and is then closed. A local process that keeps about 272 tokenless connections
 (16 seated and 256 waiting) open makes a new connection close at accept time, including the plugin's, and the plugin
-retries with its backoff of 1 to 15 seconds. Below that point, a newcomer waits up to about 30 seconds (see
+retries with its backoff of 1 to 15 seconds. Below that point, a newcomer waits up to 20 seconds (see
 [`docs/architecture.md`](docs/architecture.md), section 11).
 
 The gate is not authentication against the account that runs the daemon. A process running as that account
@@ -56,7 +56,7 @@ plugin holds back every other request until the next handshake proves it again.
   the token and can fill the authenticated connection pool (`[limits] connections`, 64 by default), so the plugin waits
   for a seat. Callers without the token cannot take the authenticated pool, but a local process that keeps about
   272 tokenless connections open (16 seated and 256 waiting) closes new connections at accept time, including the
-  plugin's; the plugin retries with its 1 to 15 second backoff. Below that point a newcomer waits up to about 30 seconds. A
+  plugin's; the plugin retries with its 1 to 15 second backoff. Below that point a newcomer waits up to 20 seconds. A
   `GET /info` that waits past two seconds for the session lock is cut. Measured numbers and the bounds are in
   [`docs/architecture.md`](docs/architecture.md), section 11.
 
