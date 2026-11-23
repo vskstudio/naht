@@ -38,7 +38,7 @@ fn matches_dacl(path: &Path, template: &str) -> io::Result<bool> {
         .to_string_lossy()
         .into_owned();
     let current_shape = protection_and_aces(&current);
-    Ok(current_shape.is_some() && current_shape == protection_and_aces(&expected))
+    Ok(current_shape.is_some() && current_shape.map(|shape| shape.1) == protection_and_aces(&expected).map(|shape| shape.1))
 }
 
 pub(super) fn protection_and_aces(sddl: &str) -> Option<(bool, &str)> {
