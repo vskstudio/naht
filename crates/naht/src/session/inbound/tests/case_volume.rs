@@ -24,9 +24,11 @@ fn names_in(dir: &Path) -> Vec<String> {
     names
 }
 
-fn disk_session(root: &Path, base_path: &str, base_content: &str) -> Session {
+fn disk_session(root: &Path, bases: &[(&str, &str)]) -> Session {
     let store = StateStore::open_in_memory().unwrap();
-    set_base(&store, base_path, "ModuleScript", base_content).unwrap();
+    for (path, content) in bases {
+        set_base(&store, path, "ModuleScript", content).unwrap();
+    }
     Session::new(root, store, "demo", None, false).unwrap()
 }
 
@@ -36,7 +38,7 @@ fn a_case_only_folder_rename_on_a_case_insensitive_volume_keeps_the_folder_conte
     assert_case_insensitive_volume(root.path());
     fs::create_dir(root.path().join("Foo")).unwrap();
     fs::write(root.path().join("Foo").join("a.luau"), "old").unwrap();
-    let mut session = disk_session(root.path(), "Foo/a.luau", "old");
+    let mut session = disk_session(root.path(), &[("Foo/a.luau", "old")]);
 
     session
         .apply_changes(vec![
@@ -58,11 +60,20 @@ fn a_case_only_folder_rename_on_a_case_insensitive_volume_keeps_the_folder_conte
 fn a_case_only_folder_rename_onto_a_folder_spelled_differently_is_refused_and_rolled_back() {
     let root = tempfile::tempdir().unwrap();
     assert_case_insensitive_volume(root.path());
+    fs::create_dir(root.path().join("Aaa")).unwrap();
+    fs::write(root.path().join("Aaa").join("b.luau"), "old").unwrap();
     fs::create_dir(root.path().join("utils")).unwrap();
     fs::write(root.path().join("utils").join("a.luau"), "old").unwrap();
-    let mut session = disk_session(root.path(), "Utils/a.luau", "old");
+    let mut session = disk_session(
+        root.path(),
+        &[("Aaa/b.luau", "old"), ("Utils/a.luau", "old")],
+    );
 
     let outcome = session.apply_changes(vec![
+        Change::Delete {
+            path: "Aaa/b.luau".to_owned(),
+        },
+        upsert("aaa/b.luau", "new"),
         Change::Delete {
             path: "Utils/a.luau".to_owned(),
         },
@@ -73,7 +84,11 @@ fn a_case_only_folder_rename_onto_a_folder_spelled_differently_is_refused_and_ro
         outcome,
         Err(SessionError::FolderRenameBlocked { .. })
     ));
-    assert_eq!(names_in(root.path()), ["utils"]);
+    assert_eq!(names_in(root.path()), ["Aaa", "utils"]);
+    assert_eq!(
+        fs::read_to_string(root.path().join("Aaa").join("b.luau")).unwrap(),
+        "old"
+    );
     assert_eq!(
         fs::read_to_string(root.path().join("utils").join("a.luau")).unwrap(),
         "old"
