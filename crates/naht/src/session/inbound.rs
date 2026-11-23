@@ -209,7 +209,7 @@ impl<V: Vfs> Session<V> {
 
     fn move_case_only_folder(&mut self, from: &str, to: &str) -> Result<(), SessionError> {
         let scratch = format!("{from}.naht-case-rename");
-        if self.vfs.exists(Path::new(&scratch)) || self.has_entry_named(Path::new(to))? {
+        if self.vfs.exists(Path::new(&scratch)) {
             return Err(SessionError::FolderRenameBlocked {
                 from: from.to_owned(),
                 to: to.to_owned(),
