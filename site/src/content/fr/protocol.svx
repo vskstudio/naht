@@ -63,8 +63,7 @@ Au plus deux requêtes POST lisent et traitent un corps à la fois, et une trois
 temps propre. Chaque corps est plafonné à 64 MiB et reçoit `413` lorsqu'il est plus grand. Le délai de 15
 secondes ne couvre que la lecture du corps, qui reçoit `408` lorsqu'elle se bloque, et un corps qui se termine
 trop tôt ou qui est mal formé reçoit `400`. Une tête de requête qui reste bloquée pendant dix secondes est coupée.
-Le daemon sert au plus 64 connexions à la fois : une connexion au-delà attend, non encore acceptée, qu'une des
-autres se ferme. Une connexion qui n'envoie rien, ou qui commence par le préambule HTTP/2, est coupée dans les dix secondes et libère donc son slot. Un processus local qui se reconnecte en boucle peut toujours prendre ces slots.
+Le daemon sert au plus 64 connexions authentifiées à la fois. Une connexion qui présente le jeton rejoint ce pool et y garde sa place jusqu'à sa fermeture. Une connexion qui présente le jeton alors que le pool est plein est coupée à l'échéance de ses deux secondes. Avant le jeton, une connexion occupe l'une des 16 places pendant deux secondes au plus : une connexion qui n'envoie aucun jeton, reste silencieuse ou commence par le préambule HTTP/2 ne peut donc pas prendre les places dont les requêtes authentifiées ont besoin. Au-delà des 16 places, les connexions attendent dans l'ordre d'arrivée pendant 30 secondes au plus, puis sont fermées ; une connexion qui trouve déjà 256 autres en attente est fermée aussitôt. Un processus qui détient le jeton peut toujours remplir les 64 places. Un `GET /info` qui attend plus de deux secondes la fin d'une réconciliation est coupé à l'échéance, et le plugin se rétablit par son backoff de reconnexion.
 
 ## Le handshake (`GET /info`)
 
