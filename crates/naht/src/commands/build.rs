@@ -7,7 +7,7 @@ use crate::watcher::{WatchError, is_project_event};
 use naht_core::build::{self, ModelFormat};
 use naht_core::limits;
 use notify_debouncer_full::notify::RecursiveMode;
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
 use std::io::{self};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -104,11 +104,7 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use
         let Ok(events) = result else {
             return;
         };
-        let changed: Vec<PathBuf> = events
-            .iter()
-            .filter(|event| is_project_event(&root, event))
-            .flat_map(|event| event.paths.iter().cloned())
-            .collect();
+        let changed = changed_project_paths(&root, &events);
         if changed.is_empty() {
             return;
         }
@@ -132,4 +128,40 @@ pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use
         .watch(&watch_root, RecursiveMode::Recursive)
         .map_err(WatchError::from)?;
     Ok(debouncer)
+}
+
+fn changed_project_paths(root: &Path, events: &[DebouncedEvent]) -> Vec<PathBuf> {
+    events
+        .iter()
+        .filter(|event| is_project_event(root, event))
+        .flat_map(|event| event.paths.iter().cloned())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use notify_debouncer_full::notify::{Event, EventKind};
+
+    use super::*;
+
+    fn event_at(path: &str) -> DebouncedEvent {
+        let event = Event::new(EventKind::Any).add_path(PathBuf::from(path));
+        DebouncedEvent::new(event, Instant::now())
+    }
+
+    #[test]
+    fn a_build_watch_batch_keeps_project_paths_and_drops_ignored_ones() {
+        let events = [
+            event_at("/project/src/Main.luau"),
+            event_at("/project/node_modules/pkg/index.js"),
+            event_at("/project/.naht/state.db-wal"),
+            event_at("/project/target/debug/naht"),
+        ];
+        assert_eq!(
+            changed_project_paths(Path::new("/project"), &events),
+            vec![PathBuf::from("/project/src/Main.luau")]
+        );
+    }
 }
