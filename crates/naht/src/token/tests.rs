@@ -362,16 +362,51 @@ fn a_protected_dacl_for_another_account_alone_is_rewritten_with_one_warning() {
 
 #[cfg(windows)]
 #[test]
-fn a_protected_dacl_with_a_deny_ace_is_rewritten_with_one_warning() {
+fn a_protected_dacl_with_a_deny_ace_on_everyone_fails_closed_and_keeps_the_file() {
+    use std::io::ErrorKind;
+
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    fs::create_dir_all(root.path().join(".naht")).unwrap();
+    fs::write(path(root.path()), token.as_str()).unwrap();
     let owner = owner_sid_text();
-    assert_rewritten_to_owner_only_with_one_warning(&format!("D:P(D;;FA;;;WD)(A;;FA;;;{owner})"));
+    set_protected_dacl(
+        &path(root.path()),
+        &format!("D:P(D;;FA;;;WD)(A;;FA;;;{owner})"),
+    );
+
+    let error = load_or_create(root.path()).unwrap_err();
+
+    assert!(
+        matches!(&error, TokenError::Io { source, .. } if source.kind() == ErrorKind::PermissionDenied),
+        "{error:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(path(root.path())).unwrap(),
+        token.as_str()
+    );
 }
 
 #[cfg(windows)]
 #[test]
-fn a_protected_owner_ace_carrying_an_inherit_flag_is_rewritten_with_one_warning() {
+fn a_protected_owner_ace_carrying_an_inherit_flag_loads_silently_as_owner_only() {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    fs::create_dir_all(root.path().join(".naht")).unwrap();
+    fs::write(path(root.path()), token.as_str()).unwrap();
     let owner = owner_sid_text();
-    assert_rewritten_to_owner_only_with_one_warning(&format!("D:P(A;OICI;FA;;;{owner})"));
+    set_protected_dacl(&path(root.path()), &format!("D:P(A;OICI;FA;;;{owner})"));
+    assert_owner_only(&path(root.path()));
+    let (logs, dispatch) = captured_logs();
+
+    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
+
+    assert_eq!(loaded.token, token);
+    assert!(!loaded.created);
+    assert_owner_only(&path(root.path()));
+    assert!(logs.text().is_empty(), "{}", logs.text());
 }
 
 const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
