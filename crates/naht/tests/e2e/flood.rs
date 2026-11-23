@@ -82,7 +82,7 @@ pub(super) async fn request_on_open(stream: &mut TcpStream, request: &str) -> u1
     read_response(stream).await.0
 }
 
-async fn attempt(address: &str, request: &str) -> Option<TcpStream> {
+pub(super) async fn attempt(address: &str, request: &str) -> Option<TcpStream> {
     let mut stream = TcpStream::connect(address).await.ok()?;
     stream.write_all(request.as_bytes()).await.ok()?;
     let (status, _) = try_read_response(&mut stream).await?;
@@ -125,6 +125,74 @@ async fn flood(address: String, stop: Arc<AtomicBool>) {
             }
         }
     }
+}
+
+async fn silent_flood(address: String, stop: Arc<AtomicBool>) {
+    let mut buffer = [0_u8; 64];
+    while !stop.load(Ordering::Relaxed) {
+        let Ok(mut stream) = TcpStream::connect(&address).await else {
+            continue;
+        };
+        while stream.read(&mut buffer).await.is_ok_and(|read| read > 0) {}
+    }
+}
+
+pub(super) async fn a_newcomer_resolves_under_a_silent_flood(flooders: usize) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path());
+    let daemon = Daemon::start(root.path()).await;
+    let address_of_daemon = address(&daemon);
+    let stop = Arc::new(AtomicBool::new(false));
+    let floods: Vec<JoinHandle<()>> = (0..flooders)
+        .map(|_| tokio::spawn(silent_flood(address_of_daemon.clone(), Arc::clone(&stop))))
+        .collect();
+    sleep(SETTLE).await;
+
+    let authenticated = authenticated_request(&daemon, "/heartbeat");
+    let (on_newcomer, newcomer) = timed(timeout(
+        SILENT_NEWCOMER_BOUND,
+        attempt(&address_of_daemon, &authenticated),
+    ))
+    .await;
+
+    stop.store(true, Ordering::Relaxed);
+    for flood in floods {
+        flood.abort();
+    }
+
+    let served = matches!(newcomer, Ok(Some(_)));
+    let mut report = String::new();
+    writeln!(
+        report,
+        "silent_flooders={flooders} silent_newcomer_ms={} silent_newcomer_served={served} silent_newcomer_resolved={}",
+        on_newcomer.as_millis(),
+        newcomer.is_ok(),
+    )
+    .unwrap();
+    if let Some(path) = env::var_os(REPORT_VARIABLE) {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("the flood report could not be opened");
+        file.write_all(report.as_bytes())
+            .expect("the flood report could not be written");
+    }
+
+    assert!(
+        newcomer.is_ok(),
+        "a new authenticated connection was neither served nor closed within {SILENT_NEWCOMER_BOUND:?} under {flooders} silent connections"
+    );
+}
+
+#[tokio::test]
+async fn a_newcomer_resolves_under_a_silent_flood_of_two_hundred_and_fifty_six_connections() {
+    a_newcomer_resolves_under_a_silent_flood(256).await;
+}
+
+#[tokio::test]
+async fn a_newcomer_resolves_under_a_silent_flood_of_three_hundred_connections() {
+    a_newcomer_resolves_under_a_silent_flood(300).await;
 }
 
 pub(super) async fn timed<T: Future>(work: T) -> (Duration, T::Output) {
@@ -221,3 +289,5 @@ async fn an_authenticated_request_is_served_under_a_flood_of_two_hundred_tokenle
 const NEWCOMER_BOUND: Duration = Duration::from_secs(20);
 
 const QUEUED_NEWCOMER_BOUND: Duration = Duration::from_secs(30);
+
+const SILENT_NEWCOMER_BOUND: Duration = Duration::from_secs(35);
