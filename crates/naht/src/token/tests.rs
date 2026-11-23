@@ -229,6 +229,82 @@ fn a_token_file_open_to_other_accounts_is_restricted_with_one_warning() {
     assert!(!text.contains(token.as_str()), "{text}");
 }
 
+#[cfg(windows)]
+fn captured_logs() -> (LogBuffer, tracing::Dispatch) {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    (logs, tracing::Dispatch::new(subscriber))
+}
+
+#[cfg(windows)]
+#[test]
+fn a_token_file_already_protected_loads_silently_and_keeps_its_dacl() {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    load_or_create(root.path()).unwrap();
+    assert_owner_only(&path(root.path()));
+    let (logs, dispatch) = captured_logs();
+
+    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
+
+    assert!(!loaded.created);
+    assert_eq!(logs.text(), "");
+    assert_owner_only(&path(root.path()));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_token_file_created_by_another_writer_is_not_replaced() {
+    use std::io::ErrorKind;
+
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(path(root.path()), "winner").unwrap();
+
+    let error = super::write_new(&path(root.path()), "loser").unwrap_err();
+
+    assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+    assert_eq!(fs::read_to_string(path(root.path())).unwrap(), "winner");
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_staging_file_left_by_a_crash_is_removed_on_create() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".token.4242.tmp"), "stale token").unwrap();
+    fs::write(dir.join(".token.notes.tmp"), "not ours").unwrap();
+
+    load_or_create(root.path()).unwrap();
+
+    assert!(!dir.join(".token.4242.tmp").exists());
+    assert!(dir.join(".token.notes.tmp").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_staged_file_has_the_owner_only_dacl_before_any_token_byte_is_written() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join(".naht")).unwrap();
+
+    let (file, staging) = super::owner_only::stage(&path(root.path())).unwrap();
+
+    assert_eq!(file.metadata().unwrap().len(), 0);
+    assert_owner_only(&staging);
+    drop(file);
+    fs::remove_file(staging).unwrap();
+}
+
 const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
 
 #[test]
