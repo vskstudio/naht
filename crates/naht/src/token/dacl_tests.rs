@@ -9,7 +9,6 @@ use super::windows_access_error;
 use super::{Token, TokenError, load_or_create, path};
 use crate::test_logs::captured_logs;
 
-#[cfg(windows)]
 fn assert_owner_only(file: &Path) {
     use windows_permissions::constants::{SeObjectType, SecurityInformation};
     use windows_permissions::utilities::current_process_sid;
@@ -30,7 +29,6 @@ fn assert_owner_only(file: &Path) {
     assert!(EqualSid(only_ace.sid().unwrap(), &owner), "{sddl}");
 }
 
-#[cfg(windows)]
 #[test]
 fn a_new_token_file_is_created_with_a_protected_dacl_for_its_owner_only() {
     let root = tempfile::tempdir().unwrap();
@@ -38,7 +36,6 @@ fn a_new_token_file_is_created_with_a_protected_dacl_for_its_owner_only() {
     assert_owner_only(&path(root.path()));
 }
 
-#[cfg(windows)]
 #[test]
 fn a_token_file_open_to_other_accounts_is_restricted_with_one_warning() {
     use tracing::dispatcher::with_default;
@@ -61,7 +58,6 @@ fn a_token_file_open_to_other_accounts_is_restricted_with_one_warning() {
     assert!(!text.contains(token.as_str()), "{text}");
 }
 
-#[cfg(windows)]
 #[test]
 fn a_token_file_already_protected_loads_silently_and_keeps_its_dacl() {
     use tracing::dispatcher::with_default;
@@ -78,7 +74,6 @@ fn a_token_file_already_protected_loads_silently_and_keeps_its_dacl() {
     assert_owner_only(&path(root.path()));
 }
 
-#[cfg(windows)]
 #[test]
 fn a_token_file_created_by_another_writer_is_not_replaced() {
     use std::io::ErrorKind;
@@ -95,7 +90,6 @@ fn a_token_file_created_by_another_writer_is_not_replaced() {
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
 }
 
-#[cfg(windows)]
 #[test]
 fn a_new_token_file_has_the_owner_only_dacl_before_any_token_byte_is_written() {
     let root = tempfile::tempdir().unwrap();
@@ -107,7 +101,6 @@ fn a_new_token_file_has_the_owner_only_dacl_before_any_token_byte_is_written() {
     assert_owner_only(&path(root.path()));
 }
 
-#[cfg(windows)]
 fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str, protected: bool) {
     let root = tempfile::tempdir().unwrap();
     let token = Token::generate().unwrap();
@@ -121,7 +114,6 @@ fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str, protected: bool) 
     assert_loaded_with_one_warning(root.path(), &token);
 }
 
-#[cfg(windows)]
 fn assert_loaded_with_one_warning(root: &Path, token: &Token) {
     use tracing::dispatcher::with_default;
 
@@ -138,7 +130,6 @@ fn assert_loaded_with_one_warning(root: &Path, token: &Token) {
     assert!(!text.contains(token.as_str()), "{text}");
 }
 
-#[cfg(windows)]
 #[test]
 fn a_protected_dacl_with_an_extra_ace_is_rewritten_with_one_warning() {
     let owner = owner_sid_text();
@@ -148,13 +139,11 @@ fn a_protected_dacl_with_an_extra_ace_is_rewritten_with_one_warning() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn a_protected_dacl_for_another_account_alone_is_rewritten_with_one_warning() {
     assert_rewritten_to_owner_only_with_one_warning("D:P(A;;FA;;;WD)", true);
 }
 
-#[cfg(windows)]
 #[test]
 fn a_token_file_denied_to_this_account_names_the_fix() {
     let error = windows_access_error(
@@ -174,7 +163,6 @@ fn a_token_file_denied_to_this_account_names_the_fix() {
     assert!(text.contains("enter the new token in the plugin"), "{text}");
 }
 
-#[cfg(windows)]
 #[test]
 fn a_token_file_owned_by_this_account_with_an_extra_ace_is_repaired_with_one_warning() {
     use tracing::dispatcher::with_default;
@@ -207,7 +195,6 @@ fn a_token_file_owned_by_this_account_with_an_extra_ace_is_repaired_with_one_war
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn a_deleted_token_file_is_replaced_by_a_new_owner_only_token() {
     let root = tempfile::tempdir().unwrap();
@@ -222,7 +209,6 @@ fn a_deleted_token_file_is_replaced_by_a_new_owner_only_token() {
     assert_owner_only(&path(root.path()));
 }
 
-#[cfg(windows)]
 #[test]
 fn a_protected_owner_ace_carrying_an_inherit_flag_loads_silently_as_owner_only() {
     use tracing::dispatcher::with_default;
@@ -250,14 +236,12 @@ fn a_protected_owner_ace_carrying_an_inherit_flag_loads_silently_as_owner_only()
     assert!(logs.text().is_empty(), "{}", logs.text());
 }
 
-#[cfg(windows)]
 #[test]
 fn a_token_file_with_an_unprotected_owner_only_dacl_is_rewritten_with_one_warning() {
     let owner = owner_sid_text();
     assert_rewritten_to_owner_only_with_one_warning(&format!("D:(A;;FA;;;{owner})"), false);
 }
 
-#[cfg(windows)]
 #[test]
 fn an_unprotected_owner_ace_with_no_inherited_ace_is_rewritten_with_one_warning() {
     let root = tempfile::tempdir().unwrap();
@@ -276,7 +260,6 @@ fn an_unprotected_owner_ace_with_no_inherited_ace_is_rewritten_with_one_warning(
     assert_loaded_with_one_warning(root.path(), &token);
 }
 
-#[cfg(windows)]
 #[test]
 fn an_owner_only_token_file_that_is_not_protected_is_not_taken_as_owner_only() {
     let root = tempfile::tempdir().unwrap();
@@ -292,7 +275,6 @@ fn an_owner_only_token_file_that_is_not_protected_is_not_taken_as_owner_only() {
     assert!(!super::owner_only::is_file_owner_only(&path(root.path())).unwrap());
 }
 
-#[cfg(windows)]
 #[test]
 fn a_loose_state_directory_is_tightened_with_one_warning() {
     use tracing::dispatcher::with_default;
