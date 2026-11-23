@@ -55,11 +55,11 @@ fn a_state_directory_denied_to_this_account_names_the_fix_and_the_state_it_holds
 
     assert!(matches!(error, TokenError::StateDirDenied { .. }), "{text}");
     assert!(
-        text.contains(&format!("takeown /F {shown} /R /D Y")),
+        text.contains(&format!("takeown /F \"{shown}\" /R /D Y")),
         "{text}"
     );
     assert!(
-        text.contains(&format!("icacls {shown} /reset /T /C")),
+        text.contains(&format!("icacls \"{shown}\" /reset /T /C")),
         "{text}"
     );
     assert!(text.contains("run `naht serve` again"), "{text}");

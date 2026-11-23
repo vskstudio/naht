@@ -77,6 +77,27 @@ pub(crate) fn assert_dacl_is(file: &Path, sddl: &str, protected: bool) {
 }
 
 #[cfg(windows)]
+pub(crate) fn assert_single_explicit_ace_unprotected(file: &Path) {
+    use windows_permissions::constants::{SeObjectType, SecurityInformation};
+    use windows_permissions::wrappers::GetNamedSecurityInfo;
+
+    let read = GetNamedSecurityInfo(
+        file,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl,
+    )
+    .unwrap()
+    .as_sddl()
+    .unwrap()
+    .to_string_lossy()
+    .into_owned();
+    let (protected, aces) = protection_and_aces(&read).expect("no DACL");
+    assert!(!protected, "{read}");
+    assert_eq!(aces.matches('(').count(), 1, "{read}");
+    assert!(!aces.contains(";ID;"), "{read}");
+}
+
+#[cfg(windows)]
 fn explicit_aces(sddl: &str) -> Vec<&str> {
     let Some((_, aces)) = protection_and_aces(sddl) else {
         return Vec::new();

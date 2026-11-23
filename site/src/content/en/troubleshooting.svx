@@ -44,7 +44,7 @@ takeown /F .naht /R /D Y
 icacls .naht /reset /T /C
 ```
 
-Then run `naht serve` again: it makes `.naht` owner-only when it starts. Deleting `.naht` instead also deletes that sync state, so do it only if you accept losing the bases, the recorded conflicts and the place binding.
+Then run `naht serve` again: it makes `.naht` owner-only when it starts. Until then `.naht` is loose: the reset gives it the rules inherited from its parent. The next `naht serve` tightens it and logs once that the directory was open to other accounts. Deleting `.naht` instead also deletes that sync state, so do it only if you accept losing the bases, the recorded conflicts and the place binding.
 
 ## "the state directory is a junction or symbolic link" (Windows)
 

@@ -45,7 +45,7 @@ takeown /F .naht /R /D Y
 icacls .naht /reset /T /C
 ```
 
-Puis relance `naht serve` : il remet `.naht` en accès réservé au propriétaire au démarrage. Supprimer `.naht` à la place supprime aussi cet état de synchronisation : ne le fais que si tu acceptes de perdre les bases, les conflits enregistrés et le rattachement à la place.
+Puis relance `naht serve` : il remet `.naht` en accès réservé au propriétaire au démarrage. Jusque-là, `.naht` est ouvert : le reset lui rend les règles héritées de son parent. Le prochain `naht serve` le resserre et journalise une seule fois que le dossier était ouvert à d'autres comptes. Supprimer `.naht` à la place supprime aussi cet état de synchronisation : ne le fais que si tu acceptes de perdre les bases, les conflits enregistrés et le rattachement à la place.
 
 ## « le dossier d'état est une jonction ou un lien symbolique » (Windows)
 

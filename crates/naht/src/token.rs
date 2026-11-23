@@ -109,7 +109,7 @@ pub enum TokenError {
     },
     /// The state directory's access rules deny this account access, so it cannot be secured or used.
     #[error(
-        "the state directory `{}` denies this account access, so `naht serve` cannot use it. Restore your access first from a command prompt: `takeown /F {} /R /D Y`, then `icacls {} /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
+        "the state directory `{}` denies this account access, so `naht serve` cannot use it. Restore your access first from a command prompt: `takeown /F \"{}\" /R /D Y`, then `icacls \"{}\" /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
         path.display(),
         path.display(),
         path.display()

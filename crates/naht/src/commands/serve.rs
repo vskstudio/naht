@@ -122,7 +122,7 @@ pub async fn serve<Stdout: Write, Stderr: Write>(
     served.and(unpublished)
 }
 
-pub(crate) fn take_instance_lock(root: &Path) -> Result<File, CommandError> {
+pub(super) fn take_instance_lock(root: &Path) -> Result<File, CommandError> {
     #[cfg(windows)]
     token::prepare_state_dir(root)?;
     let state_dir = root.join(".naht");

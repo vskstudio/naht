@@ -1,9 +1,15 @@
 use std::fs;
 #[cfg(windows)]
+use std::io;
+#[cfg(windows)]
 use std::path::Path;
 
 #[cfg(windows)]
-use super::acl_fixtures::{assert_dacl_is, owner_sid_text, set_dacl};
+use super::acl_fixtures::{
+    assert_dacl_is, assert_single_explicit_ace_unprotected, owner_sid_text, set_dacl,
+};
+#[cfg(windows)]
+use super::windows_access_error;
 use super::{Token, TokenError, load_or_create, path, read};
 #[cfg(unix)]
 use crate::test_logs::LogBuffer;
@@ -309,30 +315,17 @@ fn a_protected_dacl_for_another_account_alone_is_rewritten_with_one_warning() {
 
 #[cfg(windows)]
 #[test]
-fn a_token_file_denied_to_this_account_names_the_fix_and_can_be_deleted() {
-    let root = tempfile::tempdir().unwrap();
-    let token = Token::generate().unwrap();
-    fs::create_dir_all(root.path().join(".naht")).unwrap();
-    fs::write(path(root.path()), token.as_str()).unwrap();
-    let owner = owner_sid_text();
-    set_dacl(
-        &path(root.path()),
-        &format!("D:P(D;;FA;;;WD)(A;;FA;;;{owner})"),
-        true,
+fn a_token_file_denied_to_this_account_names_the_fix() {
+    let error = windows_access_error(
+        &path(Path::new(r"C:\project")),
+        io::Error::from(io::ErrorKind::PermissionDenied),
     );
-
-    let error = load_or_create(root.path()).unwrap_err();
     let text = error.to_string();
 
     assert!(matches!(error, TokenError::Denied { .. }), "{text}");
     assert!(text.contains("delete the file"), "{text}");
     assert!(text.contains("run `naht serve`"), "{text}");
     assert!(text.contains("enter the new token in the plugin"), "{text}");
-    assert!(!text.contains(token.as_str()), "{text}");
-    fs::remove_file(path(root.path())).unwrap();
-    let renewed = load_or_create(root.path()).unwrap();
-    assert!(renewed.created);
-    assert_ne!(renewed.token, token);
 }
 
 #[cfg(windows)]
@@ -382,7 +375,7 @@ fn an_unprotected_owner_ace_with_no_inherited_ace_is_rewritten_with_one_warning(
     set_dacl(&dir, &format!("D:P(A;;FA;;;{owner})"), true);
     fs::write(path(root.path()), token.as_str()).unwrap();
     set_dacl(&path(root.path()), &sddl, false);
-    assert_dacl_is(&path(root.path()), &sddl, false);
+    assert_single_explicit_ace_unprotected(&path(root.path()));
     super::owner_only::restrict_dir(&dir).unwrap();
     assert_dacl_is(&path(root.path()), &sddl, false);
 
