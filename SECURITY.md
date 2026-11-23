@@ -20,7 +20,10 @@ web page in the user's browser cannot read or write project files through the da
 `GET /info` also needs the project token in the `x-naht-token` header. The token is 32 random bytes in
 `.naht/token`. On Unix the file is created with owner-only permissions (mode 0600), and an existing file that
 its group or others can read is tightened to 0600 when the daemon loads it, so another local account cannot
-read it and cannot call the daemon. On Windows the file is created with a protected DACL that grants access to the current user alone, and an existing file whose DACL differs is set to that DACL when the daemon loads it. On either platform an administrator (or root on Unix) can still take ownership of the file. When the project sets `serve.place_id`, requests from a session bound to another place are
+read it and cannot call the daemon. On Windows the file is created with a protected DACL that grants access to
+the current user alone, and an existing file whose DACL differs is set to that DACL when the daemon loads it.
+On either platform an administrator (or root on Unix) can still take ownership of the file.
+When the project sets `serve.place_id`, requests from a session bound to another place are
 refused, which guards against syncing source into the wrong game. Writes are limited to paths that map to
 Studio scripts or terrain blobs, and request bodies and concurrency are bounded. Connections that have not
 passed the token take one of 16 seats, which close two seconds after they take it, so a caller without the token

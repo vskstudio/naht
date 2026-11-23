@@ -46,7 +46,7 @@ The daemon checks every route before its handler runs. A request is refused with
 
 These checks stop browsers and DNS rebinding. Every route except `GET /info` also needs the project token in
 `x-naht-token`. On Unix the daemon creates it in `.naht/token` readable only by its owner, so other accounts on a shared
-machine cannot call it. On Windows the daemon creates it with an access list that grants only the current user, so other accounts cannot call it either. The token is no defence against a process of the same account, which can read the file.
+machine cannot call it. On Windows the daemon creates it with an access list that grants only the current user, so other accounts cannot read the token or call the daemon with it. The token is no defence against a process of the same account, which can read the file.
 The threat model is in `SECURITY.md`.
 
 Writes are checked against what they may touch. `POST /changes` takes a MessagePack map `{changes: [...]}`,
