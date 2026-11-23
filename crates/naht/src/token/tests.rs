@@ -278,31 +278,100 @@ fn a_token_file_created_by_another_writer_is_not_replaced() {
 
 #[cfg(windows)]
 #[test]
-fn a_staging_file_left_by_a_crash_is_removed_on_create() {
+fn a_new_token_file_has_the_owner_only_dacl_before_any_token_byte_is_written() {
     let root = tempfile::tempdir().unwrap();
-    let dir = root.path().join(".naht");
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".token.4242.tmp"), "stale token").unwrap();
-    fs::write(dir.join(".token.notes.tmp"), "not ours").unwrap();
+    fs::create_dir_all(root.path().join(".naht")).unwrap();
 
-    load_or_create(root.path()).unwrap();
+    let file = super::owner_only::create(&path(root.path())).unwrap();
 
-    assert!(!dir.join(".token.4242.tmp").exists());
-    assert!(dir.join(".token.notes.tmp").exists());
+    assert_eq!(file.metadata().unwrap().len(), 0);
+    assert_owner_only(&path(root.path()));
+}
+
+#[cfg(windows)]
+fn owner_sid_text() -> String {
+    use windows_permissions::utilities::current_process_sid;
+    use windows_permissions::wrappers::ConvertSidToStringSid;
+
+    let sid = current_process_sid().unwrap();
+    ConvertSidToStringSid(&sid)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(windows)]
+fn set_protected_dacl(file: &Path, sddl: &str) {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_permissions::constants::{AccessRights, SeObjectType, SecurityInformation};
+    use windows_permissions::wrappers::{
+        ConvertStringSecurityDescriptorToSecurityDescriptor, SetSecurityInfo,
+    };
+
+    let descriptor = ConvertStringSecurityDescriptorToSecurityDescriptor(sddl).unwrap();
+    let mut handle = fs::OpenOptions::new()
+        .access_mode(AccessRights::WriteDac.bits())
+        .open(file)
+        .unwrap();
+    SetSecurityInfo(
+        &mut handle,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl | SecurityInformation::ProtectedDacl,
+        None,
+        None,
+        descriptor.dacl(),
+        None,
+    )
+    .unwrap();
+}
+
+#[cfg(windows)]
+fn assert_rewritten_to_owner_only_with_one_warning(sddl: &str) {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    fs::create_dir_all(root.path().join(".naht")).unwrap();
+    fs::write(path(root.path()), token.as_str()).unwrap();
+    set_protected_dacl(&path(root.path()), sddl);
+    let (logs, dispatch) = captured_logs();
+
+    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
+
+    assert_eq!(loaded.token, token);
+    assert!(!loaded.created);
+    assert_owner_only(&path(root.path()));
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("WARN"), "{text}");
+    assert!(!text.contains(token.as_str()), "{text}");
 }
 
 #[cfg(windows)]
 #[test]
-fn a_staged_file_has_the_owner_only_dacl_before_any_token_byte_is_written() {
-    let root = tempfile::tempdir().unwrap();
-    fs::create_dir_all(root.path().join(".naht")).unwrap();
+fn a_protected_dacl_with_an_extra_ace_is_rewritten_with_one_warning() {
+    let owner = owner_sid_text();
+    assert_rewritten_to_owner_only_with_one_warning(&format!("D:P(A;;FA;;;{owner})(A;;FR;;;WD)"));
+}
 
-    let (file, staging) = super::owner_only::stage(&path(root.path())).unwrap();
+#[cfg(windows)]
+#[test]
+fn a_protected_dacl_for_another_account_alone_is_rewritten_with_one_warning() {
+    assert_rewritten_to_owner_only_with_one_warning("D:P(A;;FA;;;WD)");
+}
 
-    assert_eq!(file.metadata().unwrap().len(), 0);
-    assert_owner_only(&staging);
-    drop(file);
-    fs::remove_file(staging).unwrap();
+#[cfg(windows)]
+#[test]
+fn a_protected_dacl_with_a_deny_ace_is_rewritten_with_one_warning() {
+    let owner = owner_sid_text();
+    assert_rewritten_to_owner_only_with_one_warning(&format!("D:P(D;;FA;;;WD)(A;;FA;;;{owner})"));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_protected_owner_ace_carrying_an_inherit_flag_is_rewritten_with_one_warning() {
+    let owner = owner_sid_text();
+    assert_rewritten_to_owner_only_with_one_warning(&format!("D:P(A;OICI;FA;;;{owner})"));
 }
 
 const PROOF_NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";

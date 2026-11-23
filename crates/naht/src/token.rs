@@ -118,14 +118,11 @@ pub fn path(root: &Path) -> PathBuf {
 ///
 /// Returns [`TokenError`] when the file exists but holds no token, or cannot be read or created.
 pub fn load_or_create(root: &Path) -> Result<Loaded, TokenError> {
-    match read(root) {
-        Ok(token) => {
-            restrict_to_owner(&path(root))?;
-            Ok(Loaded {
-                token,
-                created: false,
-            })
-        }
+    match restrict_to_owner(&path(root)) {
+        Ok(()) => read(root).map(|token| Loaded {
+            token,
+            created: false,
+        }),
         Err(error) if error.is_missing() => create(root).map(|token| Loaded {
             token,
             created: true,
