@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::protocol::TERRAIN_PATH;
 use crate::reconciler::ReconcileError;
 use crate::vfs::{EntryKind, Vfs};
-use crate::walk::Scan;
+use crate::walk::{Scan, project_key};
 
 use super::model::{BlobInstance, TERRAIN_CLASS};
 
@@ -59,7 +59,7 @@ fn case_variant_of_terrain(path: &Path) -> Option<String> {
 }
 
 fn collect_blob(vfs: &impl Vfs, path: &Path, scan: &mut Scan<BlobInstance>) {
-    let key = path.to_string_lossy().into_owned();
+    let key = project_key(path);
     match vfs.read(path) {
         Ok(content) => {
             scan.instances
@@ -75,11 +75,12 @@ mod tests {
     use std::path::Path;
 
     use crate::vfs::DiskVfs;
+    use crate::walk::project_key;
 
     use super::scan_blobs;
 
     fn key(dir: &Path, relative: &str) -> String {
-        dir.join(relative).to_string_lossy().into_owned()
+        project_key(&dir.join(relative))
     }
 
     fn write(dir: &Path, relative: &str, contents: &[u8]) {

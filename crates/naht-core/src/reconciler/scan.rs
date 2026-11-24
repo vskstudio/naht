@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::mapper::{init_class, script_class};
 use crate::vfs::{EntryKind, Vfs};
-use crate::walk::{self, Scan};
+use crate::walk::{self, Scan, project_key};
 
 use super::model::{ReconcileError, TextInstance};
 
@@ -57,7 +57,7 @@ fn collect_file(
     else {
         return Ok(());
     };
-    let key = path.to_string_lossy().into_owned();
+    let key = project_key(path);
     let content = decode(&key, &vfs.read(path)?)?;
     scan.instances
         .insert(key.clone(), TextInstance::new(key, class, content));
@@ -77,11 +77,12 @@ mod tests {
     use std::path::Path;
 
     use crate::vfs::{DiskVfs, RootedVfs};
+    use crate::walk::project_key;
 
     use super::scan_text;
 
     fn key(dir: &Path, relative: &str) -> String {
-        dir.join(relative).to_string_lossy().into_owned()
+        project_key(&dir.join(relative))
     }
 
     fn write(dir: &Path, relative: &str, contents: &[u8]) {
@@ -157,5 +158,21 @@ mod tests {
         let keys: Vec<&String> = scan.instances.keys().collect();
         assert_eq!(keys, vec![&key(dir.path(), "Main.luau")]);
         assert!(scan.skipped.is_empty());
+    }
+
+    #[test]
+    fn a_nested_file_is_keyed_with_forward_slashes_on_every_platform() {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "src/Pkg/Main.luau", b"return 1");
+        let vfs = RootedVfs::new(root.path().to_path_buf(), DiskVfs::new());
+
+        let scan = scan_text(&vfs, Path::new("")).unwrap();
+
+        let keys: Vec<&str> = scan.instances.keys().map(String::as_str).collect();
+        assert_eq!(keys, vec!["src/Pkg/Main.luau"]);
+        assert_eq!(
+            scan.instances["src/Pkg/Main.luau"].path,
+            "src/Pkg/Main.luau"
+        );
     }
 }

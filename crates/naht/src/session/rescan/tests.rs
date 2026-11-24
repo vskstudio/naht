@@ -51,6 +51,17 @@ fn a_resolve_that_lifts_a_freeze_on_a_file_studio_dropped_removes_the_folder_it_
     assert!(root.path().join("Outer").is_dir());
 }
 
+#[cfg(windows)]
+#[test]
+fn a_resolve_given_backslashes_lifts_the_freeze_on_the_forward_slash_key() {
+    let (root, session) = synced_project(&[]);
+    session.store.set_conflicted(FILE, true).unwrap();
+
+    commands::resolve(root.path(), "Outer\\Inner\\A.luau", None).unwrap();
+
+    assert_eq!(session.store.conflicted().unwrap(), Vec::new());
+}
+
 #[test]
 fn a_pull_that_deletes_the_last_file_of_a_folder_removes_the_folder() {
     let (root, mut session) = synced_project(&[]);

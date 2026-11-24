@@ -2,7 +2,7 @@
 //! that reports what could not be read.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf};
 
 use crate::reconciler::ReconcileError;
 
@@ -32,6 +32,17 @@ pub fn has_ignored_component(path: &Path) -> bool {
             false
         }
     })
+}
+
+/// The path-keyed instance key of `path`, with `/` between components on every platform.
+#[must_use]
+pub fn project_key(path: &Path) -> String {
+    let key = path.to_string_lossy();
+    if MAIN_SEPARATOR == '/' {
+        key.into_owned()
+    } else {
+        key.replace(MAIN_SEPARATOR, "/")
+    }
 }
 
 /// Paths the scan did not see.

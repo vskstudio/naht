@@ -4,6 +4,48 @@ use super::{SCHEMA_VERSION, SCHEMA_VERSION_KEY, StateError, read_meta_i64};
 
 const SCHEMA_TABLE_COUNT: i64 = 4;
 
+const HAS_BACKSLASH_KEYS: &str = "SELECT EXISTS(
+     SELECT 1 FROM instances WHERE instr(guid, '\\') > 0 OR instr(path, '\\') > 0
+ ) OR EXISTS(SELECT 1 FROM studio_sides WHERE instr(path, '\\') > 0)";
+
+const FORWARD_SLASH_KEYS: &str = "DELETE FROM instances
+     WHERE instr(guid, '\\') = 0 AND conflicted = 0
+       AND guid IN (
+           SELECT replace(guid, '\\', '/') FROM instances
+           WHERE instr(guid, '\\') > 0 AND conflicted = 1
+       );
+     DELETE FROM instances
+     WHERE instr(guid, '\\') > 0
+       AND replace(guid, '\\', '/') IN (SELECT guid FROM instances WHERE instr(guid, '\\') = 0);
+     UPDATE instances
+     SET guid = replace(guid, '\\', '/'), path = replace(path, '\\', '/')
+     WHERE instr(guid, '\\') > 0 OR instr(path, '\\') > 0;
+     DELETE FROM studio_sides
+     WHERE instr(path, '\\') > 0
+       AND replace(path, '\\', '/') IN (SELECT path FROM studio_sides WHERE instr(path, '\\') = 0);
+     UPDATE studio_sides SET path = replace(path, '\\', '/') WHERE instr(path, '\\') > 0;";
+
+pub(super) fn prepare(conn: &mut Connection) -> Result<(), StateError> {
+    if !schema_is_current(conn)? {
+        migrate(conn)?;
+    }
+    if cfg!(windows) {
+        forward_slash_keys(conn)?;
+    }
+    Ok(())
+}
+
+pub(super) fn forward_slash_keys(conn: &mut Connection) -> Result<(), StateError> {
+    let found: bool = conn.query_row(HAS_BACKSLASH_KEYS, [], |row| row.get(0))?;
+    if !found {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(FORWARD_SLASH_KEYS)?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub(super) fn schema_is_current(conn: &Connection) -> Result<bool, StateError> {
     let tables: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master

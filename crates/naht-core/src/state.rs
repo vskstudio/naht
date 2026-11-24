@@ -23,7 +23,7 @@ mod schema;
 mod schema_tests;
 mod studio_side;
 
-use schema::{migrate, schema_is_current};
+use schema::prepare;
 pub use studio_side::StudioSide;
 
 const SCHEMA_VERSION: i64 = 1;
@@ -117,9 +117,7 @@ impl StateStore {
 
     fn init(mut conn: Connection) -> Result<Self, StateError> {
         conn.busy_timeout(BUSY_TIMEOUT)?;
-        if !schema_is_current(&conn)? {
-            migrate(&mut conn)?;
-        }
+        prepare(&mut conn)?;
         Ok(Self { conn })
     }
 
