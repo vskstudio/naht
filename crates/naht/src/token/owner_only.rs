@@ -6,8 +6,8 @@ use std::path::Path;
 use windows_permissions::constants::{AccessRights, SeObjectType, SecurityInformation};
 use windows_permissions::utilities::current_process_sid;
 use windows_permissions::wrappers::{
-    ConvertSidToStringSid, ConvertStringSecurityDescriptorToSecurityDescriptor, GetSecurityInfo,
-    SetSecurityInfo,
+    ConvertSidToStringSid, ConvertStringSecurityDescriptorToSecurityDescriptor, EqualSid,
+    GetNamedSecurityInfo, GetSecurityInfo, SetNamedSecurityInfo, SetSecurityInfo,
 };
 use windows_permissions::{LocalBox, SecurityDescriptor};
 
@@ -24,15 +24,7 @@ pub(super) fn is_dir_owner_only(path: &Path) -> io::Result<bool> {
 }
 
 fn matches_dacl(path: &Path, template: &str) -> io::Result<bool> {
-    let file = open_for_acl(path)?;
-    let current = GetSecurityInfo(
-        &file,
-        SeObjectType::SE_FILE_OBJECT,
-        SecurityInformation::Dacl,
-    )?
-    .as_sddl()?
-    .to_string_lossy()
-    .into_owned();
+    let current = read_dacl(path)?.as_sddl()?.to_string_lossy().into_owned();
     let expected = owner_only_descriptor(template)?
         .as_sddl()?
         .to_string_lossy()
@@ -57,8 +49,66 @@ pub(super) fn restrict_dir(path: &Path) -> io::Result<()> {
 
 fn restrict(path: &Path, template: &str) -> io::Result<()> {
     let descriptor = owner_only_descriptor(template)?;
-    let mut file = open_for_acl(path)?;
-    apply_owner_only(&mut file, &descriptor)
+    match open_for_acl(path) {
+        Ok(mut file) => apply_owner_only(&mut file, &descriptor),
+        Err(error) if is_denied_to_its_owner(path, &error) => {
+            apply_owner_only_by_name(path, &descriptor)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn read_dacl(path: &Path) -> io::Result<LocalBox<SecurityDescriptor>> {
+    match open_for_acl(path) {
+        Ok(file) => GetSecurityInfo(
+            &file,
+            SeObjectType::SE_FILE_OBJECT,
+            SecurityInformation::Dacl,
+        ),
+        Err(error) if is_denied_to_its_owner(path, &error) => GetNamedSecurityInfo(
+            path.as_os_str(),
+            SeObjectType::SE_FILE_OBJECT,
+            SecurityInformation::Dacl,
+        ),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `error` is a denied open of an object this account owns, which a deny rule causes:
+/// the owner's implicit rights cover read control and write DAC, but not the synchronize and
+/// read-attributes rights every handle open also asks for.
+fn is_denied_to_its_owner(path: &Path, error: &io::Error) -> bool {
+    if error.kind() != io::ErrorKind::PermissionDenied {
+        return false;
+    }
+    let Ok(descriptor) = GetNamedSecurityInfo(
+        path.as_os_str(),
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Owner,
+    ) else {
+        return false;
+    };
+    let Ok(this_account) = current_process_sid() else {
+        return false;
+    };
+    descriptor
+        .owner()
+        .is_some_and(|owner| EqualSid(owner, &this_account))
+}
+
+fn apply_owner_only_by_name(path: &Path, descriptor: &SecurityDescriptor) -> io::Result<()> {
+    let dacl = descriptor
+        .dacl()
+        .ok_or_else(|| io::Error::other("the owner-only descriptor has no DACL"))?;
+    SetNamedSecurityInfo(
+        path.as_os_str(),
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl | SecurityInformation::ProtectedDacl,
+        None,
+        None,
+        Some(dacl),
+        None,
+    )
 }
 
 pub(super) fn write_new(path: &Path, text: &str) -> io::Result<()> {

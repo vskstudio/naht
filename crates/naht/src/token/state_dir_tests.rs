@@ -94,3 +94,31 @@ fn a_state_directory_that_is_not_protected_is_not_taken_as_owner_only() {
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.contains("WARN"), "{text}");
 }
+
+#[test]
+fn a_state_directory_owned_by_this_account_with_a_deny_ace_for_it_is_repaired_with_one_warning() {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir(&dir).unwrap();
+    let owner = owner_sid_text();
+    set_dacl(
+        &dir,
+        &format!("D:P(D;OICI;FR;;;{owner})(A;OICI;FA;;;{owner})"),
+        true,
+    );
+    assert!(fs::read_dir(&dir).is_err());
+
+    let (logs, dispatch) = captured_logs();
+    with_default(&dispatch, || prepare_state_dir(root.path()).unwrap());
+
+    assert!(owner_only::is_dir_owner_only(&dir).unwrap());
+    assert!(fs::read_dir(&dir).is_ok());
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(
+        text.contains("the state directory was open to other accounts"),
+        "{text}"
+    );
+}
