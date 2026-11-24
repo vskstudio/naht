@@ -108,17 +108,25 @@ fn a_state_directory_owned_by_this_account_with_a_deny_ace_for_it_is_repaired_wi
         &format!("D:P(D;OICI;FR;;;{owner})(A;OICI;FA;;;{owner})"),
         true,
     );
-    assert!(fs::read_dir(&dir).is_err());
+    assert!(open_for_reading(&dir).is_err());
 
     let (logs, dispatch) = captured_logs();
     with_default(&dispatch, || prepare_state_dir(root.path()).unwrap());
 
     assert!(owner_only::is_dir_owner_only(&dir).unwrap());
-    assert!(fs::read_dir(&dir).is_ok());
+    assert!(open_for_reading(&dir).is_ok());
     let text = logs.text();
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(
         text.contains("the state directory was open to other accounts"),
         "{text}"
     );
+}
+
+fn open_for_reading(dir: &Path) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(owner_only::FILE_FLAG_BACKUP_SEMANTICS)
+        .open(dir)
 }
