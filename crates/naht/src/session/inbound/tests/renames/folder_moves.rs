@@ -298,27 +298,6 @@ fn a_studio_deleted_script_moved_under_a_renamed_folder_is_mirrored_at_its_new_p
 }
 
 #[test]
-fn a_folder_whose_scripts_all_changed_is_not_followed_open_limit() {
-    let root = tempfile::tempdir().unwrap();
-    let mut session =
-        session_with_synced_scripts(root.path(), &[("Tree/OldDir/Changed.luau", "return 2")]);
-
-    let wanted = session
-        .apply_inventory(&[inventory_entry(
-            "Tree/NewDir/Changed.luau",
-            "ModuleScript",
-            "return 3",
-        )])
-        .unwrap();
-
-    assert_eq!(wanted, Vec::<String>::new());
-    assert_eq!(
-        fs::read_to_string(root.path().join("Tree/OldDir/Changed.luau")).unwrap(),
-        "return 2"
-    );
-}
-
-#[test]
 fn a_script_already_pending_at_the_new_path_is_not_asked_for_nor_moved() {
     let root = tempfile::tempdir().unwrap();
     let mut session = session_with_synced_scripts(root.path(), &old_folder_scripts());
@@ -392,7 +371,7 @@ fn a_pending_patch_under_the_old_path_is_re_keyed_to_the_new_path_with_its_seque
 }
 
 #[test]
-fn a_relocation_expires_after_the_batch_that_did_not_post_its_target() {
+fn a_relocation_survives_an_unrelated_batch_until_its_target_is_posted() {
     let root = tempfile::tempdir().unwrap();
     let mut session = session_with_synced_scripts(root.path(), &old_folder_scripts());
     session
@@ -406,8 +385,9 @@ fn a_relocation_expires_after_the_batch_that_did_not_post_its_target() {
         .apply_changes(vec![upsert("Tree/NewDir/Changed.luau", "return 3")])
         .unwrap();
 
+    assert!(!root.path().join("Tree/OldDir/Changed.luau").exists());
     assert_eq!(
-        fs::read_to_string(root.path().join("Tree/OldDir/Changed.luau")).unwrap(),
-        "return 2"
+        fs::read_to_string(root.path().join("Tree/NewDir/Changed.luau")).unwrap(),
+        "return 3"
     );
 }

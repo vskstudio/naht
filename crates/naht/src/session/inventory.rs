@@ -8,6 +8,10 @@ use naht_core::vfs::Vfs;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod names;
+
+use names::NameEvidence;
+
 type ContentKey = (String, String);
 
 #[derive(Default)]
@@ -24,9 +28,12 @@ impl<V: Vfs> Session<V> {
     /// only when that key has exactly one candidate on each side. A folder is followed as renamed
     /// only on unambiguous evidence: every pair leaving it lands in one new folder, no listed script
     /// is still under it, no unlisted script under it shares an ambiguous key, and every unpaired
-    /// listed script lies under that new folder. The scripts it leaves behind move with it: a script
-    /// Studio deleted moves with its disk bytes, and a script whose Studio content changed moves when
-    /// the plugin sends that content, which the returned paths name. Everything else is left alone.
+    /// listed script lies under that new folder. A folder with no pair at all, because every script
+    /// changed, is followed when its scripts and a new folder's unmatched creates carry the same
+    /// relative names and classes, at least two of them, and no other folder on either side carries
+    /// that same set. The scripts it leaves behind move with it: a script Studio deleted moves with
+    /// its disk bytes, and a script whose Studio content changed moves when the plugin sends that
+    /// content, which the returned paths name. Everything else is left alone.
     ///
     /// # Errors
     ///
@@ -87,14 +94,19 @@ impl<V: Vfs> Session<V> {
             .iter()
             .map(|(old, new)| (old.path.as_str(), new.path.as_str()))
             .collect();
-        let unmatched: Vec<&str> = creates
+        let unmatched_entries: Vec<&InventoryEntry> = creates
             .iter()
-            .map(|entry| entry.path.as_str())
-            .filter(|path| !paired_creates.contains(path))
+            .copied()
+            .filter(|entry| !paired_creates.contains(entry.path.as_str()))
             .collect();
-        left_alone.extend(unmatched.iter().copied());
-        let renames =
-            inferred_folder_renames(&pair_paths, &unlisted, &ambiguous, &unmatched, listed);
+        left_alone.extend(unmatched_entries.iter().map(|entry| entry.path.as_str()));
+        let renames = self.folder_renames(
+            &pair_paths,
+            &unlisted,
+            &ambiguous,
+            &unmatched_entries,
+            listed,
+        );
         let listed_by_path: BTreeMap<&str, &InventoryEntry> = listed
             .iter()
             .map(|entry| (entry.path.as_str(), entry))
@@ -141,6 +153,36 @@ impl<V: Vfs> Session<V> {
             .filter(|(path, _)| !claimed.contains(*path) && !self.has_pending_patch(path))
             .map(|(_, known)| known)
             .collect()
+    }
+
+    fn folder_renames(
+        &self,
+        pair_paths: &[(&str, &str)],
+        unlisted: &[&TextInstance],
+        ambiguous: &BTreeSet<ContentKey>,
+        unmatched: &[&InventoryEntry],
+        listed: &[InventoryEntry],
+    ) -> BTreeMap<String, String> {
+        let paired_mirror: BTreeSet<&str> = pair_paths.iter().map(|(old, _)| *old).collect();
+        let mirror_paths: Vec<&str> = self.studio.keys().map(String::as_str).collect();
+        let renamed_by_names = NameEvidence {
+            unlisted,
+            paired_mirror: &paired_mirror,
+            unmatched,
+            listed,
+            mirror_paths: &mirror_paths,
+        }
+        .folder_renames();
+        let named_targets: BTreeSet<&str> = renamed_by_names.values().map(String::as_str).collect();
+        let independent: Vec<&str> = unmatched
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .filter(|path| !names::ancestors(path).any(|folder| named_targets.contains(folder)))
+            .collect();
+        let mut renames =
+            inferred_folder_renames(pair_paths, unlisted, ambiguous, &independent, listed);
+        renames.extend(renamed_by_names);
+        renames
     }
 
     fn mirror_path_for(&self, listed: &str) -> String {
@@ -248,12 +290,9 @@ fn inferred_folder_renames(
 }
 
 fn renamed_path(path: &str, renames: &BTreeMap<String, String>) -> Option<String> {
-    renames
-        .iter()
-        .filter_map(|(from, to)| {
-            let rest = path.strip_prefix(from.as_str())?.strip_prefix('/')?;
-            Some((from.len(), format!("{to}/{rest}")))
-        })
-        .max_by_key(|(depth, _)| *depth)
-        .map(|(_, target)| target)
+    names::ancestors(path).rev().find_map(|folder| {
+        let to = renames.get(folder)?;
+        let rest = path.strip_prefix(folder)?.strip_prefix('/')?;
+        Some(format!("{to}/{rest}"))
+    })
 }

@@ -4,6 +4,7 @@ use naht_core::inventory::InventoryEntry;
 
 mod folder_guards;
 mod folder_moves;
+mod folder_names;
 
 struct CaseFoldingVfs {
     inner: MemoryVfs,
