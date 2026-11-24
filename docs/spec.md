@@ -61,7 +61,8 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   folder or an unrelated unpaired create infer nothing. Under a folder that qualifies, a script Studio deleted
   moves with its disk bytes and stays as a script Studio deleted while stopped does in a folder that was not
   renamed, and a script whose Studio content changed moves only once that content arrives through `/changes`, so
-  no side's content is lost. A folder whose scripts all changed is not followed (an open limit).
+  no side's content is lost. A folder whose scripts all changed is followed by names: it must hold the same
+  relative script names and classes as exactly one new folder, and no other folder may hold that set.
 - **Place binding** (#76): a project binds to the first published place that attaches, and another place
   is refused with a 403. Unpublished places never bind. `[serve] place_id` pins the place, and
   `naht unbind` clears the binding without touching the rest of the state. A project shared between two
