@@ -75,7 +75,7 @@ impl NameEvidence<'_> {
     }
 }
 
-pub(super) fn ancestors(path: &str) -> impl Iterator<Item = &str> {
+pub(super) fn ancestors(path: &str) -> impl DoubleEndedIterator<Item = &str> {
     path.match_indices('/')
         .filter_map(move |(at, _)| path.get(..at))
         .filter(|folder| !folder.is_empty())

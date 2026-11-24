@@ -55,14 +55,16 @@ state, terrain blob sync, Open Cloud asset upload, Rojo migration, and a release
   reaches Studio on the next attach.
 - **Studio renames, moves and live terrain** (#76): renames and reparents in Studio are written to disk,
   and live terrain edits sync. On attach the plugin posts its placed script inventory, which applies detected
-  renames. A folder is followed as renamed only when the evidence is unambiguous: each `(class, fingerprint)`
+  renames. A folder is followed as renamed by content only when the evidence is unambiguous: each `(class, fingerprint)`
   key has exactly one listed create and one unlisted script, the folder's pairs all land in one new folder, no
   listed script is left under the old one, and every unpaired create lies under the new folder. Twins, a split
   folder or an unrelated unpaired create infer nothing. Under a folder that qualifies, a script Studio deleted
   moves with its disk bytes and stays as a script Studio deleted while stopped does in a folder that was not
   renamed, and a script whose Studio content changed moves only once that content arrives through `/changes`, so
-  no side's content is lost. A folder whose scripts all changed is followed by names: it must hold the same
-  relative script names and classes, at least two, as exactly one new folder, and no other folder may hold that set.
+  no side's content is lost. A folder whose scripts all changed is followed by names, which is a guess and not unambiguous
+  evidence: it must hold the same relative script names and classes, at least two, as exactly one new folder, and
+  no other folder may hold that set. A disk edit made while stopped to a script followed this way is kept and meets
+  the Studio content as a conflict.
 - **Place binding** (#76): a project binds to the first published place that attaches, and another place
   is refused with a 403. Unpublished places never bind. `[serve] place_id` pins the place, and
   `naht unbind` clears the binding without touching the rest of the state. A project shared between two

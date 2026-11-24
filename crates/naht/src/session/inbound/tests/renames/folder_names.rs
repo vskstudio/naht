@@ -278,3 +278,27 @@ fn a_new_folder_holding_a_script_paired_by_content_is_not_followed_by_names() {
     assert_eq!(wanted, Vec::<String>::new());
     assert!(root.path().join("Tree/OldDir/a.luau").exists());
 }
+
+#[test]
+fn an_old_folder_a_paired_script_leaves_for_another_folder_is_not_followed_by_names() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = session_with_synced_scripts(
+        root.path(),
+        &[
+            ("Tree/Old/a.luau", "return 1"),
+            ("Tree/Old/Sub/b.luau", "return 2"),
+            ("Tree/Old/c.luau", "return 3"),
+        ],
+    );
+    let listing = vec![
+        inventory_entry("Tree/Moved/a.luau", "ModuleScript", "return 1"),
+        inventory_entry("Tree/New/Sub/b.luau", "ModuleScript", "return 20"),
+        inventory_entry("Tree/New/c.luau", "ModuleScript", "return 30"),
+        inventory_entry("Tree/New/a.luau", "ModuleScript", "return 5"),
+    ];
+
+    let wanted = session.apply_inventory(&listing).unwrap();
+
+    assert!(!wanted.iter().any(|path| path.starts_with("Tree/New/")));
+    assert!(root.path().join("Tree/Old/Sub/b.luau").exists());
+}

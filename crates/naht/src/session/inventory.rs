@@ -290,12 +290,9 @@ fn inferred_folder_renames(
 }
 
 fn renamed_path(path: &str, renames: &BTreeMap<String, String>) -> Option<String> {
-    renames
-        .iter()
-        .filter_map(|(from, to)| {
-            let rest = path.strip_prefix(from.as_str())?.strip_prefix('/')?;
-            Some((from.len(), format!("{to}/{rest}")))
-        })
-        .max_by_key(|(depth, _)| *depth)
-        .map(|(_, target)| target)
+    names::ancestors(path).rev().find_map(|folder| {
+        let to = renames.get(folder)?;
+        let rest = path.strip_prefix(folder)?.strip_prefix('/')?;
+        Some(format!("{to}/{rest}"))
+    })
 }
