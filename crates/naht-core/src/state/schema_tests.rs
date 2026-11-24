@@ -138,6 +138,60 @@ fn a_backslash_base_beside_its_forward_slash_twin_is_dropped_and_the_twin_kept()
     );
 }
 
+#[test]
+fn a_conflicted_backslash_base_beside_a_settled_forward_slash_twin_keeps_its_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store_with(
+        &dir,
+        &[
+            record("src\\A.luau", "return 1", true),
+            record("src/A.luau", "return 2", false),
+        ],
+    );
+
+    forward_slash_keys(&mut Connection::open(&path).unwrap()).unwrap();
+
+    let store = StateStore::open(&path).unwrap();
+    assert_eq!(
+        store.all().unwrap(),
+        vec![record("src/A.luau", "return 1", true)]
+    );
+}
+
+#[test]
+fn a_studio_side_keyed_with_backslashes_moves_to_its_forward_slash_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store_with(&dir, &[]);
+    let writer = StateStore::open(&path).unwrap();
+    writer
+        .set_studio_side("src\\A.luau", "ModuleScript", Some("return 1"))
+        .unwrap();
+    writer
+        .set_studio_side("src\\B.luau", "ModuleScript", Some("return 2"))
+        .unwrap();
+    writer
+        .set_studio_side("src/B.luau", "ModuleScript", Some("return 3"))
+        .unwrap();
+    drop(writer);
+
+    forward_slash_keys(&mut Connection::open(&path).unwrap()).unwrap();
+
+    let store = StateStore::open(&path).unwrap();
+    let sides: Vec<(String, Option<String>)> = store
+        .studio_sides()
+        .unwrap()
+        .into_iter()
+        .map(|side| (side.path, side.content))
+        .collect();
+    assert_eq!(
+        sides,
+        vec![
+            ("src/A.luau".to_owned(), Some("return 1".to_owned())),
+            ("src/B.luau".to_owned(), Some("return 3".to_owned())),
+        ]
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn opening_a_store_on_windows_moves_backslash_bases_to_forward_slash_keys() {

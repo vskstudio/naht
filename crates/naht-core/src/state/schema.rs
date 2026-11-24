@@ -6,14 +6,24 @@ const SCHEMA_TABLE_COUNT: i64 = 4;
 
 const HAS_BACKSLASH_KEYS: &str = "SELECT EXISTS(
      SELECT 1 FROM instances WHERE instr(guid, '\\') > 0 OR instr(path, '\\') > 0
- )";
+ ) OR EXISTS(SELECT 1 FROM studio_sides WHERE instr(path, '\\') > 0)";
 
 const FORWARD_SLASH_KEYS: &str = "DELETE FROM instances
+     WHERE instr(guid, '\\') = 0 AND conflicted = 0
+       AND guid IN (
+           SELECT replace(guid, '\\', '/') FROM instances
+           WHERE instr(guid, '\\') > 0 AND conflicted = 1
+       );
+     DELETE FROM instances
      WHERE instr(guid, '\\') > 0
        AND replace(guid, '\\', '/') IN (SELECT guid FROM instances WHERE instr(guid, '\\') = 0);
      UPDATE instances
      SET guid = replace(guid, '\\', '/'), path = replace(path, '\\', '/')
-     WHERE instr(guid, '\\') > 0 OR instr(path, '\\') > 0;";
+     WHERE instr(guid, '\\') > 0 OR instr(path, '\\') > 0;
+     DELETE FROM studio_sides
+     WHERE instr(path, '\\') > 0
+       AND replace(path, '\\', '/') IN (SELECT path FROM studio_sides WHERE instr(path, '\\') = 0);
+     UPDATE studio_sides SET path = replace(path, '\\', '/') WHERE instr(path, '\\') > 0;";
 
 pub(super) fn prepare(conn: &mut Connection) -> Result<(), StateError> {
     if !schema_is_current(conn)? {
