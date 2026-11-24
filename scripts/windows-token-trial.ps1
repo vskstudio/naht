@@ -85,8 +85,6 @@ $root = Join-Path $Work $case
 $token = New-Project $root
 $file = Join-Path $root '.naht\token'
 & icacls $file /deny "${Me}:(R)" | Out-Null
-Write-Host "OBSERVE [$case] before serve: $(Get-Acl-Text $file)"
-Write-Host "OBSERVE [$case] owner: $(cmd /c dir /q $file | Select-String 'token')"
 $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start: $($run.Text)" }
@@ -121,12 +119,12 @@ $file = Join-Path $root '.naht\token'
 Write-Host "ACL before serve: $(Get-Acl-Text $file)"
 $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
-$expected = "takeown /F `"$file`""
+$named = [regex]::Match($run.Text, 'takeown /F "([^"]+)"').Groups[1].Value
 if ($run.Serving) { Fail $case "serve started on a file another account owns: $($run.Text)" }
-elseif (-not $run.Text.Contains($expected)) { Fail $case "the refusal does not give '$expected': $($run.Text)" }
-else { Pass $case 'serve refused and named takeown with the quoted path' }
-& takeown /F $file | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail $case 'takeown failed' }
+elseif (-not $named.EndsWith('.naht\token')) { Fail $case "the refusal does not name takeown on the token file: $($run.Text)" }
+else { Pass $case "serve refused and named takeown /F `"$named`"" }
+& takeown /F $named | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail $case "the takeown command naht gave failed on `"$named`"" }
 $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start after takeown: $($run.Text)" }
@@ -144,15 +142,17 @@ $dir = Join-Path $root '.naht'
 Write-Host "ACL before serve: $(Get-Acl-Text $dir)"
 $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
+$namedTakeown = [regex]::Match($run.Text, 'takeown /F "([^"]+)" /R /D Y').Groups[1].Value
+$namedReset = [regex]::Match($run.Text, 'icacls "([^"]+)" /reset /T /C').Groups[1].Value
 if ($run.Serving) { Fail $case "serve started on a directory another account owns: $($run.Text)" }
-elseif (-not ($run.Text.Contains("takeown /F `"$dir`" /R /D Y") -and $run.Text.Contains("icacls `"$dir`" /reset /T /C"))) {
-    Fail $case "the refusal does not give the takeown and icacls steps: $($run.Text)"
+elseif (-not ($namedTakeown.EndsWith('.naht') -and $namedReset -eq $namedTakeown)) {
+    Fail $case "the refusal does not give the takeown and icacls steps on .naht: $($run.Text)"
 }
-else { Pass $case 'serve refused and named the takeown and icacls steps' }
-& takeown /F $dir /R /D Y | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail $case 'takeown failed' }
-& icacls $dir /reset /T /C | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail $case 'icacls /reset failed' }
+else { Pass $case "serve refused and named takeown and icacls /reset on `"$namedTakeown`"" }
+& takeown /F $namedTakeown /R /D Y | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail $case "the takeown command naht gave failed on `"$namedTakeown`"" }
+& icacls $namedReset /reset /T /C | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail $case "the icacls /reset command naht gave failed on `"$namedReset`"" }
 $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start after the steps: $($run.Text)" }
@@ -182,8 +182,9 @@ foreach ($fs in @('FAT32', 'exFAT')) {
     & $Naht init $root | Out-Null
     $run = Invoke-Serve $root
     $tokenFile = Join-Path $root '.naht\token'
-    Write-Host "OBSERVE [$case] serving=$($run.Serving) token_exists=$(Test-Path $tokenFile)"
-    Write-Host "OBSERVE [$case] output: $($run.Text)"
+    if (-not $run.Serving) { Fail $case "serve did not start on $fs: $($run.Text)" }
+    elseif (-not (Test-Path $tokenFile)) { Fail $case "no token file on $fs: $($run.Text)" }
+    else { Pass $case "serve started and created the token on $fs, which keeps no permissions" }
     if (Test-Path $tokenFile) { Test-NoTokenLeak $case $run.Text ((Get-Content $tokenFile -Raw).Trim()) }
     @("select vdisk file=`"$vhd`"", 'detach vdisk') | Set-Content -Path $script -Encoding ascii
     & diskpart /s $script | Out-Null

@@ -6,7 +6,7 @@ use std::path::Path;
 use windows_permissions::constants::{AccessRights, SeObjectType, SecurityInformation};
 use windows_permissions::utilities::current_process_sid;
 use windows_permissions::wrappers::{
-    ConvertSidToStringSid, ConvertStringSecurityDescriptorToSecurityDescriptor, EqualSid,
+    ConvertSidToStringSid, ConvertStringSecurityDescriptorToSecurityDescriptor,
     GetNamedSecurityInfo, GetSecurityInfo, SetNamedSecurityInfo, SetSecurityInfo,
 };
 use windows_permissions::{LocalBox, SecurityDescriptor};
@@ -51,8 +51,8 @@ fn restrict(path: &Path, template: &str) -> io::Result<()> {
     let descriptor = owner_only_descriptor(template)?;
     match open_for_acl(path) {
         Ok(mut file) => apply_owner_only(&mut file, &descriptor),
-        Err(error) if is_denied_to_its_owner(path, &error) => {
-            apply_owner_only_by_name(path, &descriptor)
+        Err(error) if is_denied(&error) => {
+            apply_owner_only_by_name(path, &descriptor).map_err(|_| error)
         }
         Err(error) => Err(error),
     }
@@ -65,35 +65,21 @@ fn read_dacl(path: &Path) -> io::Result<LocalBox<SecurityDescriptor>> {
             SeObjectType::SE_FILE_OBJECT,
             SecurityInformation::Dacl,
         ),
-        Err(error) if is_denied_to_its_owner(path, &error) => GetNamedSecurityInfo(
+        Err(error) if is_denied(&error) => GetNamedSecurityInfo(
             path.as_os_str(),
             SeObjectType::SE_FILE_OBJECT,
             SecurityInformation::Dacl,
-        ),
+        )
+        .map_err(|_| error),
         Err(error) => Err(error),
     }
 }
 
-/// Whether `error` is a denied open of an object this account owns, which a deny rule causes:
-/// the owner's implicit rights cover read control and write DAC, but not the synchronize and
-/// read-attributes rights every handle open also asks for.
-fn is_denied_to_its_owner(path: &Path, error: &io::Error) -> bool {
-    if error.kind() != io::ErrorKind::PermissionDenied {
-        return false;
-    }
-    let Ok(descriptor) = GetNamedSecurityInfo(
-        path.as_os_str(),
-        SeObjectType::SE_FILE_OBJECT,
-        SecurityInformation::Owner,
-    ) else {
-        return false;
-    };
-    let Ok(this_account) = current_process_sid() else {
-        return false;
-    };
-    descriptor
-        .owner()
-        .is_some_and(|owner| EqualSid(owner, &this_account))
+/// Whether an open was denied. A deny rule can refuse the synchronize and read-attributes rights
+/// every handle open asks for while the read-control and write-DAC rights the owner holds remain,
+/// so a denied open is retried through the path, and only a refusal there stands.
+fn is_denied(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied
 }
 
 fn apply_owner_only_by_name(path: &Path, descriptor: &SecurityDescriptor) -> io::Result<()> {
