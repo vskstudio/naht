@@ -3,16 +3,12 @@ use super::files::{canonical, create_file, create_parent_dirs};
 use super::inspect::{resolve_assets, unsyncable_lines};
 use super::rojo::assemble_project_snapshot;
 use crate::config::Config;
-use crate::watcher::{WatchError, is_project_event};
+use crate::watcher::{WatchGuard, is_project_event, watch_project};
 use naht_core::build::{self, ModelFormat};
 use naht_core::limits;
-use notify_debouncer_full::notify::RecursiveMode;
-use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
+use notify_debouncer_full::DebouncedEvent;
 use std::io::{self};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-const WATCH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// A finished build: the artifact written and every warning it raised, in the order found.
 #[derive(Debug)]
@@ -41,7 +37,7 @@ pub fn build(root: &Path, output: &Path) -> Result<Built, CommandError> {
 /// # Errors
 ///
 /// Returns [`CommandError`] when the project cannot be built or the watcher cannot start.
-pub fn build_watch(root: &Path, output: &Path) -> Result<(Built, impl Drop + use<>), CommandError> {
+pub fn build_watch(root: &Path, output: &Path) -> Result<(Built, WatchGuard), CommandError> {
     let root = canonical(root)?;
     let built = build_once(&root, output)?;
     let watcher = spawn_build_watcher(&root, output)?;
@@ -95,39 +91,33 @@ fn is_place_output(output: &Path) -> bool {
 /// # Errors
 ///
 /// Returns [`CommandError`] when the watcher cannot be started.
-pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<impl Drop + use<>, CommandError> {
+pub fn spawn_build_watcher(root: &Path, output: &Path) -> Result<WatchGuard, CommandError> {
     let root = canonical(root)?;
     let watch_root = root.clone();
     let output = output.to_path_buf();
     let output_abs = output.canonicalize().ok();
-    let mut debouncer = new_debouncer(WATCH_DEBOUNCE, None, move |result: DebounceEventResult| {
-        let Ok(events) = result else {
-            return;
-        };
-        let changed = changed_project_paths(&root, &events);
-        if changed.is_empty() {
-            return;
-        }
-        let only_own_output = output_abs
-            .as_deref()
-            .is_some_and(|out| changed.iter().all(|path| path == out));
-        if only_own_output {
-            return;
-        }
-        match build_once(&root, &output) {
-            Ok(built) => {
-                for warning in &built.warnings {
-                    tracing::warn!(target: "naht::build", ?warning, "build warning");
-                }
+    let guard = watch_project(
+        &watch_root,
+        |_| {},
+        move |events| {
+            let changed = changed_project_paths(&root, events);
+            let only_own_output = output_abs
+                .as_deref()
+                .is_some_and(|out| changed.iter().all(|path| path == out));
+            if changed.is_empty() || only_own_output {
+                return;
             }
-            Err(error) => tracing::warn!(target: "naht::build", ?error, "rebuild failed"),
-        }
-    })
-    .map_err(WatchError::from)?;
-    debouncer
-        .watch(&watch_root, RecursiveMode::Recursive)
-        .map_err(WatchError::from)?;
-    Ok(debouncer)
+            match build_once(&root, &output) {
+                Ok(built) => {
+                    for warning in &built.warnings {
+                        tracing::warn!(target: "naht::build", ?warning, "build warning");
+                    }
+                }
+                Err(error) => tracing::warn!(target: "naht::build", ?error, "rebuild failed"),
+            }
+        },
+    )?;
+    Ok(guard)
 }
 
 fn changed_project_paths(root: &Path, events: &[DebouncedEvent]) -> Vec<PathBuf> {

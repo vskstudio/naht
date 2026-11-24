@@ -70,9 +70,9 @@ naht serve --port 40000
 ## « cannot watch the project directory »
 
 Sous Linux, `naht serve` et `naht build --watch` gardent chacun une surveillance inotify par dossier qu'ils couvrent, et
-le noyau refuse de nouvelles surveillances une fois `fs.inotify.max_user_watches` atteint. `naht serve` ignore
-`node_modules`, `target` et les dossiers cachés, alors que `naht build --watch` surveille tout le projet de façon
-récursive, donc c'est le plus susceptible des deux d'atteindre la limite. Le message nomme cette limite. Relève-la, puis
+le noyau refuse de nouvelles surveillances une fois `fs.inotify.max_user_watches` atteint. Les deux ignorent
+`node_modules`, `target` et les dossiers cachés. Le message nomme cette limite. Une surveillance refusée pendant que la
+commande tourne est journalisée au niveau error sur la cible `naht::watcher`. Relève-la, puis
 relance la commande (`naht serve` ou `naht build --watch`) :
 
 ```sh

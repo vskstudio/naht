@@ -1,7 +1,6 @@
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::io;
-use std::path::PathBuf;
 use std::time::Instant;
 
 use naht_core::state::StateStore;
