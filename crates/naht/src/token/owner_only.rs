@@ -51,9 +51,8 @@ fn restrict(path: &Path, template: &str) -> io::Result<()> {
     let descriptor = owner_only_descriptor(template)?;
     match open_for_acl(path) {
         Ok(mut file) => apply_owner_only(&mut file, &descriptor),
-        Err(error) if is_denied(&error) => {
-            apply_owner_only_by_name(path, &descriptor).map_err(|_| error)
-        }
+        Err(error) if is_denied(&error) => apply_owner_only_by_name(path, &descriptor)
+            .map_err(|by_name| keep_open_error(path, error, &by_name)),
         Err(error) => Err(error),
     }
 }
@@ -70,9 +69,19 @@ fn read_dacl(path: &Path) -> io::Result<LocalBox<SecurityDescriptor>> {
             SeObjectType::SE_FILE_OBJECT,
             SecurityInformation::Dacl,
         )
-        .map_err(|_| error),
+        .map_err(|by_name| keep_open_error(path, error, &by_name)),
         Err(error) => Err(error),
     }
+}
+
+fn keep_open_error(path: &Path, open_error: io::Error, by_name: &io::Error) -> io::Error {
+    tracing::debug!(
+        target: "naht::token",
+        path = %path.display(),
+        error = %by_name,
+        "the access rules could not be reached through the path either"
+    );
+    open_error
 }
 
 /// Whether an open was denied. A deny rule can refuse the synchronize and read-attributes rights

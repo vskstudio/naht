@@ -127,7 +127,7 @@ pub enum TokenError {
     },
     /// The volume holding the path keeps no access rules, so the path could not be made owner-only.
     #[error(
-        "`{}` is on a volume that keeps no access rules, as FAT32 and exFAT do, so `naht serve` cannot make it owner-only and any local account could read the token. Move the project to an NTFS or ReFS volume and run `naht serve` again. If a token was already made on this volume, delete `.naht\\token` after the move and enter the new token in the plugin.",
+        "`{}` is on a volume that keeps no access rules, as FAT32, exFAT and some network shares do, so `naht serve` cannot make it owner-only and any local account could read the token. Move the project to an NTFS or ReFS volume and run `naht serve` again. If a token was already made on this volume, delete `.naht\\token` after the move and enter the new token in the plugin.",
         shown_path(path)
     )]
     Unprotectable {
@@ -157,14 +157,16 @@ pub fn path(root: &Path) -> PathBuf {
     root.join(".naht").join("token")
 }
 
-/// The path as a command prompt takes it: without the `\\?\` prefix a canonical Windows path
-/// carries, which `takeown` and `icacls` refuse.
+/// The path as a command prompt takes it: a drive or share path loses the `\\?\` prefix a
+/// canonical Windows path carries, which `takeown` and `icacls` refuse. A volume path has no such
+/// spelling and is shown as it is.
 fn shown_path(path: &Path) -> String {
     let text = path.display().to_string();
     if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
         return format!(r"\\{share}");
     }
     text.strip_prefix(r"\\?\")
+        .filter(|rest| rest.get(1..2) == Some(":"))
         .map_or_else(|| text.clone(), str::to_owned)
 }
 
@@ -232,10 +234,7 @@ fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
         return Ok(());
     }
     owner_only::restrict_file(path).map_err(access_error)?;
-    require_owner_only(
-        path,
-        owner_only::is_file_owner_only(path).map_err(access_error)?,
-    )?;
+    confirm_owner_only(path, owner_only::is_file_owner_only, access_error)?;
     tracing::warn!(
         target: "naht::token",
         path = %path.display(),
@@ -272,11 +271,9 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
     match fs::create_dir(&dir) {
         Ok(()) => {
             owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
-            require_owner_only(
-                &dir,
-                owner_only::is_dir_owner_only(&dir)
-                    .map_err(|source| state_dir_access(&dir, source))?,
-            )
+            confirm_owner_only(&dir, owner_only::is_dir_owner_only, |source| {
+                state_dir_access(&dir, source)
+            })
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             refuse_reparse_point(&dir)?;
@@ -286,11 +283,9 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
                 return Ok(());
             }
             owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
-            require_owner_only(
-                &dir,
-                owner_only::is_dir_owner_only(&dir)
-                    .map_err(|source| state_dir_access(&dir, source))?,
-            )?;
+            confirm_owner_only(&dir, owner_only::is_dir_owner_only, |source| {
+                state_dir_access(&dir, source)
+            })?;
             tracing::warn!(
                 target: "naht::token",
                 path = %dir.display(),
@@ -303,8 +298,12 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
 }
 
 #[cfg(windows)]
-fn require_owner_only(path: &Path, owner_only_now: bool) -> Result<(), TokenError> {
-    if owner_only_now {
+fn confirm_owner_only(
+    path: &Path,
+    is_owner_only: fn(&Path) -> io::Result<bool>,
+    access_error: impl Fn(io::Error) -> TokenError,
+) -> Result<(), TokenError> {
+    if is_owner_only(path).map_err(access_error)? {
         return Ok(());
     }
     Err(TokenError::Unprotectable {
@@ -314,12 +313,13 @@ fn require_owner_only(path: &Path, owner_only_now: bool) -> Result<(), TokenErro
 
 #[cfg(windows)]
 fn refuse_an_unprotected_new_token(path: &Path) -> Result<(), TokenError> {
-    let owner_only_now = owner_only::is_file_owner_only(path)
-        .map_err(|source| windows_access_error(path, source))?;
-    if !owner_only_now {
+    let confirmed = confirm_owner_only(path, owner_only::is_file_owner_only, |source| {
+        windows_access_error(path, source)
+    });
+    if confirmed.is_err() {
         owner_only::remove_unfinished(path);
     }
-    require_owner_only(path, owner_only_now)
+    confirmed
 }
 
 #[cfg(windows)]

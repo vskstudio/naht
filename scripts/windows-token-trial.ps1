@@ -73,6 +73,16 @@ function Test-TokenKept([string]$Case, [string]$Root, [string]$Token) {
     if ($now -ne $Token) { Fail $Case 'the token changed' } else { Pass $Case 'the token is unchanged' }
 }
 
+function Test-Warnings([string]$Case, [string]$Text, [int]$Token, [int]$Dir) {
+    $tokenCount = [regex]::Matches($Text, 'the token file was open to other accounts').Count
+    $dirCount = [regex]::Matches($Text, 'the state directory was open to other accounts').Count
+    if ($tokenCount -ne $Token -or $dirCount -ne $Dir) {
+        Fail $Case "expected $Token token and $Dir state directory warning(s), saw $tokenCount and ${dirCount}: $Text"
+        return
+    }
+    Pass $Case "$Token token and $Dir state directory warning(s)"
+}
+
 function Test-NoTokenLeak([string]$Case, [string]$Text, [string]$Token) {
     if ($Text.Contains($Token)) { Fail $Case 'the token appears in the output' }
 }
@@ -89,7 +99,8 @@ $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start: $($run.Text)" }
 elseif ($run.Text -notmatch 'the token file was open to other accounts') { Fail $case "no repair warning: $($run.Text)" }
-else { Pass $case 'serve repaired the deny ACE with one warning' }
+else { Pass $case 'serve repaired the deny ACE' }
+Test-Warnings $case $run.Text 1 0
 Test-OwnerOnly $case $file
 Test-TokenKept $case $root $token
 
@@ -102,7 +113,8 @@ $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start: $($run.Text)" }
 elseif ($run.Text -notmatch 'the state directory was open to other accounts') { Fail $case "no repair warning: $($run.Text)" }
-else { Pass $case 'serve repaired the deny ACE on .naht with one warning' }
+else { Pass $case 'serve repaired the deny ACE on .naht' }
+Test-Warnings $case $run.Text 0 1
 Test-OwnerOnly $case $dir
 Test-TokenKept $case $root $token
 
@@ -129,6 +141,7 @@ $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start after takeown: $($run.Text)" }
 else { Pass $case 'serve started after takeown' }
+Test-Warnings $case $run.Text 1 0
 Test-OwnerOnly $case $file
 Test-TokenKept $case $root $token
 
@@ -157,6 +170,7 @@ $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start after the steps: $($run.Text)" }
 else { Pass $case 'serve started after takeown and icacls /reset' }
+Test-Warnings $case $run.Text 1 1
 Test-OwnerOnly $case $dir
 Test-OwnerOnly $case (Join-Path $dir 'token')
 Test-TokenKept $case $root $token

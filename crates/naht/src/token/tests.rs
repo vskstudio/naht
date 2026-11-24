@@ -221,3 +221,20 @@ fn an_unprotectable_volume_is_named_with_the_way_out() {
     assert!(message.contains("NTFS"), "{message}");
     assert!(message.contains(r"delete `.naht\token`"), "{message}");
 }
+
+#[test]
+fn a_volume_path_with_no_drive_spelling_is_shown_as_it_is() {
+    let message = TokenError::Denied {
+        path: PathBuf::from(
+            r"\\?\Volume{0a1b2c3d-0000-0000-0000-000000000000}\project\.naht\token",
+        ),
+    }
+    .to_string();
+
+    assert!(
+        message.contains(
+            r#"takeown /F "\\?\Volume{0a1b2c3d-0000-0000-0000-000000000000}\project\.naht\token""#
+        ),
+        "{message}"
+    );
+}
