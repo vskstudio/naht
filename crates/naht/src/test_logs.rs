@@ -21,7 +21,6 @@ impl io::Write for LogBuffer {
     }
 }
 
-#[cfg(windows)]
 pub(crate) fn captured_logs() -> (LogBuffer, tracing::Dispatch) {
     let logs = LogBuffer::default();
     let subscriber = tracing_subscriber::fmt()

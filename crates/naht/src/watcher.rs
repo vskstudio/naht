@@ -34,6 +34,8 @@ use tokio::runtime::Handle;
 #[cfg(target_os = "linux")]
 mod directories;
 #[cfg(test)]
+mod error_log_tests;
+#[cfg(test)]
 mod tests;
 
 /// Why the filesystem watcher could not start watching the project.
@@ -87,6 +89,41 @@ pub(crate) fn spawn_observed(
     observe: impl Fn(&[DebouncedEvent]) + Send + 'static,
 ) -> Result<WatchGuard, WatchError> {
     let runtime = Handle::current();
+    watch_project(root, observe, move |_events| {
+        let state = Arc::clone(&state);
+        let tasks = state.tasks().clone();
+        tasks.spawn_on(
+            async move {
+                match state.with_session(Session::rescan).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        tracing::warn!(target: "naht::watcher", ?error, "rescan failed");
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: "naht::watcher", %error, "rescan task failed");
+                    }
+                }
+                state.notify_patches();
+                state.notify_blobs();
+            },
+            &runtime,
+        );
+    })
+}
+
+/// Watch `root` and call `on_project_batch` with each debounced batch that holds a project event.
+///
+/// `observe` sees every batch first, ignored events included. A batch of watch errors is logged at
+/// error level, since the changes it stood for are not seen.
+///
+/// # Errors
+///
+/// Returns [`WatchError`] when the watcher cannot be started.
+pub(crate) fn watch_project(
+    root: &Path,
+    observe: impl Fn(&[DebouncedEvent]) + Send + 'static,
+    on_project_batch: impl Fn(&[DebouncedEvent]) + Send + 'static,
+) -> Result<WatchGuard, WatchError> {
     let watched_root = root.to_path_buf();
     let shared: Arc<Mutex<Option<Watches>>> = Arc::new(Mutex::new(None));
     let weak_shared: Weak<Mutex<Option<Watches>>> = Arc::downgrade(&shared);
@@ -105,32 +142,19 @@ pub(crate) fn spawn_observed(
             if let Some(slot) = weak_shared.upgrade() {
                 refresh(&slot, &watched_root, &events);
             }
-            let state = Arc::clone(&state);
-            let tasks = state.tasks().clone();
-            tasks.spawn_on(
-                async move {
-                    match state.with_session(Session::rescan).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => {
-                            tracing::warn!(target: "naht::watcher", ?error, "rescan failed");
-                        }
-                        Err(error) => {
-                            tracing::warn!(target: "naht::watcher", %error, "rescan task failed");
-                        }
-                    }
-                    state.notify_patches();
-                    state.notify_blobs();
-                },
-                &runtime,
-            );
+            on_project_batch(&events);
         }
-        Err(errors) => {
-            tracing::warn!(target: "naht::watcher", count = errors.len(), "watch error batch");
-        }
+        Err(errors) => log_error_batch(&errors),
     };
     *guard = Some(Watches::start(handler, root)?);
     drop(guard);
     Ok(WatchGuard { _watches: shared })
+}
+
+fn log_error_batch(errors: &[notify::Error]) {
+    for error in errors {
+        tracing::error!(target: "naht::watcher", ?error, "watch error, changes may be missed until the next batch");
+    }
 }
 
 fn refresh(shared: &Mutex<Option<Watches>>, root: &Path, events: &[DebouncedEvent]) {

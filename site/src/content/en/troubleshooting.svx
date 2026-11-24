@@ -69,9 +69,9 @@ naht serve --port 40000
 ## "cannot watch the project directory"
 
 On Linux, `naht serve` and `naht build --watch` each keep one inotify watch for each directory they cover, and the
-kernel refuses new watches once `fs.inotify.max_user_watches` is reached. `naht serve` skips `node_modules`, `target`
-and dot-directories, while `naht build --watch` watches the whole project recursively, so it is the likelier of the two
-to hit the limit. The error names that limit. Raise it, then run the command again (`naht serve` or
+kernel refuses new watches once `fs.inotify.max_user_watches` is reached. Both skip `node_modules`, `target` and
+dot-directories. The error names that limit. A watch refused while the command runs is logged at error level on the
+`naht::watcher` target instead. Raise it, then run the command again (`naht serve` or
 `naht build --watch`):
 
 ```sh

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 use naht::commands;
@@ -64,6 +65,28 @@ fn build_place_maps_top_level_dirs_to_services() {
     );
 }
 
+fn src_descendants(output: &Path) -> Option<usize> {
+    let bytes = fs::read(output).ok()?;
+    let dom = rbx_binary::from_reader(bytes.as_slice()).ok()?;
+    let src = dom
+        .root()
+        .children()
+        .iter()
+        .filter_map(|reference| dom.get_by_ref(*reference))
+        .find(|instance| instance.name == "src")?;
+    Some(dom.descendants_of(src.referent()).skip(1).count())
+}
+
+fn wait_for_src_descendants(output: &Path, expected: usize) -> bool {
+    for _ in 0..100 {
+        if src_descendants(output) == Some(expected) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
 #[test]
 fn build_watch_rebuilds_the_output_on_change() {
     let dir = tempfile::tempdir().unwrap();
@@ -77,26 +100,31 @@ fn build_watch_rebuilds_the_output_on_change() {
 
     fs::write(root.join("src").join("B.luau"), "return 2").unwrap();
 
-    let mut rebuilt = false;
-    for _ in 0..100 {
-        if let Ok(bytes) = fs::read(&output)
-            && let Ok(dom) = rbx_binary::from_reader(bytes.as_slice())
-        {
-            let src = dom
-                .root()
-                .children()
-                .iter()
-                .map(|reference| dom.get_by_ref(*reference).unwrap())
-                .find(|instance| instance.name == "src");
-            if src.map(|folder| folder.children().len()) == Some(2) {
-                rebuilt = true;
-                break;
-            }
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
     assert!(
-        rebuilt,
+        wait_for_src_descendants(&output, 2),
+        "the watcher should have rebuilt the output with the new file"
+    );
+}
+
+#[test]
+fn build_watch_sees_a_file_written_into_a_directory_created_after_it_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("proj");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("A.luau"), "return 1").unwrap();
+
+    let output = dir.path().join("out.rbxm");
+    commands::build(&root, &output).unwrap();
+    let _watcher = commands::spawn_build_watcher(&root, &output).unwrap();
+
+    fs::create_dir_all(root.join("src").join("Nested")).unwrap();
+    assert!(
+        wait_for_src_descendants(&output, 2),
+        "the watcher should have rebuilt the output with the new folder"
+    );
+    fs::write(root.join("src").join("Nested").join("B.luau"), "return 2").unwrap();
+    assert!(
+        wait_for_src_descendants(&output, 3),
         "the watcher should have rebuilt the output with the new file"
     );
 }
