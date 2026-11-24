@@ -8,7 +8,7 @@
 //! dot-directories are never registered with the kernel. Other platforms keep one recursive watch
 //! on the root, which is native and cheap there.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
@@ -114,7 +114,7 @@ pub(crate) fn spawn_observed(
 /// Watch `root` and call `on_project_batch` with each debounced batch that holds a project event.
 ///
 /// `observe` sees every batch first, ignored events included. A batch of watch errors is logged at
-/// error level, since the changes it stood for are not seen.
+/// error level, since changes may have been missed.
 ///
 /// # Errors
 ///
@@ -124,37 +124,62 @@ pub(crate) fn watch_project(
     observe: impl Fn(&[DebouncedEvent]) + Send + 'static,
     on_project_batch: impl Fn(&[DebouncedEvent]) + Send + 'static,
 ) -> Result<WatchGuard, WatchError> {
-    let watched_root = root.to_path_buf();
     let shared: Arc<Mutex<Option<Watches>>> = Arc::new(Mutex::new(None));
-    let weak_shared: Weak<Mutex<Option<Watches>>> = Arc::downgrade(&shared);
-    let mut guard = shared.lock().unwrap_or_else(PoisonError::into_inner);
-    let handler = move |result: DebounceEventResult| match result {
-        Ok(events) => {
-            observe(&events);
-            let project_events = events
-                .iter()
-                .filter(|event| is_project_event(&watched_root, event))
-                .count();
-            if project_events == 0 {
-                return;
-            }
-            tracing::debug!(target: "naht::watcher", batch = project_events, "filesystem batch");
-            if let Some(slot) = weak_shared.upgrade() {
-                refresh(&slot, &watched_root, &events);
-            }
-            on_project_batch(&events);
-        }
-        Err(errors) => log_error_batch(&errors),
+    let batches = BatchHandler {
+        root: root.to_path_buf(),
+        watches: Arc::downgrade(&shared),
+        observe,
+        on_project_batch,
     };
-    *guard = Some(Watches::start(handler, root)?);
+    let mut guard = shared.lock().unwrap_or_else(PoisonError::into_inner);
+    *guard = Some(Watches::start(move |result| batches.handle(result), root)?);
     drop(guard);
     Ok(WatchGuard { _watches: shared })
 }
 
-fn log_error_batch(errors: &[notify::Error]) {
-    for error in errors {
-        tracing::error!(target: "naht::watcher", ?error, "watch error, changes may be missed until the next batch");
+struct BatchHandler<Observe, OnProjectBatch> {
+    root: PathBuf,
+    watches: Weak<Mutex<Option<Watches>>>,
+    observe: Observe,
+    on_project_batch: OnProjectBatch,
+}
+
+impl<Observe, OnProjectBatch> BatchHandler<Observe, OnProjectBatch>
+where
+    Observe: Fn(&[DebouncedEvent]),
+    OnProjectBatch: Fn(&[DebouncedEvent]),
+{
+    fn handle(&self, result: DebounceEventResult) {
+        match result {
+            Ok(events) => self.handle_events(&events),
+            Err(errors) => log_error_batch(&errors),
+        }
     }
+
+    fn handle_events(&self, events: &[DebouncedEvent]) {
+        (self.observe)(events);
+        let project_events = events
+            .iter()
+            .filter(|event| is_project_event(&self.root, event))
+            .count();
+        if project_events == 0 {
+            return;
+        }
+        tracing::debug!(target: "naht::watcher", batch = project_events, "filesystem batch");
+        if let Some(slot) = self.watches.upgrade() {
+            refresh(&slot, &self.root, events);
+        }
+        (self.on_project_batch)(events);
+    }
+}
+
+fn log_error_batch(errors: &[notify::Error]) {
+    tracing::error!(
+        target: "naht::watcher",
+        count = errors.len(),
+        first = ?errors.first(),
+        "watch error from the file watcher, changes may have been missed"
+    );
 }
 
 fn refresh(shared: &Mutex<Option<Watches>>, root: &Path, events: &[DebouncedEvent]) {
