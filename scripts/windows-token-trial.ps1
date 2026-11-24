@@ -182,8 +182,8 @@ foreach ($fs in @('FAT32', 'exFAT')) {
     & $Naht init $root | Out-Null
     $run = Invoke-Serve $root
     $tokenFile = Join-Path $root '.naht\token'
-    if (-not $run.Serving) { Fail $case "serve did not start on $fs: $($run.Text)" }
-    elseif (-not (Test-Path $tokenFile)) { Fail $case "no token file on $fs: $($run.Text)" }
+    if (-not $run.Serving) { Fail $case "serve did not start on ${fs}: $($run.Text)" }
+    elseif (-not (Test-Path $tokenFile)) { Fail $case "no token file on ${fs}: $($run.Text)" }
     else { Pass $case "serve started and created the token on $fs, which keeps no permissions" }
     if (Test-Path $tokenFile) { Test-NoTokenLeak $case $run.Text ((Get-Content $tokenFile -Raw).Trim()) }
     @("select vdisk file=`"$vhd`"", 'detach vdisk') | Set-Content -Path $script -Encoding ascii
