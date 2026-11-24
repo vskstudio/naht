@@ -93,6 +93,11 @@ jobs:
           set -euo pipefail
           cargo test --locked -p naht --test e2e -- offline 2>&1 | tee "$RUNNER_TEMP/offline.log"
           grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/offline.log"
+      - name: Build naht
+        run: cargo build --locked -p naht
+      - name: Token trial with the real binary (deny rules, foreign owner, FAT volumes)
+        shell: pwsh
+        run: ./scripts/windows-token-trial.ps1 -Naht "$PWD\target\debug\naht.exe" -Work "$env:RUNNER_TEMP\token-trial"
 
   site:
     name: site build + test
