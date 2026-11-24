@@ -186,6 +186,11 @@ foreach ($fs in @('FAT32', 'exFAT')) {
     elseif (-not (Test-Path $tokenFile)) { Fail $case "no token file on ${fs}: $($run.Text)" }
     else { Pass $case "serve started and created the token on $fs, which keeps no permissions" }
     if (Test-Path $tokenFile) { Test-NoTokenLeak $case $run.Text ((Get-Content $tokenFile -Raw).Trim()) }
+    Write-Host "OBSERVE [$case] first serve: $($run.Text)"
+    Write-Host "OBSERVE [$case] token ACL: $(Get-Acl-Text $tokenFile)"
+    Write-Host "OBSERVE [$case] state dir ACL: $(Get-Acl-Text (Join-Path $root '.naht'))"
+    $again = Invoke-Serve $root
+    Write-Host "OBSERVE [$case] second serve: serving=$($again.Serving) $($again.Text)"
     @("select vdisk file=`"$vhd`"", 'detach vdisk') | Set-Content -Path $script -Encoding ascii
     & diskpart /s $script | Out-Null
 }

@@ -92,8 +92,8 @@ pub enum TokenError {
     /// The token file cannot be opened by this account, which in practice means another account owns it.
     #[error(
         "the token file `{}` cannot be opened by this account, so `naht serve` cannot read or repair the token. This happens when another account owns the file, for example one created from an elevated shell. Take ownership first from a command prompt with `takeown /F \"{}\"`, then run `naht serve` again. To start over instead, delete the file, run `naht serve` to make a new token, and enter the new token in the plugin.",
-        path.display(),
-        path.display()
+        shown_path(path),
+        shown_path(path)
     )]
     Denied {
         /// The token file.
@@ -111,9 +111,9 @@ pub enum TokenError {
     /// The state directory cannot be opened by this account, which in practice means another account owns it.
     #[error(
         "the state directory `{}` cannot be opened by this account, so `naht serve` cannot use it. This happens when another account owns the directory, for example one created from an elevated shell. Take ownership first from a command prompt: `takeown /F \"{}\" /R /D Y`, then `icacls \"{}\" /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
-        path.display(),
-        path.display(),
-        path.display()
+        shown_path(path),
+        shown_path(path),
+        shown_path(path)
     )]
     StateDirDenied {
         /// The state directory.
@@ -146,6 +146,17 @@ impl TokenError {
 /// The token file path of the project at `root`.
 pub fn path(root: &Path) -> PathBuf {
     root.join(".naht").join("token")
+}
+
+/// The path as a command prompt takes it: without the `\\?\` prefix a canonical Windows path
+/// carries, which `takeown` and `icacls` refuse.
+fn shown_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{share}");
+    }
+    text.strip_prefix(r"\\?\")
+        .map_or_else(|| text.clone(), str::to_owned)
 }
 
 /// Read the project's token, creating the file on the first run.
