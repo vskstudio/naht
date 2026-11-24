@@ -115,8 +115,8 @@ pub(crate) fn spawn_observed(
 
 /// Watch `root` and call `on_project_batch` with each debounced batch that holds a project event.
 ///
-/// `observe` sees every successful batch first, ignored events included. A batch of watch errors is logged at
-/// error level, since changes may have been missed.
+/// `observe` sees every successful batch first, ignored events included. A batch of watch errors
+/// is logged at error level, since changes may have been missed.
 ///
 /// # Errors
 ///
