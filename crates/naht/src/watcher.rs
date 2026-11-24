@@ -35,6 +35,8 @@ use tokio::runtime::Handle;
 mod directories;
 #[cfg(test)]
 mod error_log_tests;
+#[cfg(all(test, target_os = "linux"))]
+mod refresh_order_tests;
 #[cfg(test)]
 mod tests;
 
@@ -113,7 +115,7 @@ pub(crate) fn spawn_observed(
 
 /// Watch `root` and call `on_project_batch` with each debounced batch that holds a project event.
 ///
-/// `observe` sees every batch first, ignored events included. A batch of watch errors is logged at
+/// `observe` sees every successful batch first, ignored events included. A batch of watch errors is logged at
 /// error level, since changes may have been missed.
 ///
 /// # Errors
@@ -174,6 +176,9 @@ where
 }
 
 fn log_error_batch(errors: &[notify::Error]) {
+    if errors.is_empty() {
+        return;
+    }
     tracing::error!(
         target: "naht::watcher",
         count = errors.len(),
