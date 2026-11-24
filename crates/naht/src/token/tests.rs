@@ -208,3 +208,16 @@ fn the_ownership_commands_name_the_path_without_the_verbatim_prefix() {
     );
     assert!(!file.contains(r"\\?\") && !dir.contains(r"\\?\"));
 }
+
+#[test]
+fn an_unprotectable_volume_is_named_with_the_way_out() {
+    let message = TokenError::Unprotectable {
+        path: PathBuf::from(r"\\?\R:\project\.naht"),
+    }
+    .to_string();
+
+    assert!(message.contains(r"`R:\project\.naht`"), "{message}");
+    assert!(message.contains("keeps no access rules"), "{message}");
+    assert!(message.contains("NTFS"), "{message}");
+    assert!(message.contains(r"delete `.naht\token`"), "{message}");
+}

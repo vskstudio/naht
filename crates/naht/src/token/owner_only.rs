@@ -127,7 +127,7 @@ pub(super) fn create(path: &Path) -> io::Result<File> {
     }
 }
 
-fn remove_unfinished(path: &Path) {
+pub(super) fn remove_unfinished(path: &Path) {
     if let Err(error) = fs::remove_file(path) {
         tracing::warn!(
             target: "naht::token",

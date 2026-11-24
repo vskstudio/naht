@@ -180,17 +180,14 @@ foreach ($fs in @('FAT32', 'exFAT')) {
     if ($LASTEXITCODE -ne 0) { Fail $case 'diskpart could not make the volume'; continue }
     $root = "${letter}:\project"
     & $Naht init $root | Out-Null
-    $run = Invoke-Serve $root
     $tokenFile = Join-Path $root '.naht\token'
-    if (-not $run.Serving) { Fail $case "serve did not start on ${fs}: $($run.Text)" }
-    elseif (-not (Test-Path $tokenFile)) { Fail $case "no token file on ${fs}: $($run.Text)" }
-    else { Pass $case "serve started and created the token on $fs, which keeps no permissions" }
-    if (Test-Path $tokenFile) { Test-NoTokenLeak $case $run.Text ((Get-Content $tokenFile -Raw).Trim()) }
-    Write-Host "OBSERVE [$case] first serve: $($run.Text)"
-    Write-Host "OBSERVE [$case] token ACL: $(Get-Acl-Text $tokenFile)"
-    Write-Host "OBSERVE [$case] state dir ACL: $(Get-Acl-Text (Join-Path $root '.naht'))"
-    $again = Invoke-Serve $root
-    Write-Host "OBSERVE [$case] second serve: serving=$($again.Serving) $($again.Text)"
+    foreach ($attempt in @('first', 'second')) {
+        $run = Invoke-Serve $root
+        if ($run.Serving) { Fail $case "$attempt serve started on $fs, which keeps no permissions" }
+        elseif ($run.Text -notmatch 'keeps no access rules') { Fail $case "$attempt serve did not name the volume: $($run.Text)" }
+        elseif (Test-Path $tokenFile) { Fail $case "$attempt serve left a token on ${fs}: $(Get-Acl-Text $tokenFile)" }
+        else { Pass $case "$attempt serve refused $fs and left no token" }
+    }
     @("select vdisk file=`"$vhd`"", 'detach vdisk') | Set-Content -Path $script -Encoding ascii
     & diskpart /s $script | Out-Null
 }

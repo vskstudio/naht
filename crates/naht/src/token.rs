@@ -125,6 +125,15 @@ pub enum TokenError {
         /// The state directory.
         path: PathBuf,
     },
+    /// The volume holding the path keeps no access rules, so the path could not be made owner-only.
+    #[error(
+        "`{}` is on a volume that keeps no access rules, as FAT32 and exFAT do, so `naht serve` cannot make it owner-only and any local account could read the token. Move the project to an NTFS or ReFS volume and run `naht serve` again. If a token was already made on this volume, delete `.naht\\token` after the move and enter the new token in the plugin.",
+        shown_path(path)
+    )]
+    Unprotectable {
+        /// The token file or the state directory.
+        path: PathBuf,
+    },
     /// The token file does not hold a well-formed token, typically after a crash while it was written.
     #[error("the token file `{}` holds no token: delete it and run `naht serve` to make a new one", path.display())]
     Malformed {
@@ -223,6 +232,10 @@ fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
         return Ok(());
     }
     owner_only::restrict_file(path).map_err(access_error)?;
+    require_owner_only(
+        path,
+        owner_only::is_file_owner_only(path).map_err(access_error)?,
+    )?;
     tracing::warn!(
         target: "naht::token",
         path = %path.display(),
@@ -257,7 +270,14 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
     let dir = root.join(".naht");
     fs::create_dir_all(root).map_err(|source| state_dir_io(&dir, source))?;
     match fs::create_dir(&dir) {
-        Ok(()) => owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source)),
+        Ok(()) => {
+            owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
+            require_owner_only(
+                &dir,
+                owner_only::is_dir_owner_only(&dir)
+                    .map_err(|source| state_dir_access(&dir, source))?,
+            )
+        }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             refuse_reparse_point(&dir)?;
             let owner_only_now = owner_only::is_dir_owner_only(&dir)
@@ -266,6 +286,11 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
                 return Ok(());
             }
             owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
+            require_owner_only(
+                &dir,
+                owner_only::is_dir_owner_only(&dir)
+                    .map_err(|source| state_dir_access(&dir, source))?,
+            )?;
             tracing::warn!(
                 target: "naht::token",
                 path = %dir.display(),
@@ -275,6 +300,26 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
         }
         Err(error) => Err(state_dir_io(&dir, error)),
     }
+}
+
+#[cfg(windows)]
+fn require_owner_only(path: &Path, owner_only_now: bool) -> Result<(), TokenError> {
+    if owner_only_now {
+        return Ok(());
+    }
+    Err(TokenError::Unprotectable {
+        path: path.to_path_buf(),
+    })
+}
+
+#[cfg(windows)]
+fn refuse_an_unprotected_new_token(path: &Path) -> Result<(), TokenError> {
+    let owner_only_now = owner_only::is_file_owner_only(path)
+        .map_err(|source| windows_access_error(path, source))?;
+    if !owner_only_now {
+        owner_only::remove_unfinished(path);
+    }
+    require_owner_only(path, owner_only_now)
 }
 
 #[cfg(windows)]
@@ -324,6 +369,8 @@ fn create(root: &Path) -> Result<Token, TokenError> {
         fs::create_dir_all(parent).map_err(io_error)?;
     }
     write_new(&path, token.as_str()).map_err(io_error)?;
+    #[cfg(windows)]
+    refuse_an_unprotected_new_token(&path)?;
     Ok(token)
 }
 
