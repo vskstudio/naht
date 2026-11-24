@@ -74,6 +74,22 @@ jobs:
           set -euo pipefail
           cargo test --locked -p naht --lib a_fresh_project_lock_creates_an_owner_only_state_directory 2>&1 | tee "$RUNNER_TEMP/fresh-project.log"
           grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/fresh-project.log"
+      - name: Project keys use forward slashes
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo test --locked -p naht-core --lib scan 2>&1 | tee "$RUNNER_TEMP/scan.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/scan.log"
+      - name: Offline edit reaches the plugin (e2e)
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          set -euo pipefail
+          cargo test --locked -p naht --test e2e -- offline 2>&1 | tee "$RUNNER_TEMP/offline.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/offline.log"
 
   site:
     name: site build + test
