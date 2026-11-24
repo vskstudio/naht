@@ -85,6 +85,8 @@ $root = Join-Path $Work $case
 $token = New-Project $root
 $file = Join-Path $root '.naht\token'
 & icacls $file /deny "${Me}:(R)" | Out-Null
+Write-Host "OBSERVE [$case] before serve: $(Get-Acl-Text $file)"
+Write-Host "OBSERVE [$case] owner: $(cmd /c dir /q $file | Select-String 'token')"
 $run = Invoke-Serve $root
 Test-NoTokenLeak $case $run.Text $token
 if (-not $run.Serving) { Fail $case "serve did not start: $($run.Text)" }
@@ -107,8 +109,7 @@ Test-OwnerOnly $case $dir
 Test-TokenKept $case $root $token
 
 $password = 'N' + [guid]::NewGuid().ToString('N') + '!a1'
-& net user $Other $password /add | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "cannot create the local account $Other" }
+New-LocalUser -Name $Other -Password (ConvertTo-SecureString $password -AsPlainText -Force) | Out-Null
 
 $case = 'foreign-owner-file'
 $root = Join-Path $Work $case
@@ -160,7 +161,7 @@ Test-OwnerOnly $case $dir
 Test-OwnerOnly $case (Join-Path $dir 'token')
 Test-TokenKept $case $root $token
 
-& net user $Other /delete | Out-Null
+Remove-LocalUser -Name $Other
 
 foreach ($fs in @('FAT32', 'exFAT')) {
     $case = "volume-$fs"
