@@ -86,7 +86,8 @@ fn keep_open_error(path: &Path, open_error: io::Error, by_name: &io::Error) -> i
 
 /// Whether an open was denied. A deny rule can refuse the synchronize and read-attributes rights
 /// every handle open asks for while the read-control and write-DAC rights the owner holds remain,
-/// so a denied open is retried through the path, and only a refusal there stands.
+/// so a denied open is retried through the path, and the open error is returned only when that
+/// retry fails too.
 fn is_denied(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::PermissionDenied
 }
