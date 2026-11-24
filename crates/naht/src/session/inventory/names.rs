@@ -3,30 +3,29 @@ use std::collections::{BTreeMap, BTreeSet};
 use naht_core::inventory::InventoryEntry;
 use naht_core::reconciler::TextInstance;
 
-use super::is_under;
-
 type Members = BTreeSet<(String, String)>;
+
+const MIN_SHARED_SCRIPTS: usize = 2;
 
 pub(super) struct NameEvidence<'a> {
     pub(super) unlisted: &'a [&'a TextInstance],
     pub(super) paired_mirror: &'a BTreeSet<&'a str>,
     pub(super) unmatched: &'a [&'a InventoryEntry],
     pub(super) listed: &'a [InventoryEntry],
+    pub(super) mirror_paths: &'a [&'a str],
 }
 
 impl NameEvidence<'_> {
     /// Old folders paired with a new folder holding exactly the same script names and classes,
-    /// when no other folder on either side holds that same set.
-    pub(super) fn folder_renames(
-        &self,
-        mirror_has_folder: impl Fn(&str) -> bool,
-    ) -> BTreeMap<String, String> {
+    /// at least two of them, when no other folder on either side holds that same set.
+    pub(super) fn folder_renames(&self) -> BTreeMap<String, String> {
         let old = self.old_folders();
-        let new = self.new_folders(mirror_has_folder);
+        let new = self.new_folders();
         let olds_by_members = by_members(&old);
         let news_by_members = by_members(&new);
         olds_by_members
             .into_iter()
+            .filter(|(members, _)| members.len() >= MIN_SHARED_SCRIPTS)
             .filter_map(|(members, olds)| {
                 let news = news_by_members.get(members)?;
                 match (olds.as_slice(), news.as_slice()) {
@@ -38,79 +37,69 @@ impl NameEvidence<'_> {
     }
 
     fn old_folders(&self) -> BTreeMap<&str, Members> {
-        let candidates: BTreeSet<&str> = self
-            .unlisted
+        let blocked: BTreeSet<&str> = self
+            .listed
             .iter()
-            .flat_map(|known| ancestors(&known.path))
-            .filter(|folder| {
-                !self
-                    .listed
-                    .iter()
-                    .any(|entry| is_under(&entry.path, folder))
-                    && !self.paired_mirror.iter().any(|path| is_under(path, folder))
-            })
+            .map(|entry| entry.path.as_str())
+            .chain(self.paired_mirror.iter().copied())
+            .flat_map(ancestors)
             .collect();
-        candidates
-            .into_iter()
-            .map(|folder| {
-                let members = members_under(
-                    folder,
-                    self.unlisted
-                        .iter()
-                        .map(|known| (known.path.as_str(), known.class.as_str())),
-                );
-                (folder, members)
-            })
-            .collect()
+        members_by_folder(
+            self.unlisted
+                .iter()
+                .map(|known| (known.path.as_str(), known.class.as_str())),
+            &blocked,
+        )
     }
 
-    fn new_folders(&self, mirror_has_folder: impl Fn(&str) -> bool) -> BTreeMap<&str, Members> {
+    fn new_folders(&self) -> BTreeMap<&str, Members> {
         let unmatched: BTreeSet<&str> = self
             .unmatched
             .iter()
             .map(|entry| entry.path.as_str())
             .collect();
-        let candidates: BTreeSet<&str> = self
-            .unmatched
+        let blocked: BTreeSet<&str> = self
+            .listed
             .iter()
-            .flat_map(|entry| ancestors(&entry.path))
-            .filter(|folder| {
-                !mirror_has_folder(folder)
-                    && self
-                        .listed
-                        .iter()
-                        .filter(|entry| is_under(&entry.path, folder))
-                        .all(|entry| unmatched.contains(entry.path.as_str()))
-            })
+            .map(|entry| entry.path.as_str())
+            .filter(|path| !unmatched.contains(path))
+            .chain(self.mirror_paths.iter().copied())
+            .flat_map(ancestors)
             .collect();
-        candidates
-            .into_iter()
-            .map(|folder| {
-                let members = members_under(
-                    folder,
-                    self.unmatched
-                        .iter()
-                        .map(|entry| (entry.path.as_str(), entry.class.as_str())),
-                );
-                (folder, members)
-            })
-            .collect()
+        members_by_folder(
+            self.unmatched
+                .iter()
+                .map(|entry| (entry.path.as_str(), entry.class.as_str())),
+            &blocked,
+        )
     }
 }
 
-fn ancestors(path: &str) -> impl Iterator<Item = &str> {
+pub(super) fn ancestors(path: &str) -> impl Iterator<Item = &str> {
     path.match_indices('/')
         .filter_map(move |(at, _)| path.get(..at))
         .filter(|folder| !folder.is_empty())
 }
 
-fn members_under<'a>(folder: &str, scripts: impl Iterator<Item = (&'a str, &'a str)>) -> Members {
-    scripts
-        .filter_map(|(path, class)| {
-            let rest = path.strip_prefix(folder)?.strip_prefix('/')?;
-            Some((rest.to_owned(), class.to_owned()))
-        })
-        .collect()
+fn members_by_folder<'a>(
+    scripts: impl Iterator<Item = (&'a str, &'a str)>,
+    blocked: &BTreeSet<&str>,
+) -> BTreeMap<&'a str, Members> {
+    let mut found: BTreeMap<&str, Members> = BTreeMap::new();
+    for (path, class) in scripts {
+        for folder in ancestors(path).filter(|folder| !blocked.contains(folder)) {
+            if let Some(rest) = path
+                .strip_prefix(folder)
+                .and_then(|rest| rest.strip_prefix('/'))
+            {
+                found
+                    .entry(folder)
+                    .or_default()
+                    .insert((rest.to_owned(), class.to_owned()));
+            }
+        }
+    }
+    found
 }
 
 fn by_members<'a, 'f>(

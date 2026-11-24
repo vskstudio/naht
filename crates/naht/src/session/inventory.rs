@@ -30,10 +30,10 @@ impl<V: Vfs> Session<V> {
     /// is still under it, no unlisted script under it shares an ambiguous key, and every unpaired
     /// listed script lies under that new folder. A folder with no pair at all, because every script
     /// changed, is followed when its scripts and a new folder's unmatched creates carry the same
-    /// relative names and classes and no other folder on either side carries that same set. The
-    /// scripts it leaves behind move with it: a script
-    /// Studio deleted moves with its disk bytes, and a script whose Studio content changed moves when
-    /// the plugin sends that content, which the returned paths name. Everything else is left alone.
+    /// relative names and classes, at least two of them, and no other folder on either side carries
+    /// that same set. The scripts it leaves behind move with it: a script Studio deleted moves with
+    /// its disk bytes, and a script whose Studio content changed moves when the plugin sends that
+    /// content, which the returned paths name. Everything else is left alone.
     ///
     /// # Errors
     ///
@@ -164,26 +164,25 @@ impl<V: Vfs> Session<V> {
         listed: &[InventoryEntry],
     ) -> BTreeMap<String, String> {
         let paired_mirror: BTreeSet<&str> = pair_paths.iter().map(|(old, _)| *old).collect();
+        let mirror_paths: Vec<&str> = self.studio.keys().map(String::as_str).collect();
         let renamed_by_names = NameEvidence {
             unlisted,
             paired_mirror: &paired_mirror,
             unmatched,
             listed,
+            mirror_paths: &mirror_paths,
         }
-        .folder_renames(|folder| self.mirror_has_folder(folder));
+        .folder_renames();
+        let named_targets: BTreeSet<&str> = renamed_by_names.values().map(String::as_str).collect();
         let independent: Vec<&str> = unmatched
             .iter()
             .map(|entry| entry.path.as_str())
-            .filter(|path| !renamed_by_names.values().any(|to| is_under(path, to)))
+            .filter(|path| !names::ancestors(path).any(|folder| named_targets.contains(folder)))
             .collect();
         let mut renames =
             inferred_folder_renames(pair_paths, unlisted, ambiguous, &independent, listed);
         renames.extend(renamed_by_names);
         renames
-    }
-
-    fn mirror_has_folder(&self, folder: &str) -> bool {
-        self.studio.keys().any(|path| is_under(path, folder))
     }
 
     fn mirror_path_for(&self, listed: &str) -> String {
@@ -243,11 +242,6 @@ fn unambiguous_pairs<'a>(
         }
     }
     (pairs, ambiguous)
-}
-
-fn is_under(path: &str, folder: &str) -> bool {
-    path.strip_prefix(folder)
-        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 fn parent_folder(path: &str) -> Option<&str> {

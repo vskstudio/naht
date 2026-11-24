@@ -68,7 +68,13 @@ fn the_upserts_of_a_folder_followed_by_names_move_every_script_with_studio_conte
 fn a_disk_edit_made_while_stopped_merges_with_studio_content_under_the_folder_followed_by_names() {
     let root = tempfile::tempdir().unwrap();
     let base = "local a = 1\nlocal b = 2\nlocal c = 3\nreturn a\n";
-    let mut session = session_with_synced_scripts(root.path(), &[("Tree/OldDir/a.luau", base)]);
+    let mut session = session_with_synced_scripts(
+        root.path(),
+        &[
+            ("Tree/OldDir/a.luau", base),
+            ("Tree/OldDir/b.luau", "return 2"),
+        ],
+    );
     fs::write(
         root.path().join("Tree/OldDir/a.luau"),
         "local a = 100\nlocal b = 2\nlocal c = 3\nreturn a\n",
@@ -76,13 +82,12 @@ fn a_disk_edit_made_while_stopped_merges_with_studio_content_under_the_folder_fo
     .unwrap();
     let studio = "local a = 1\nlocal b = 2\nlocal c = 300\nreturn a\n";
     let wanted = session
-        .apply_inventory(&[inventory_entry(
-            "Tree/NewDir/a.luau",
-            "ModuleScript",
-            studio,
-        )])
+        .apply_inventory(&[
+            inventory_entry("Tree/NewDir/a.luau", "ModuleScript", studio),
+            inventory_entry("Tree/NewDir/b.luau", "ModuleScript", "return 20"),
+        ])
         .unwrap();
-    assert_eq!(wanted, ["Tree/NewDir/a.luau"]);
+    assert_eq!(wanted, ["Tree/NewDir/a.luau", "Tree/NewDir/b.luau"]);
 
     session
         .apply_changes(vec![upsert("Tree/NewDir/a.luau", studio)])
@@ -116,11 +121,13 @@ fn a_new_folder_whose_names_differ_from_the_old_folder_infers_nothing() {
 #[test]
 fn a_new_folder_whose_classes_differ_from_the_old_folder_infers_nothing() {
     let root = tempfile::tempdir().unwrap();
-    let mut session =
-        session_with_synced_scripts(root.path(), &[("Tree/OldDir/a.luau", "return 1")]);
+    let mut session = session_with_synced_scripts(root.path(), &all_changed_folder());
 
     let wanted = session
-        .apply_inventory(&[inventory_entry("Tree/NewDir/a.luau", "Script", "return 10")])
+        .apply_inventory(&[
+            inventory_entry("Tree/NewDir/a.luau", "Script", "return 10"),
+            inventory_entry("Tree/NewDir/Sub/b.luau", "ModuleScript", "return 20"),
+        ])
         .unwrap();
 
     assert_eq!(wanted, Vec::<String>::new());
@@ -147,16 +154,17 @@ fn two_old_folders_with_the_same_names_infer_nothing() {
         root.path(),
         &[
             ("Tree/OldA/a.luau", "return 1"),
-            ("Tree/OldB/a.luau", "return 2"),
+            ("Tree/OldA/b.luau", "return 2"),
+            ("Tree/OldB/a.luau", "return 3"),
+            ("Tree/OldB/b.luau", "return 4"),
         ],
     );
 
     let wanted = session
-        .apply_inventory(&[inventory_entry(
-            "Tree/NewDir/a.luau",
-            "ModuleScript",
-            "return 10",
-        )])
+        .apply_inventory(&[
+            inventory_entry("Tree/NewDir/a.luau", "ModuleScript", "return 10"),
+            inventory_entry("Tree/NewDir/b.luau", "ModuleScript", "return 20"),
+        ])
         .unwrap();
 
     assert_eq!(wanted, Vec::<String>::new());
@@ -171,6 +179,7 @@ fn an_old_folder_with_a_script_still_listed_is_not_followed_by_names() {
         root.path(),
         &[
             ("Tree/OldDir/a.luau", "return 1"),
+            ("Tree/OldDir/b.luau", "return 2"),
             ("Tree/OldDir/Stay.luau", "return 5"),
         ],
     );
@@ -179,6 +188,7 @@ fn an_old_folder_with_a_script_still_listed_is_not_followed_by_names() {
         .apply_inventory(&[
             inventory_entry("Tree/OldDir/Stay.luau", "ModuleScript", "return 5"),
             inventory_entry("Tree/NewDir/a.luau", "ModuleScript", "return 10"),
+            inventory_entry("Tree/NewDir/b.luau", "ModuleScript", "return 20"),
         ])
         .unwrap();
 
@@ -193,6 +203,7 @@ fn a_folder_followed_by_names_does_not_block_a_folder_followed_by_content() {
         root.path(),
         &[
             ("Tree/Changed/a.luau", "return 1"),
+            ("Tree/Changed/b.luau", "return 2"),
             ("Tree/Same/k.luau", "return 7"),
             ("Tree/Same/g.luau", "return 9"),
         ],
@@ -201,13 +212,69 @@ fn a_folder_followed_by_names_does_not_block_a_folder_followed_by_content() {
     let wanted = session
         .apply_inventory(&[
             inventory_entry("Tree/ChangedNew/a.luau", "ModuleScript", "return 10"),
+            inventory_entry("Tree/ChangedNew/b.luau", "ModuleScript", "return 20"),
             inventory_entry("Tree/SameNew/k.luau", "ModuleScript", "return 7"),
         ])
         .unwrap();
 
-    assert_eq!(wanted, ["Tree/ChangedNew/a.luau"]);
+    assert_eq!(wanted, ["Tree/ChangedNew/a.luau", "Tree/ChangedNew/b.luau"]);
     assert_eq!(
         fs::read_to_string(root.path().join("Tree/SameNew/g.luau")).unwrap(),
         "return 9"
     );
+}
+
+#[test]
+fn a_deleted_single_script_folder_is_not_followed_by_names_into_an_unrelated_new_one() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session =
+        session_with_synced_scripts(root.path(), &[("Tree/Combat/a.luau", "return 1")]);
+
+    let wanted = session
+        .apply_inventory(&[inventory_entry(
+            "Tree/Weapons/a.luau",
+            "ModuleScript",
+            "return 10",
+        )])
+        .unwrap();
+
+    assert_eq!(wanted, Vec::<String>::new());
+    assert_eq!(
+        fs::read_to_string(root.path().join("Tree/Combat/a.luau")).unwrap(),
+        "return 1"
+    );
+}
+
+#[test]
+fn a_new_folder_the_mirror_already_holds_is_not_followed_by_names() {
+    let root = tempfile::tempdir().unwrap();
+    let mut scripts = all_changed_folder().to_vec();
+    scripts.push(("Tree/NewDir/c.luau", "return 3"));
+    let mut session = session_with_synced_scripts(root.path(), &scripts);
+
+    let wanted = session
+        .apply_inventory(&all_changed_listing("NewDir"))
+        .unwrap();
+
+    assert_eq!(wanted, Vec::<String>::new());
+    assert!(root.path().join("Tree/OldDir/a.luau").exists());
+}
+
+#[test]
+fn a_new_folder_holding_a_script_paired_by_content_is_not_followed_by_names() {
+    let root = tempfile::tempdir().unwrap();
+    let mut scripts = all_changed_folder().to_vec();
+    scripts.push(("Tree/Other/c.luau", "return 3"));
+    let mut session = session_with_synced_scripts(root.path(), &scripts);
+    let mut listing = all_changed_listing("NewDir");
+    listing.push(inventory_entry(
+        "Tree/NewDir/c.luau",
+        "ModuleScript",
+        "return 3",
+    ));
+
+    let wanted = session.apply_inventory(&listing).unwrap();
+
+    assert_eq!(wanted, Vec::<String>::new());
+    assert!(root.path().join("Tree/OldDir/a.luau").exists());
 }

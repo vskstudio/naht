@@ -3,7 +3,6 @@ use crate::session::{Session, SessionError};
 use naht_core::reconciler::{self, TextInstance};
 use naht_core::vfs::Vfs;
 use std::collections::BTreeSet;
-use std::mem;
 use std::path::Path;
 
 impl<V: Vfs> Session<V> {
@@ -11,10 +10,9 @@ impl<V: Vfs> Session<V> {
         &mut self,
         upserted: &BTreeSet<String>,
     ) -> Result<Vec<String>, SessionError> {
-        let mut relocations = mem::take(&mut self.pending_relocations);
         let mut vacated = Vec::new();
         for target in upserted {
-            let Some(old) = relocations.remove(target) else {
+            let Some(old) = self.pending_relocations.remove(target) else {
                 continue;
             };
             if !self.studio.contains_key(&old)
