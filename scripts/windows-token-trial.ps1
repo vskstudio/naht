@@ -56,7 +56,8 @@ function Get-Acl-Text([string]$Path) {
 }
 
 function Test-OwnerOnly([string]$Case, [string]$Path) {
-    $acl = Get-Acl $Path
+    try { $acl = Get-Acl $Path -ErrorAction Stop }
+    catch { Fail $Case "the ACL cannot be read: $(Get-Acl-Text $Path)"; return }
     $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
     $mine = $rules | Where-Object { $_.IdentityReference -eq $MySid -and $_.AccessControlType -eq 'Allow' }
     if ($rules.Count -ne 1 -or -not $mine -or -not $acl.AreAccessRulesProtected) {
@@ -67,7 +68,8 @@ function Test-OwnerOnly([string]$Case, [string]$Path) {
 }
 
 function Test-TokenKept([string]$Case, [string]$Root, [string]$Token) {
-    $now = (Get-Content (Join-Path $Root '.naht\token') -Raw).Trim()
+    try { $now = (Get-Content (Join-Path $Root '.naht\token') -Raw -ErrorAction Stop).Trim() }
+    catch { Fail $Case "the token cannot be read: $_"; return }
     if ($now -ne $Token) { Fail $Case 'the token changed' } else { Pass $Case 'the token is unchanged' }
 }
 
