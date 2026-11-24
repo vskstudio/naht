@@ -1,7 +1,9 @@
+use std::path::PathBuf;
+
 use rusqlite::Connection;
 
-use super::StateStore;
-use super::schema::schema_is_current;
+use super::schema::{forward_slash_keys, schema_is_current};
+use super::{InstanceRecord, StateStore};
 
 const MAIN_SCHEMA: &str = "CREATE TABLE meta (
          key   TEXT PRIMARY KEY,
@@ -78,4 +80,74 @@ fn a_migration_interrupted_before_the_version_write_rolls_back_and_stays_not_cur
         )
         .unwrap();
     assert_eq!(instances, 0, "the migration must roll back as a whole");
+}
+
+fn record(path: &str, base: &str, conflicted: bool) -> InstanceRecord {
+    InstanceRecord {
+        guid: path.to_owned(),
+        path: path.to_owned(),
+        class: "ModuleScript".to_owned(),
+        content_hash: base.to_owned(),
+        base_content: Some(base.as_bytes().to_vec()),
+        mtime: 0,
+        conflicted,
+    }
+}
+
+fn store_with(dir: &tempfile::TempDir, records: &[InstanceRecord]) -> PathBuf {
+    let path = dir.path().join("state.db");
+    let store = StateStore::open(&path).unwrap();
+    for record in records {
+        store.upsert(record).unwrap();
+    }
+    path
+}
+
+#[test]
+fn a_base_keyed_with_backslashes_moves_to_its_forward_slash_key_with_its_content_and_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store_with(&dir, &[record("src\\Pkg\\A.luau", "return 1", true)]);
+
+    forward_slash_keys(&mut Connection::open(&path).unwrap()).unwrap();
+
+    let store = StateStore::open(&path).unwrap();
+    assert_eq!(store.get("src\\Pkg\\A.luau").unwrap(), None);
+    assert_eq!(
+        store.get("src/Pkg/A.luau").unwrap(),
+        Some(record("src/Pkg/A.luau", "return 1", true))
+    );
+}
+
+#[test]
+fn a_backslash_base_beside_its_forward_slash_twin_is_dropped_and_the_twin_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store_with(
+        &dir,
+        &[
+            record("src\\A.luau", "return 1", false),
+            record("src/A.luau", "return 2", false),
+        ],
+    );
+
+    forward_slash_keys(&mut Connection::open(&path).unwrap()).unwrap();
+
+    let store = StateStore::open(&path).unwrap();
+    assert_eq!(
+        store.all().unwrap(),
+        vec![record("src/A.luau", "return 2", false)]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn opening_a_store_on_windows_moves_backslash_bases_to_forward_slash_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store_with(&dir, &[record("src\\A.luau", "return 1", false)]);
+
+    let store = StateStore::open(&path).unwrap();
+
+    assert_eq!(
+        store.all().unwrap(),
+        vec![record("src/A.luau", "return 1", false)]
+    );
 }

@@ -7,6 +7,7 @@ use naht_core::binary::{self, Keep};
 use naht_core::reconciler::ReconcileError;
 use naht_core::snapshot::Snapshot;
 use naht_core::vfs::{DiskVfs, RootedVfs};
+use naht_core::walk::project_key;
 use naht_core::{limits, reconciler};
 use std::path::{Path, PathBuf};
 
@@ -28,6 +29,8 @@ pub fn status(root: &Path) -> Result<reconciler::Status, CommandError> {
 /// Returns [`CommandError`] when `path` cannot be resolved, or when `keep` is missing for a binary
 /// conflict or given for a text file.
 pub fn resolve(root: &Path, path: &str, keep: Option<Keep>) -> Result<(), CommandError> {
+    let path = project_key(Path::new(path));
+    let path = path.as_str();
     let store = open_store(root)?;
     let vfs = rooted(root)?;
     let frozen_binary = store
