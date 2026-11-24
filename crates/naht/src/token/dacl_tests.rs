@@ -196,6 +196,37 @@ fn a_token_file_owned_by_this_account_with_an_extra_ace_is_repaired_with_one_war
 }
 
 #[test]
+fn a_token_file_owned_by_this_account_with_a_deny_ace_for_it_is_repaired_with_one_warning() {
+    use tracing::dispatcher::with_default;
+
+    let root = tempfile::tempdir().unwrap();
+    let token = Token::generate().unwrap();
+    let dir = root.path().join(".naht");
+    fs::create_dir(&dir).unwrap();
+    let owner = owner_sid_text();
+    set_dacl(&dir, &format!("D:P(A;OICI;FA;;;{owner})"), true);
+    fs::write(path(root.path()), token.as_str()).unwrap();
+    set_dacl(
+        &path(root.path()),
+        &format!("D:P(D;;FR;;;{owner})(A;;FA;;;{owner})"),
+        true,
+    );
+    assert!(fs::read(path(root.path())).is_err());
+
+    let (logs, dispatch) = captured_logs();
+    let loaded = with_default(&dispatch, || load_or_create(root.path()).unwrap());
+
+    assert_eq!(loaded.token, token);
+    assert!(super::owner_only::is_file_owner_only(&path(root.path())).unwrap());
+    let text = logs.text();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(
+        text.contains("the token file was open to other accounts"),
+        "{text}"
+    );
+}
+
+#[test]
 fn a_deleted_token_file_is_replaced_by_a_new_owner_only_token() {
     let root = tempfile::tempdir().unwrap();
 

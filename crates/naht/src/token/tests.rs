@@ -2,6 +2,7 @@ use super::{Token, TokenError, load_or_create, path, read};
 #[cfg(unix)]
 use crate::test_logs::LogBuffer;
 use std::fs;
+use std::path::PathBuf;
 
 #[test]
 fn generated_tokens_are_64_lowercase_hex_digits_and_differ() {
@@ -179,5 +180,61 @@ fn another_token_proves_differently() {
     assert_ne!(
         other.prove(34872, PROOF_NONCE),
         Token::for_tests().prove(34872, PROOF_NONCE)
+    );
+}
+
+#[test]
+fn the_ownership_commands_name_the_path_without_the_verbatim_prefix() {
+    let file = TokenError::Denied {
+        path: PathBuf::from(r"\\?\D:\project\.naht\token"),
+    }
+    .to_string();
+    let dir = TokenError::StateDirDenied {
+        path: PathBuf::from(r"\\?\UNC\server\share\project\.naht"),
+    }
+    .to_string();
+
+    assert!(
+        file.contains(r#"takeown /F "D:\project\.naht\token""#),
+        "{file}"
+    );
+    assert!(
+        dir.contains(r#"takeown /F "\\server\share\project\.naht" /R /D Y"#),
+        "{dir}"
+    );
+    assert!(
+        dir.contains(r#"icacls "\\server\share\project\.naht" /reset /T /C"#),
+        "{dir}"
+    );
+    assert!(!file.contains(r"\\?\") && !dir.contains(r"\\?\"));
+}
+
+#[test]
+fn an_unprotectable_volume_is_named_with_the_way_out() {
+    let message = TokenError::Unprotectable {
+        path: PathBuf::from(r"\\?\R:\project\.naht"),
+    }
+    .to_string();
+
+    assert!(message.contains(r"`R:\project\.naht`"), "{message}");
+    assert!(message.contains("keeps no access rules"), "{message}");
+    assert!(message.contains("NTFS"), "{message}");
+    assert!(message.contains(r"delete `.naht\token`"), "{message}");
+}
+
+#[test]
+fn a_volume_path_with_no_drive_spelling_is_shown_as_it_is() {
+    let message = TokenError::Denied {
+        path: PathBuf::from(
+            r"\\?\Volume{0a1b2c3d-0000-0000-0000-000000000000}\project\.naht\token",
+        ),
+    }
+    .to_string();
+
+    assert!(
+        message.contains(
+            r#"takeown /F "\\?\Volume{0a1b2c3d-0000-0000-0000-000000000000}\project\.naht\token""#
+        ),
+        "{message}"
     );
 }

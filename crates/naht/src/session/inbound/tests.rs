@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use naht_core::binary::{BlobInstance, TERRAIN_CLASS};
 use naht_core::protocol::Change;
 use naht_core::reconciler::set_base;
-use naht_core::state::{InstanceRecord, StateStore};
+#[cfg(unix)]
+use naht_core::state::InstanceRecord;
+use naht_core::state::StateStore;
 use naht_core::vfs::{DirEntry, EntryKind, MemoryVfs, RootedVfs, Vfs, VfsError};
 use tracing::subscriber::with_default;
 
@@ -67,6 +69,7 @@ fn session_in(root: &Path) -> Session {
     .unwrap()
 }
 
+#[cfg(unix)]
 fn base_records(session: &Session) -> BTreeMap<String, InstanceRecord> {
     session
         .store

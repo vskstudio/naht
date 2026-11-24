@@ -92,8 +92,8 @@ pub enum TokenError {
     /// The token file cannot be opened by this account, which in practice means another account owns it.
     #[error(
         "the token file `{}` cannot be opened by this account, so `naht serve` cannot read or repair the token. This happens when another account owns the file, for example one created from an elevated shell. Take ownership first from a command prompt with `takeown /F \"{}\"`, then run `naht serve` again. To start over instead, delete the file, run `naht serve` to make a new token, and enter the new token in the plugin.",
-        path.display(),
-        path.display()
+        shown_path(path),
+        shown_path(path)
     )]
     Denied {
         /// The token file.
@@ -111,9 +111,9 @@ pub enum TokenError {
     /// The state directory cannot be opened by this account, which in practice means another account owns it.
     #[error(
         "the state directory `{}` cannot be opened by this account, so `naht serve` cannot use it. This happens when another account owns the directory, for example one created from an elevated shell. Take ownership first from a command prompt: `takeown /F \"{}\" /R /D Y`, then `icacls \"{}\" /reset /T /C`, then run `naht serve` again. Deleting the directory instead also deletes `state.db`, which holds the bases, the recorded conflicts and the place binding.",
-        path.display(),
-        path.display(),
-        path.display()
+        shown_path(path),
+        shown_path(path),
+        shown_path(path)
     )]
     StateDirDenied {
         /// The state directory.
@@ -123,6 +123,15 @@ pub enum TokenError {
     #[error("the state directory `{}` is a junction or symbolic link: replace it with a real directory and run `naht serve` again", path.display())]
     StateDirReparsePoint {
         /// The state directory.
+        path: PathBuf,
+    },
+    /// The volume holding the path keeps no access rules, so the path could not be made owner-only.
+    #[error(
+        "`{}` is on a volume that keeps no access rules, as FAT32, exFAT and some network shares do, so `naht serve` cannot make it owner-only and any local account could read the token. Move the project to an NTFS or ReFS volume and run `naht serve` again. If a token was already made on this volume, delete `.naht\\token` after the move and enter the new token in the plugin.",
+        shown_path(path)
+    )]
+    Unprotectable {
+        /// The token file or the state directory.
         path: PathBuf,
     },
     /// The token file does not hold a well-formed token, typically after a crash while it was written.
@@ -146,6 +155,19 @@ impl TokenError {
 /// The token file path of the project at `root`.
 pub fn path(root: &Path) -> PathBuf {
     root.join(".naht").join("token")
+}
+
+/// The path as a command prompt takes it: a drive or share path loses the `\\?\` prefix a
+/// canonical Windows path carries, which `takeown` and `icacls` refuse. A volume path has no such
+/// spelling and is shown as it is.
+fn shown_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{share}");
+    }
+    text.strip_prefix(r"\\?\")
+        .filter(|rest| rest.get(1..2) == Some(":"))
+        .map_or_else(|| text.clone(), str::to_owned)
 }
 
 /// Read the project's token, creating the file on the first run.
@@ -212,6 +234,7 @@ fn restrict_to_owner(path: &Path) -> Result<(), TokenError> {
         return Ok(());
     }
     owner_only::restrict_file(path).map_err(access_error)?;
+    confirm_owner_only(path, owner_only::is_file_owner_only, access_error)?;
     tracing::warn!(
         target: "naht::token",
         path = %path.display(),
@@ -246,7 +269,12 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
     let dir = root.join(".naht");
     fs::create_dir_all(root).map_err(|source| state_dir_io(&dir, source))?;
     match fs::create_dir(&dir) {
-        Ok(()) => owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source)),
+        Ok(()) => {
+            owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
+            confirm_owner_only(&dir, owner_only::is_dir_owner_only, |source| {
+                state_dir_access(&dir, source)
+            })
+        }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             refuse_reparse_point(&dir)?;
             let owner_only_now = owner_only::is_dir_owner_only(&dir)
@@ -255,6 +283,9 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
                 return Ok(());
             }
             owner_only::restrict_dir(&dir).map_err(|source| state_dir_access(&dir, source))?;
+            confirm_owner_only(&dir, owner_only::is_dir_owner_only, |source| {
+                state_dir_access(&dir, source)
+            })?;
             tracing::warn!(
                 target: "naht::token",
                 path = %dir.display(),
@@ -264,6 +295,31 @@ pub(crate) fn prepare_state_dir(root: &Path) -> Result<(), TokenError> {
         }
         Err(error) => Err(state_dir_io(&dir, error)),
     }
+}
+
+#[cfg(windows)]
+fn confirm_owner_only(
+    path: &Path,
+    is_owner_only: fn(&Path) -> io::Result<bool>,
+    access_error: impl Fn(io::Error) -> TokenError,
+) -> Result<(), TokenError> {
+    if is_owner_only(path).map_err(access_error)? {
+        return Ok(());
+    }
+    Err(TokenError::Unprotectable {
+        path: path.to_path_buf(),
+    })
+}
+
+#[cfg(windows)]
+fn refuse_an_unprotected_new_token(path: &Path) -> Result<(), TokenError> {
+    let confirmed = confirm_owner_only(path, owner_only::is_file_owner_only, |source| {
+        windows_access_error(path, source)
+    });
+    if confirmed.is_err() {
+        owner_only::remove_unfinished(path);
+    }
+    confirmed
 }
 
 #[cfg(windows)]
@@ -313,6 +369,8 @@ fn create(root: &Path) -> Result<Token, TokenError> {
         fs::create_dir_all(parent).map_err(io_error)?;
     }
     write_new(&path, token.as_str()).map_err(io_error)?;
+    #[cfg(windows)]
+    refuse_an_unprotected_new_token(&path)?;
     Ok(token)
 }
 
